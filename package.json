@@ -1,0 +1,110 @@
+{
+  "name": "deploy-center",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit && tsc -p electron/tsconfig.json --noEmit",
+    "preview": "node scripts/preview.mjs",
+    "start": "npm run build && electron .",
+    "dev": "npm run start",
+    "pack": "npm run build && electron-builder --win dir",
+    "dist": "npm run build && electron-builder --win nsis",
+    "rebuild:native": "electron-rebuild --only better-sqlite3",
+    "test:smoke": "playwright test"
+  },
+  "dependencies": {
+    "@zip.js/zip.js": "^2.8.0",
+    "better-sqlite3": "^13.0.3",
+    "iconv-lite": "^0.7.0",
+    "lucide-react": "^0.468.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "ssh2": "^1.17.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.2.1",
+    "@playwright/test": "^1.64.1",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/ssh2": "^1.15.5",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "45.2.1",
+    "electron-builder": "26.18.0",
+    "esbuild": "^0.25.0",
+    "jsdom": "^26.0.0",
+    "prettier": "^3.6.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.3.7",
+    "vitest": "^3.2.0"
+  },
+  "main": "dist-electron/main.cjs",
+  "description": "YOTOO 部署中心 Windows 本地部署工具",
+  "author": "YOTOO",
+  "build": {
+    "appId": "local.deploycenter.desktop",
+    "productName": "YOTOO 部署中心",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "assets/**/*",
+      "package.json",
+      "!node_modules/better-sqlite3/prebuilds/{darwin*,linux*,win32-arm64*}"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**/*",
+      "**/*.node"
+    ],
+    "electronDist": "node_modules/electron/dist",
+    "npmRebuild": false,
+    "extraResources": [
+      {
+        "from": "README.md",
+        "to": "README.md"
+      }
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "YOTOO部署中心-${version}-${arch}-安装包.${ext}",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "allowElevation": false,
+      "include": "installer/custom.nsh",
+      "installerLanguages": [
+        "zh_CN"
+      ],
+      "language": "2052",
+      "multiLanguageInstaller": true,
+      "displayLanguageSelector": false,
+      "installerSidebar": "installer/sidebar.bmp",
+      "uninstallerSidebar": "installer/sidebar.bmp",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "YOTOO 部署中心",
+      "runAfterFinish": true,
+      "packElevateHelper": false,
+      "differentialPackage": false
+    }
+  }
+}

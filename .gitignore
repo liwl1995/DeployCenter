@@ -1,0 +1,25 @@
+node_modules/
+dist/
+dist-electron/
+release/
+coverage/
+.test-data/
+playwright-report/
+*.log
+
+# 本地凭据、用户数据与生成文件
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.pem
+*.key
+id_rsa
+id_ed25519
+__pycache__/
+*.py[cod]
+*.tsbuildinfo
+/SHA256SUMS

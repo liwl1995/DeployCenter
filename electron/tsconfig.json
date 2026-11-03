@@ -1,0 +1,18 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
+  },
+  "include": [
+    "./**/*.ts",
+    "../src/model.ts",
+    "../src/engine.ts",
+    "../src/records.ts",
+    "../src/platform.ts",
+    "../src/validation.ts",
+    "../src/env.d.ts",
+    "../src/env.d.ts"
+  ]
+}
