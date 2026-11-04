@@ -11,6 +11,7 @@ const api: DesktopAPI = {
   recover: (id, values) => invoke('recover', id, values),
   choose: (kind) => invoke('choose', kind),
   inspectJar: (file) => invoke('inspect-jar', file),
+  serviceInfo: (id, file) => invoke('service-info', id, file),
   detectJdks: () => invoke('detect-jdks'),
   checkTool: (kind, value) => invoke('check-tool', kind, value),
   resolveAlias: (id) => invoke('resolve-alias', id),

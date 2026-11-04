@@ -38,7 +38,16 @@ export function newTargetTemplate(serviceId: string, serverId: string): Target {
     container: '',
     containerJar: '',
     mount: 'directory',
-    health: { type: 'none', value: '', timeout: 10, retries: 6, interval: 5, location: 'remote' },
+    health: {
+      type: 'none',
+      value: '',
+      timeout: 10,
+      retries: 6,
+      interval: 5,
+      location: 'remote',
+      startDelay: 0,
+      maxWait: 300,
+    },
     backup: {
       enabled: true,
       directory: 'backups',

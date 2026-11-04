@@ -57,7 +57,7 @@ describe('组件交互', () => {
     const edits = screen.getAllByRole('button', { name: '编辑目标' });
     await user.click(edits[2]);
     const dialog = screen.getByRole('dialog');
-    const remote = within(dialog).getByLabelText('远程 JAR 文件名', { exact: false });
+    const remote = within(dialog).getByRole('textbox', { name: '远程 JAR 文件名' });
     expect((remote as HTMLInputElement).value).toBe('crm.jar');
     await user.click(within(dialog).getByRole('tab', { name: '健康检查' }));
     expect(within(dialog).getByLabelText('检查方式')).toBeTruthy();

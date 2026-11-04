@@ -11,6 +11,7 @@ import {
   remoteJar,
 } from './model';
 import { desktop } from './platform';
+import { healthTiming } from './health-timing';
 import { prototype } from './defaults';
 type SaveProps<T> = { initial: T; db: Database; onSave: (value: T) => void; onClose: () => void };
 const Submit = ({ onClose }: { onClose: () => void }) => (
@@ -280,7 +281,14 @@ export function BackupFields({
   );
 }
 export function TargetForm({ initial, db, onSave, onClose }: SaveProps<Target>) {
-  const [v, set] = useState(structuredClone(initial));
+  const [v, set] = useState(() => ({
+    ...structuredClone(initial),
+    health: {
+      ...initial.health,
+      startDelay: initial.health.startDelay ?? 0,
+      maxWait: healthTiming(initial.health).window,
+    },
+  }));
   const [tab, setTab] = useState('基本信息');
   const [error, setError] = useState('');
   const update = <K extends keyof Target>(key: K, value: Target[K]) =>
@@ -313,12 +321,22 @@ export function TargetForm({ initial, db, onSave, onClose }: SaveProps<Target>) 
     if (
       v.health.type !== 'none' &&
       (!v.health.value.trim() ||
-        [v.health.timeout, v.health.retries, v.health.interval].some(
+        [v.health.timeout, v.health.retries, v.health.interval, v.health.maxWait ?? 1].some(
           (n) => !Number.isInteger(n) || n < 1,
         ))
     ) {
       setTab('健康检查');
-      setError('请填写健康检查地址或命令，超时、重试次数及间隔必须为正整数。');
+      setError('请填写健康检查地址或命令，检查超时、等待窗口及间隔必须为正整数。');
+      return;
+    }
+    if (
+      !Number.isInteger(v.health.startDelay) ||
+      v.health.startDelay! < 0 ||
+      v.health.startDelay! > 3600 ||
+      v.health.maxWait! > 3600
+    ) {
+      setTab('健康检查');
+      setError('启动等待应为 0–3600 秒，最长等待窗口应为 1–3600 秒。');
       return;
     }
     if (v.backup.enabled && !v.backup.template.trim()) {
@@ -541,12 +559,22 @@ export function TargetForm({ initial, db, onSave, onClose }: SaveProps<Target>) 
                   onChange={(e) => health('timeout', +e.target.value)}
                 />
               </Field>
-              <Field label="最大重试次数">
+              <Field label="启动等待（秒）">
+                <input
+                  type="number"
+                  min="0"
+                  max="3600"
+                  value={v.health.startDelay}
+                  onChange={(e) => health('startDelay', +e.target.value)}
+                />
+              </Field>
+              <Field label="最长等待窗口（秒）">
                 <input
                   type="number"
                   min="1"
-                  value={v.health.retries}
-                  onChange={(e) => health('retries', +e.target.value)}
+                  max="3600"
+                  value={v.health.maxWait}
+                  onChange={(e) => health('maxWait', +e.target.value)}
                 />
               </Field>
               <Field label="重试间隔（秒）">
@@ -560,6 +588,13 @@ export function TargetForm({ initial, db, onSave, onClose }: SaveProps<Target>) 
             </>
           )}
         </div>
+        {v.health.type !== 'none' && (
+          <p className="note">
+            启动命令和容器校验通过后先等待 {v.health.startDelay} 秒，再在 {v.health.maxWait}{' '}
+            秒内每隔 {v.health.interval}{' '}
+            秒探测。首次通过即继续，超时仍未就绪才判失败；回滚后的旧版本也使用此规则。
+          </p>
+        )}
         <p className="note">
           {desktop
             ? 'HTTP/TCP 按所选位置执行，自定义命令在服务器上执行；未配置时标记健康未验证。'

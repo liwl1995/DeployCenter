@@ -12,6 +12,7 @@ import {
   Check,
   AlertTriangle,
   ArrowRight,
+  ArrowLeft,
   RotateCcw,
   X,
   Terminal,
@@ -72,6 +73,7 @@ import {
   type TrustRequest,
   type Approval,
   type TaskSummary,
+  type ServiceInfo,
 } from './platform';
 import {
   TrustDialog,
@@ -159,13 +161,24 @@ function ArtifactInfo({ value, service }: { value: Artifact; service: ServiceSna
           <strong>{value.name}</strong>
         </span>
         <Badge kind={value.exists ? 'good' : 'danger'}>
-          {value.source === 'sample' ? '示例文件信息' : value.exists ? '文件已选择' : '尚未检测'}
+          {value.source === 'sample'
+            ? '示例文件信息'
+            : value.exists
+              ? '文件已读取'
+              : value.source === 'file'
+                ? '文件不存在或无法读取'
+                : '尚未检测'}
         </Badge>
       </div>
       <p className="path">{value.path}</p>
       <div className="metadata">
-        <span>大小：{value.source === 'unknown' ? '待检测' : niceSize(value.size)}</span>
-        <span>修改：{value.source === 'unknown' ? '待检测' : fmtTime(value.modified)}</span>
+        <span>
+          大小：{value.source === 'unknown' ? '待检测' : !value.exists ? '—' : niceSize(value.size)}
+        </span>
+        <span>
+          修改：
+          {value.source === 'unknown' ? '待检测' : !value.exists ? '—' : fmtTime(value.modified)}
+        </span>
       </div>
       {value.exists && new Date(value.modified) < new Date(service.git.time) && (
         <p className="warning">
@@ -201,6 +214,12 @@ function Workspace({ boot }: { boot?: Startup } = {}) {
   const [artifact, setArtifact] = useState<Artifact>(() =>
     (desktop ? initialArtifact : artifactFor)(db.services.find((s) => s.id === serviceId)!),
   );
+  const [jarSelection, setJarSelection] = useState<string>();
+  const [localInfo, setLocalInfo] = useState<(ServiceInfo & { serviceId: string }) | null>(null);
+  const [localInfoBusy, setLocalInfoBusy] = useState(false);
+  const [localInfoError, setLocalInfoError] = useState('');
+  const [infoRefresh, setInfoRefresh] = useState(0);
+  const [taskReturnPage, setTaskReturnPage] = useState<Page>('deploy');
   const [dialog, setDialog] = useState<Dialog>(null);
   const [task, setTask] = useState<Task | null>(boot?.task || null);
   const [busy, setBusy] = useState(false);
@@ -229,6 +248,8 @@ function Workspace({ boot }: { boot?: Startup } = {}) {
   const importRef = useRef<HTMLInputElement>(null);
   const recorded = useRef(new Set<string>());
   const service = db.services.find((s) => s.id === serviceId)!;
+  const displayService =
+    localInfo?.serviceId === serviceId ? { ...service, git: localInfo.git } : service;
   const targets = db.targets.filter((t) => t.serviceId === serviceId);
   const chosen = targets.filter((t) => selected.includes(t.id));
   const effective = (t: Target) => overrides[t.id] || t.backup;
@@ -284,13 +305,49 @@ function Workspace({ boot }: { boot?: Startup } = {}) {
     return desktop!.onEvent((event) => {
       if (event.kind === 'task') {
         setTask(event.task);
-        if (!['running', 'cancelling'].includes(event.task.status)) refresh();
+        if (!['running', 'cancelling'].includes(event.task.status)) {
+          refresh();
+          setInfoRefresh((n) => n + 1);
+        }
       } else if (event.kind === 'database') setDb((old) => mergedDatabase(old, event.database));
       else if (event.kind === 'trust') setTrust(event.request);
       else if (event.kind === 'trust-closed')
         setTrust((old) => (old?.id === event.id ? undefined : old));
     });
   }, []);
+  useEffect(() => {
+    if (!desktop || recovery || page !== 'deploy') return;
+    let stale = false;
+    setLocalInfoBusy(true);
+    setLocalInfoError('');
+    void (async () => {
+      try {
+        // 确保刚编辑的配置先落库，主进程只读取已保存服务允许的路径。
+        await desktop!.save(db);
+        const info = await desktop!.serviceInfo(service.id, jarSelection);
+        if (!stale) {
+          setLocalInfo({ ...info, serviceId: service.id });
+          setArtifact(info.artifact);
+        }
+      } catch (error) {
+        if (!stale) setLocalInfoError(String(error));
+      } finally {
+        if (!stale) setLocalInfoBusy(false);
+      }
+    })();
+    return () => {
+      stale = true;
+    };
+  }, [
+    service.id,
+    service.root,
+    service.jarDir,
+    service.jarName,
+    jarSelection,
+    infoRefresh,
+    page,
+    recovery,
+  ]);
   async function nativeAction(action: () => Promise<unknown>) {
     try {
       await action();
@@ -305,7 +362,10 @@ function Workspace({ boot }: { boot?: Startup } = {}) {
     }
     await nativeAction(async () => {
       const file = await desktop!.choose('jar');
-      if (file) setArtifact(await desktop!.inspectJar(file));
+      if (file) {
+        setArtifact(await desktop!.inspectJar(file));
+        setJarSelection(file);
+      }
     });
   }
   async function importNative() {
@@ -318,12 +378,17 @@ function Workspace({ boot }: { boot?: Startup } = {}) {
         setSelected([]);
         setOverrides({});
         setArtifact(initialArtifact(data.services[0]));
+        setJarSelection(undefined);
+        setLocalInfo(null);
+        setInfoRefresh((n) => n + 1);
       }
     });
   }
   function selectService(id: string) {
     const s = db.services.find((s) => s.id === id)!;
     setServiceId(id);
+    setJarSelection(undefined);
+    setLocalInfo(null);
     const prior = db.lastTargets.filter((tid) =>
       db.targets.some((t) => t.id === tid && t.serviceId === id && !t.production),
     );
@@ -440,6 +505,7 @@ function Workspace({ boot }: { boot?: Startup } = {}) {
     setSelected(ids);
     setBuild('existing');
     setArtifact(task.artifact);
+    setJarSelection(task.artifact.path);
     setPage('deploy');
     notify('已准备重试；复用本任务产物，部署前请重新确认配置。');
   }
@@ -602,7 +668,7 @@ function Workspace({ boot }: { boot?: Startup } = {}) {
             数据保存在本机
             <small>
               {desktop
-                ? '桌面部署工具 · ' + (boot?.version || '1.0.0')
+                ? '桌面部署工具 · ' + (boot?.version || '1.1.0')
                 : '界面原型 v0.3 · 模拟执行'}
             </small>
           </div>
@@ -749,17 +815,17 @@ function Workspace({ boot }: { boot?: Startup } = {}) {
                           {service.profiles ? ' -P' + service.profiles : ''}
                         </p>
                         <div className="metadata">
-                          <span>工作目录：{service.workDir}</span>
+                          <span>工作目录：{service.workDir || '.'}</span>
                           <span>JDK 仅作用于构建进程</span>
                         </div>
                         <p className="path">产物：{localJar(service)}</p>
                       </>
                     ) : (
                       <>
-                        <ArtifactInfo value={artifact} service={service} />
+                        <ArtifactInfo value={artifact} service={displayService} />
                         <p className="note">
                           {desktop
-                            ? '读取真实文件并校验 ZIP、Manifest、所有条目 CRC 和 SHA-256。'
+                            ? '已读取本地文件信息；选择文件或确认部署前会检查 JAR 完整性。'
                             : '浏览器只能读取文件名、大小和修改时间；桌面版将使用系统文件对话框并检查 JAR 有效性。'}
                         </p>
                         <div className="row wrap">
@@ -794,10 +860,50 @@ function Workspace({ boot }: { boot?: Startup } = {}) {
                     )}
                     <p className="branch">
                       <GitBranch size={14} />
-                      {service.git.branch}
-                      <code>{service.git.commit}</code>
-                      <span>{desktop ? '确认部署前读取 Git 信息' : 'Git 示例信息'}</span>
+                      {displayService.git.branch}
+                      <code>{displayService.git.commit}</code>
+                      {displayService.git.dirty && <Badge kind="warn">有未提交修改</Badge>}
+                      <span>
+                        {desktop
+                          ? localInfoBusy
+                            ? '正在读取本地信息…'
+                            : localInfo?.serviceId === serviceId
+                              ? /^[a-f0-9]{7,64}$/i.test(displayService.git.commit)
+                                ? 'Git 提交：' + fmtTime(displayService.git.time)
+                                : '未找到 Git 仓库或本机 Git 不可用'
+                              : '等待读取本地信息'
+                          : 'Git 示例信息'}
+                      </span>
                     </p>
+                    {desktop && (
+                      <>
+                        {localInfo?.serviceId === serviceId && localInfo.artifactError && (
+                          <p className="warning" role="status">
+                            {localInfo.artifactError}
+                          </p>
+                        )}
+                        {localInfoError && (
+                          <p className="warning" role="alert">
+                            {localInfoError}
+                          </p>
+                        )}
+                        <div className="row wrap local-info-actions">
+                          <button
+                            className="button"
+                            disabled={localInfoBusy}
+                            onClick={() => setInfoRefresh((n) => n + 1)}
+                          >
+                            <RotateCcw size={15} />
+                            刷新 JAR / Git 信息
+                          </button>
+                          {jarSelection && (
+                            <button className="link" onClick={() => setJarSelection(undefined)}>
+                              使用配置的产物路径
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </Card>
                   <Card
                     title={
@@ -953,27 +1059,29 @@ function Workspace({ boot }: { boot?: Startup } = {}) {
                     {chosen.some((t) => t.production) && (
                       <p className="warning">包含正式环境，需要额外确认。</p>
                     )}
-                    <button
-                      className="button primary block"
-                      disabled={
-                        busy ||
-                        !chosen.length ||
-                        (!desktop && build === 'existing' && !artifact.exists)
-                      }
-                      onClick={() => launch()}
-                    >
-                      <Rocket size={18} />
-                      {isActive(task) ? '查看当前任务' : '部署'}
-                    </button>
-                    {desktop && (
+                    <div className="deploy-actions" aria-label="部署操作">
                       <button
-                        className="button"
-                        disabled={busy || isActive(task) || !chosen.length}
-                        onClick={() => void launch(chosen, undefined, true)}
+                        className="button primary block"
+                        disabled={
+                          busy ||
+                          !chosen.length ||
+                          (!desktop && build === 'existing' && !artifact.exists)
+                        }
+                        onClick={() => launch()}
                       >
-                        试运行（远程只读）
+                        <Rocket size={18} />
+                        {isActive(task) ? '查看当前任务' : '部署'}
                       </button>
-                    )}
+                      {desktop && (
+                        <button
+                          className="button"
+                          disabled={busy || isActive(task) || !chosen.length}
+                          onClick={() => void launch(chosen, undefined, true)}
+                        >
+                          试运行（远程只读）
+                        </button>
+                      )}
+                    </div>
                     <p className="note">
                       {desktop
                         ? '确认后将构建产物并修改勾选目标；正式环境需要输入 DEPLOY。'
@@ -1470,6 +1578,7 @@ function Workspace({ boot }: { boot?: Startup } = {}) {
                           disabled={isActive(task)}
                           onClick={() =>
                             void nativeAction(async () => {
+                              setTaskReturnPage('history');
                               setTask(await desktop!.readTask(t.id));
                               setInspected(0);
                               setPage('task');
@@ -1719,23 +1828,31 @@ function Workspace({ boot }: { boot?: Startup } = {}) {
                     ? '恢复历史版本'
                     : '部署任务',
                 task.id + ' · ' + task.service.name,
-                <Badge
-                  kind={task.status === 'success' ? 'good' : task.status === 'failed' ? 'warn' : ''}
-                >
-                  {task.status === 'cancelling'
-                    ? '取消中 · 等待安全边界'
-                    : task.status === 'running'
-                      ? '执行中'
-                      : task.status === 'success'
-                        ? '任务完成'
-                        : task.status === 'partial'
-                          ? '部分成功'
-                          : task.status === 'cancelled'
-                            ? '任务已取消'
-                            : task.status === 'interrupted'
-                              ? '执行结果待核实'
-                              : '部署失败'}
-                </Badge>,
+                <div className="task-heading-actions">
+                  <button className="button" onClick={() => setPage(taskReturnPage)}>
+                    <ArrowLeft size={16} />
+                    {taskReturnPage === 'history' ? '返回部署历史' : '返回部署'}
+                  </button>
+                  <Badge
+                    kind={
+                      task.status === 'success' ? 'good' : task.status === 'failed' ? 'warn' : ''
+                    }
+                  >
+                    {task.status === 'cancelling'
+                      ? '取消中 · 等待安全边界'
+                      : task.status === 'running'
+                        ? '执行中'
+                        : task.status === 'success'
+                          ? '任务完成'
+                          : task.status === 'partial'
+                            ? '部分成功'
+                            : task.status === 'cancelled'
+                              ? '任务已取消'
+                              : task.status === 'interrupted'
+                                ? '执行结果待核实'
+                                : '部署失败'}
+                  </Badge>
+                </div>,
               )}
               <TaskView
                 task={task}
@@ -1781,7 +1898,7 @@ function Workspace({ boot }: { boot?: Startup } = {}) {
         </main>
         <footer className="workspace-footer">
           <span>
-            YOTOO 部署中心 · {desktop ? '桌面版 ' + (boot?.version || '1.0.0') : '界面原型 v0.3'}
+            YOTOO 部署中心 · {desktop ? '桌面版 ' + (boot?.version || '1.1.0') : '界面原型 v0.3'}
           </span>
           <span>先校验，再切换；每个目标独立记录。</span>
         </footer>
@@ -1838,7 +1955,12 @@ function Workspace({ boot }: { boot?: Startup } = {}) {
             onClose={() => setDialog(null)}
             onSave={(s) => {
               setDb((old) => ({ ...old, services: upsert(old.services, s) }));
-              if (s.id === serviceId) setArtifact((desktop ? initialArtifact : artifactFor)(s));
+              if (s.id === serviceId) {
+                setArtifact((desktop ? initialArtifact : artifactFor)(s));
+                setJarSelection(undefined);
+                setLocalInfo(null);
+                setInfoRefresh((n) => n + 1);
+              }
               setDialog(null);
               notify('服务配置已保存');
             }}
@@ -1906,6 +2028,7 @@ function Workspace({ boot }: { boot?: Startup } = {}) {
                 setTask(startTask(t));
               }
               setFailureOverride(null);
+              setTaskReturnPage('deploy');
               setInspected(0);
               setPage('task');
               setDialog(null);
@@ -1974,6 +2097,12 @@ function Workspace({ boot }: { boot?: Startup } = {}) {
                   )
             }
           />
+          <footer className="modal-actions">
+            <button className="button" onClick={() => setDialog(null)}>
+              <ArrowLeft size={16} />
+              返回
+            </button>
+          </footer>
         </Modal>
       )}
       {dialog?.kind === 'delete' && (

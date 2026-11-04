@@ -2,6 +2,7 @@ from pathlib import Path
 import hashlib
 import zipfile
 import argparse
+import json
 
 # 交付包只收录源码、测试、构建产物及必要配置，不包含依赖、安装输出或测试数据。
 ROOT = Path(__file__).resolve().parent.parent
@@ -16,7 +17,8 @@ def package(output: Path):
     manifest = ''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.relative_to(ROOT).as_posix() + '\n' for p in entries)
     (ROOT / 'SHA256SUMS').write_text(manifest, encoding='utf-8')
     output.parent.mkdir(parents=True, exist_ok=True)
-    prefix = 'YOTOO部署中心-1.0.0-source/'
+    version = json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))['version']
+    prefix = f'YOTOO部署中心-{version}-source/'
     with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for p in entries:
             archive.write(p, prefix + p.relative_to(ROOT).as_posix())

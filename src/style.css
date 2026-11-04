@@ -1408,3 +1408,64 @@ tr:last-child td {
   height: 100%;
   object-fit: contain;
 }
+
+/* 字段帮助同时支持鼠标悬停和键盘焦点，避免把说明拼入输入框名称。 */
+.field-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+.field-help {
+  position: relative;
+  display: inline-flex;
+}
+.help-trigger {
+  display: inline-grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: 1px solid var(--sub);
+  border-radius: 50%;
+  color: var(--sub);
+  background: transparent;
+  font: 600 12px/1 sans-serif;
+  cursor: help;
+}
+.field-tooltip {
+  position: fixed;
+  z-index: 1000;
+  width: min(290px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 8px 24px #0003;
+  font-size: 13px;
+  line-height: 1.65;
+  font-weight: 400;
+  white-space: normal;
+}
+.deploy-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  margin-top: 18px;
+}
+.deploy-actions .button {
+  width: 100%;
+}
+.local-info-actions {
+  margin-top: 12px;
+}
+.task-heading-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}

@@ -17,7 +17,7 @@ import { z } from 'zod';
 import { LineRedactor } from './log-redactor';
 import { Storage } from './storage';
 import { Controller } from './controller';
-import { detectJdks, inspectJar, checkJdk, resolveBuild } from './files';
+import { detectJdks, inspectJar, checkJdk, resolveBuild, serviceInfo } from './files';
 import { runBatch, runProcess } from './process';
 import { validateDatabase } from './validate';
 import { createTransport, systemSsh, mustExec, type Transport, type Channel } from './ssh';
@@ -193,6 +193,19 @@ async function boot() {
       )
         throw new Error('请选择服务产物或通过系统对话框选择文件');
       return inspectJar(file);
+    });
+    handle('service-info', (value, selected) => {
+      const service = storage.database().services.find((s) => s.id === id(value));
+      if (!service) throw new Error('服务不存在');
+      const file = selected === undefined ? undefined : path.resolve(text(selected));
+      if (
+        file &&
+        !approvedJars.has(file) &&
+        path.resolve(service.root, service.jarDir, service.jarName) !== file &&
+        !storage.tasks().some((t) => path.resolve(t.artifact.path) === file)
+      )
+        throw new Error('请选择服务产物或通过系统对话框选择文件');
+      return serviceInfo(service, file);
     });
     handle('detect-jdks', () => detectJdks());
     handle('check-tool', async (kind, value) => {

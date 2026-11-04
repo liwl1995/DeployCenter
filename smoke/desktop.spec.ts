@@ -200,7 +200,144 @@ test('utilityProcess 通过 IPC 执行只读试运行，完成首次指纹确认
     expect(commands).toEqual(['bash -s']);
     expect(sftpUsed).toBe(false);
     expect(JSON.stringify(result)).not.toContain('fixture-only');
+    await page.getByRole('button', { name: '返回部署', exact: true }).click();
+    await expect(page.getByRole('heading', { name: '准备好，发布下一版本' })).toBeVisible();
+    await page.getByRole('button', { name: '部署历史', exact: true }).click();
+    await page.getByRole('button', { name: '查看任务', exact: true }).click();
+    await page.getByRole('button', { name: '返回部署历史', exact: true }).click();
+    await expect(page.getByRole('heading', { name: '所有任务（含构建失败）' })).toBeVisible();
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+test('1.1.0 自动读取 JAR/Git、刷新信息、字段提示及部署按钮间距', async () => {
+  const { runProcess } = await import('../electron/process');
+  const git = (args: string[]) =>
+    runProcess(
+      'git',
+      ['-C', dir, '-c', 'core.hooksPath=' + path.join(dir, 'empty-hooks'), ...args],
+      { timeout: 10000 },
+    );
+  await fs.writeFile(path.join(dir, '.gitignore'), '*.jar\n');
+  await fs.writeFile(path.join(dir, 'readme.txt'), 'isolated metadata fixture');
+  expect((await git(['init', '--initial-branch=metadata-v110'])).code).toBe(0);
+  expect((await git(['add', '.gitignore', 'readme.txt'])).code).toBe(0);
+  expect(
+    (
+      await git([
+        '-c',
+        'user.name=Fixture',
+        '-c',
+        'user.email=fixture@example.invalid',
+        'commit',
+        '--no-gpg-sign',
+        '-m',
+        'fixture',
+      ])
+    ).code,
+  ).toBe(0);
+  const writer = new ZipWriter(new BlobWriter(), { useWebWorkers: false });
+  await writer.add('META-INF/MANIFEST.MF', new TextReader('Manifest-Version: 1.0\r\n'));
+  const file = path.join(dir, 'metadata.jar');
+  await fs.writeFile(file, Buffer.from(await (await writer.close()).arrayBuffer()));
+  await fs.utimes(file, new Date('2000-01-01T00:00:00Z'), new Date('2000-01-01T00:00:00Z'));
+  const db = emptyDatabase();
+  const service = {
+    ...newService(),
+    id: 'metadata-service',
+    name: '元数据验收',
+    code: 'metadata',
+    root: dir,
+    jarDir: '.',
+    jarName: 'metadata.jar',
+  };
+  db.services = [service];
+  db.targets = [
+    {
+      ...newTargetTemplate(service.id, 'metadata-server'),
+      id: 'metadata-target',
+      name: '仅配置不连接',
+      directory: '/tmp/metadata-fixture',
+      start: 'true',
+    },
+  ];
+  db.servers = [
+    {
+      id: 'metadata-server',
+      name: '不会连接的测试配置',
+      host: '127.0.0.1',
+      port: 1,
+      user: 'fixture',
+      auth: 'password',
+      alias: '',
+      keyPath: '',
+      note: '',
+      credentialMode: 'ask',
+    },
+  ];
+  db.lastService = service.id;
+  db.lastTargets = [db.targets[0].id];
+  const page = await app.firstWindow();
+  await page.evaluate((value) => window.deployCenter!.save(value), db);
+  await page.reload();
+  await page.getByRole('button', { name: '使用现有 JAR', exact: true }).click();
+  await expect(page.locator('.artifact')).toContainText('文件已读取');
+  await expect(page.locator('.artifact')).toContainText('metadata.jar');
+  await expect(page.locator('.artifact')).toContainText('2000');
+  await expect(page.locator('.artifact')).toContainText('JAR 早于当前 Git 提交');
+  await expect(page.locator('.branch')).toContainText('metadata-v110');
+  await expect(page.locator('.branch code')).toHaveText(/[0-9a-f]{40}/);
+  const deploy = await page.getByRole('button', { name: '部署', exact: true }).boundingBox();
+  const dryRun = await page
+    .getByRole('button', { name: '试运行（远程只读）', exact: true })
+    .boundingBox();
+  expect(dryRun!.y - (deploy!.y + deploy!.height)).toBeGreaterThanOrEqual(10);
+  const help = page.getByRole('button', { name: '某个目标失败后说明' });
+  await help.focus();
+  await expect(page.getByRole('tooltip')).toBeVisible();
+  await expect(page.getByRole('tooltip')).toContainText('本次覆盖');
+  await git(['checkout', '-b', 'metadata-refreshed']);
+  await page.getByRole('button', { name: '刷新 JAR / Git 信息' }).click();
+  await expect(page.locator('.branch')).toContainText('metadata-refreshed');
+  await page.getByRole('button', { name: '编辑配置', exact: true }).click();
+  await page
+    .getByRole('dialog')
+    .getByLabel('服务名称', { exact: true })
+    .fill('元数据验收（已编辑）');
+  await page.getByRole('dialog').getByRole('button', { name: '保存配置', exact: true }).click();
+  await expect(page.locator('.artifact')).toContainText('文件已读取');
+  await expect(page.locator('.branch')).toContainText('metadata-refreshed');
+  await page.screenshot({ path: test.info().outputPath('v110-deploy.png'), fullPage: true });
+  const rejected = await page.evaluate(async () => {
+    try {
+      await window.deployCenter!.serviceInfo('metadata-service', 'C:\\Windows\\not-selected.jar');
+      return false;
+    } catch {
+      return true;
+    }
+  });
+  expect(rejected).toBe(true);
+  await fs.unlink(file);
+  await page.getByRole('button', { name: '刷新 JAR / Git 信息' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'JAR 文件不存在' })).toBeVisible();
+  await expect(page.locator('.artifact')).toContainText('文件不存在或无法读取');
+  await page.getByRole('button', { name: '编辑仅配置不连接', exact: true }).click();
+  const targetForm = page.getByRole('dialog');
+  await targetForm.getByRole('tab', { name: '健康检查' }).click();
+  await targetForm.getByLabel('检查方式', { exact: true }).selectOption('http');
+  await targetForm
+    .getByLabel('HTTP 健康地址', { exact: true })
+    .fill('http://127.0.0.1:8080/health');
+  await targetForm.getByLabel('启动等待（秒）', { exact: true }).fill('30');
+  await targetForm.getByLabel('最长等待窗口（秒）', { exact: true }).fill('600');
+  await targetForm.getByRole('button', { name: '最长等待窗口（秒）说明' }).hover();
+  await expect(page.getByRole('tooltip')).toContainText('600');
+  await page.screenshot({ path: test.info().outputPath('v110-health.png') });
+  const tooltipBox = await page.getByRole('tooltip').boundingBox();
+  const contentBox = await page.locator('.modal-content').boundingBox();
+  expect(tooltipBox!.y + tooltipBox!.height).toBeLessThanOrEqual(
+    contentBox!.y + contentBox!.height,
+  );
+  await targetForm.getByRole('button', { name: '取消', exact: true }).click();
 });

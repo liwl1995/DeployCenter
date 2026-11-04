@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { BlobReader, ZipReader, TextWriter } from '@zip.js/zip.js';
 import type { Artifact, Database, Service } from '../src/model';
 import { runBatch, runProcess, splitArguments, type ProcessOptions } from './process';
+import type { ServiceInfo } from '../src/platform';
 
 export const resolveLocal = (root: string, value: string) =>
   path.isAbsolute(value) ? path.normalize(value) : path.resolve(root, value);
@@ -72,6 +73,38 @@ export async function inspectJar(
     sha256,
   };
 }
+/** 主页面只读元数据；完整 ZIP/CRC/哈希仍在选择与正式部署准备时校验。 */
+export async function serviceInfo(service: Service, file = jarPath(service)): Promise<ServiceInfo> {
+  const absolute = path.resolve(file);
+  const artifact: Artifact = {
+    name: path.basename(absolute),
+    path: absolute,
+    size: 0,
+    modified: new Date(0).toISOString(),
+    exists: false,
+    source: 'file',
+  };
+  let artifactError: string | undefined;
+  try {
+    const item = await stat(absolute);
+    if (!item.isFile()) throw new Error('配置的 JAR 路径不是普通文件');
+    artifact.exists = true;
+    artifact.size = item.size;
+    artifact.modified = item.mtime.toISOString();
+  } catch (error) {
+    artifactError =
+      (error as NodeJS.ErrnoException).code === 'ENOENT'
+        ? 'JAR 文件不存在，请先构建或选择其他文件。'
+        : '无法读取 JAR：' + String(error);
+  }
+  return {
+    artifact,
+    artifactError,
+    git: await gitInfo(service.root),
+    checkedAt: new Date().toISOString(),
+  };
+}
+
 export async function snapshotJar(
   file: string,
   taskId: string,

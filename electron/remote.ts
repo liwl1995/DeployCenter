@@ -1,3 +1,4 @@
+import { healthTiming } from '../src/health-timing';
 import preflight from './remote-preflight.sh';
 import runner from './remote-runner.sh';
 import { shellQuote as q, remoteJar, type RunTarget, type Task } from '../src/model';
@@ -112,6 +113,9 @@ export function header(task: Task, r: RunTarget, allowWeak: boolean, docker?: Do
     HEALTH_TIMEOUT: String(health.timeout),
     HEALTH_RETRIES: String(health.retries),
     HEALTH_INTERVAL: String(health.interval),
+    HEALTH_DELAY: String(healthTiming(health).delay),
+    HEALTH_WINDOW: String(healthTiming(health).window),
+    HEALTH_BY_WINDOW: healthTiming(health).byWindow ? '1' : '0',
     TCP_HOST: tcpHost,
     TCP_PORT: tcpPort,
   };

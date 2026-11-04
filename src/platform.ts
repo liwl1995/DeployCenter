@@ -1,5 +1,11 @@
 import type { Artifact, Backup, Database, History, Recovery, Task } from './model';
 
+export type ServiceInfo = {
+  artifact: Artifact;
+  artifactError?: string;
+  git: Database['services'][number]['git'];
+  checkedAt: string;
+};
 export type Approval = { productionWord: string; allowWeak: boolean; protectCurrent: boolean };
 export type PrepareRequest = {
   serviceId: string;
@@ -54,6 +60,7 @@ export interface DesktopAPI {
   recover(taskId: string, credentials: Record<string, string>): Promise<Task>;
   choose(kind: 'directory' | 'jar' | 'key' | 'maven'): Promise<string | null>;
   inspectJar(path: string): Promise<Artifact>;
+  serviceInfo(serviceId: string, jarPath?: string): Promise<ServiceInfo>;
   detectJdks(): Promise<{ name: string; path: string }[]>;
   checkTool(kind: 'jdk' | 'maven', value: string): Promise<string>;
   resolveAlias(serverId: string): Promise<{ host: string; user: string; port: number }>;

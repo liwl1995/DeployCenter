@@ -95,6 +95,9 @@ export function validateDatabase(v: unknown): Database {
     for (const k of ['timeout', 'retries', 'interval'] as const)
       if (t.health[k] > (k === 'retries' ? 100 : 3600) || !Number.isInteger(t.health[k]))
         throw new Error('健康检查次数或时间超出范围');
+    if (t.health.startDelay !== undefined)
+      z.number().int().min(0).max(3600).parse(t.health.startDelay);
+    if (t.health.maxWait !== undefined) z.number().int().min(1).max(3600).parse(t.health.maxWait);
     validateBackup(t.backup);
   }
   if (v.settings.historyDays !== undefined)

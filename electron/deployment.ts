@@ -553,7 +553,7 @@ export class Deployment {
       this.emit(true);
       if (state === 'AWAITING_LOCAL') {
         const passed = await localHealth(
-          r.target.health,
+          { ...r.target.health, startDelay: 0 }, // 静默等待已由远端 runner 执行，不重复等待。
           this.deps.clock,
           this.controller.signal,
           (text) => this.log(text, r),

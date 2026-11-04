@@ -25,32 +25,56 @@ stability() {
     running="$(timeout "$COMMAND_TIMEOUT" docker inspect -f '{{.State.Running}}' "$CONTAINER")" || return 1
     restarts="$(timeout "$COMMAND_TIMEOUT" docker inspect -f '{{.RestartCount}}' "$CONTAINER")" || return 1
     health="$(timeout "$COMMAND_TIMEOUT" docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CONTAINER")" || return 1
-    [ "$running" = true ] && [ "$restarts" -eq "$restart_baseline" ] && [ "$health" != unhealthy ] || return 1
+    [ "$running" = true ] && [ "$restarts" -eq "$restart_baseline" ] && { [ "$HEALTH_TYPE" != none ] || [ "$health" != unhealthy ]; } || return 1
     stamp=$(( $(date +%s) - start ))
-    if [ "$stamp" -ge "$STABILITY_SECONDS" ] && { [ "$health" = none ] || [ "$health" = healthy ]; }; then return 0; fi
+    if [ "$stamp" -ge "$STABILITY_SECONDS" ] && { [ "$HEALTH_TYPE" != none ] || [ "$health" = none ] || [ "$health" = healthy ]; }; then return 0; fi
     [ "$stamp" -lt "$COMMAND_TIMEOUT" ] || return 1; sleep 1
   done
 }
+# 应用健康有独立启动窗口，不能被单条命令超时或旧重试次数提前截断。
+container_ready() {
+  [ "$MODE" != docker ] && return 0
+  local status running restarts result remaining limit
+  remaining=$((deadline - $(date +%s))); [ "$remaining" -gt 0 ] || return 1
+  limit="$HEALTH_TIMEOUT"; [ "$remaining" -ge "$limit" ] || limit="$remaining"
+  result="$(timeout "$limit" docker inspect -f '{{.State.Running}} {{.RestartCount}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CONTAINER")" || return 1
+  read -r running restarts status <<< "$result"
+  [ "$running" = true ] && [ "$restarts" -eq "$restart_baseline" ] && { [ "$status" = none ] || [ "$status" = healthy ]; }
+}
 health_check() {
-  local attempt code
+  local attempt=0 code remaining limit deadline
+  if [ "$HEALTH_DELAY" -gt 0 ]; then printf '启动等待 %s 秒后开始健康检查\n' "$HEALTH_DELAY"; sleep "$HEALTH_DELAY"; fi
+  deadline=$(( $(date +%s) + HEALTH_WINDOW ))
   if [ "$HEALTH_LOCATION" = local ] && { [ "$HEALTH_TYPE" = http ] || [ "$HEALTH_TYPE" = tcp ]; }; then
     rm -f -- "$JOB/local-health"; state AWAITING_LOCAL
-    local deadline=$(( $(date +%s) + HEALTH_RETRIES * (HEALTH_TIMEOUT + HEALTH_INTERVAL) + 30 ))
-    while [ ! -f "$JOB/local-health" ]; do [ "$(date +%s)" -lt "$deadline" ] || return 1; sleep 1; done
-    [ "$(cat "$JOB/local-health")" = PASS ]; return
+    # 为引擎轮询和结果写回留出传输余量，实际本机探测仍受 HEALTH_WINDOW 限制。
+    while [ ! -f "$JOB/local-health" ]; do [ "$(date +%s)" -lt "$((deadline + 30))" ] || return 1; sleep 1; done
+    [ "$(cat "$JOB/local-health")" = PASS ] || return 1
+    while ! container_ready; do
+      [ "$(date +%s)" -lt "$deadline" ] || return 1
+      sleep 1
+    done
+    return 0
   fi
-  for ((attempt=1;attempt<=HEALTH_RETRIES;attempt++)); do
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    if [ "$HEALTH_BY_WINDOW" != 1 ] && [ "$attempt" -ge "$HEALTH_RETRIES" ]; then break; fi
+    attempt=$((attempt + 1)); remaining=$((deadline - $(date +%s))); limit="$HEALTH_TIMEOUT"
+    [ "$remaining" -gt 0 ] || break
+    [ "$remaining" -ge "$limit" ] || limit="$remaining"
     if [ "$HEALTH_TYPE" = http ]; then
-      if code="$(curl --silent --show-error --max-time "$HEALTH_TIMEOUT" -o /dev/null -w '%{http_code}' "$HEALTH_VALUE")" && [[ "$code" =~ ^2[0-9][0-9]$ ]]; then return 0; fi
+      if code="$(curl --silent --show-error --max-time "$limit" -o /dev/null -w '%{http_code}' "$HEALTH_VALUE")" && [[ "$code" =~ ^2[0-9][0-9]$ ]] && container_ready; then return 0; fi
     elif [ "$HEALTH_TYPE" = tcp ]; then
-      if timeout "$HEALTH_TIMEOUT" bash -c 'exec 3<>"/dev/tcp/$1/$2"' _ "$TCP_HOST" "$TCP_PORT"; then return 0; fi
+      if timeout "$limit" bash -c 'exec 3<>"/dev/tcp/$1/$2"' _ "$TCP_HOST" "$TCP_PORT" && container_ready; then return 0; fi
     elif [ "$HEALTH_TYPE" = command ]; then
-      if timeout "$HEALTH_TIMEOUT" bash -c "$HEALTH_VALUE"; then return 0; fi
+      if timeout "$limit" bash -c "$HEALTH_VALUE" && container_ready; then return 0; fi
     else return 0; fi
-    printf '健康检查第 %s/%s 次失败\n' "$attempt" "$HEALTH_RETRIES"
-    if [ "$attempt" -lt "$HEALTH_RETRIES" ]; then sleep "$HEALTH_INTERVAL"; fi
+    printf '健康检查第 %s 次尚未就绪，继续等待\n' "$attempt"
+    remaining=$((deadline - $(date +%s)))
+    [ "$remaining" -gt 0 ] || break
+    if [ "$HEALTH_BY_WINDOW" != 1 ] && [ "$attempt" -ge "$HEALTH_RETRIES" ]; then break; fi
+    if [ "$remaining" -lt "$HEALTH_INTERVAL" ]; then sleep "$remaining"; else sleep "$HEALTH_INTERVAL"; fi
   done
-  return 1
+  printf '健康检查等待结束，应用仍未就绪\n'; return 1
 }
 backup_old() {
   [ ! -e "$BACKUP" ] && [ ! -L "$BACKUP" ] || return 1

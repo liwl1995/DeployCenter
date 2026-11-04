@@ -8,6 +8,7 @@
 )
 $ErrorActionPreference = 'Stop'
 $installerPath = (Resolve-Path -LiteralPath $Installer).Path
+$expectedVersion = (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../package.json') -Raw | ConvertFrom-Json).version
 $testRoot = [IO.Path]::GetFullPath($InstallRoot)
 $permittedRoot = [IO.Path]::GetFullPath('E:\temp\codex-data\2026-11-03\xia\work') + '\'
 if (-not $testRoot.StartsWith($permittedRoot,[StringComparison]::OrdinalIgnoreCase)) { throw '安装测试目录必须位于本任务 work 目录' }
@@ -73,8 +74,9 @@ try {
   Assert-Check '中文和空格的自定义目录安装成功' ($code -eq 0 -and (Test-Path -LiteralPath (Installed-App))) "exit=$code"
   $entry = Get-ItemProperty -LiteralPath $registryKey
   Assert-Check 'Windows 应用注册与发布者' ($entry.DisplayName -match 'Deploy Center|YOTOO 部署中心' -and $entry.Publisher -in @('Deploy Center','YOTOO') -and (Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\331cf176-7a71-5b12-9fb9-5cf75e4f46af' -Name InstallLocation).TrimEnd('\') -eq $targetDir.TrimEnd('\')) ($entry | Select-Object DisplayName,DisplayVersion,Publisher,InstallLocation | ConvertTo-Json -Compress)
-  $startLink = Join-Path ([Environment]::GetFolderPath('Programs')) 'Deploy Center.lnk'
-  $desktopLink = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Deploy Center.lnk'
+  $previousShortcut = if ([IO.Path]::GetFileName((Installed-App)) -eq 'Deploy Center.exe') { 'Deploy Center.lnk' } else { 'YOTOO 部署中心.lnk' }
+  $startLink = Join-Path ([Environment]::GetFolderPath('Programs')) $previousShortcut
+  $desktopLink = Join-Path ([Environment]::GetFolderPath('Desktop')) $previousShortcut
   Assert-Check '开始菜单与桌面快捷方式存在' ((Test-Path -LiteralPath $startLink) -and (Test-Path -LiteralPath $desktopLink))
   $firstSmoke = Smoke-App
   $fixtureTool = Join-Path $PSScriptRoot 'installer-fixture.cjs'
@@ -86,11 +88,11 @@ try {
   $code = Run-Setup $installerPath '/S'
   Assert-Check '覆盖升级成功并沿用原目录' ($code -eq 0 -and (Test-Path -LiteralPath (Installed-App))) "exit=$code"
   $entry = Get-ItemProperty -LiteralPath $registryKey
-  Assert-Check '升级只有一个应用注册项且版本正确' ($entry.DisplayVersion -eq '1.0.0') $entry.DisplayVersion
+  Assert-Check '升级只有一个应用注册项且版本正确' ($entry.DisplayVersion -eq $expectedVersion) $entry.DisplayVersion
   Assert-Check '升级保留用户数据' ((Get-Content -LiteralPath (Join-Path $dataPath 'keep-user-data.txt') -Raw).Contains('部署配置与历史保护验收'))
   $newStartLink = Join-Path ([Environment]::GetFolderPath('Programs')) 'YOTOO 部署中心.lnk'
   $newDesktopLink = Join-Path ([Environment]::GetFolderPath('Desktop')) 'YOTOO 部署中心.lnk'
-  Assert-Check '改名升级后创建中文快捷方式且移除旧入口' ((Test-Path -LiteralPath $newStartLink) -and (Test-Path -LiteralPath $newDesktopLink) -and -not (Test-Path -LiteralPath $startLink) -and -not (Test-Path -LiteralPath $desktopLink))
+  Assert-Check '升级后中文快捷方式有效且无旧品牌入口' ((Test-Path -LiteralPath $newStartLink) -and (Test-Path -LiteralPath $newDesktopLink) -and -not (Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('Programs')) 'Deploy Center.lnk')) -and -not (Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Deploy Center.lnk')))
   Assert-Check '中文名称和发布者注册正确' ($entry.DisplayName -like 'YOTOO 部署中心*' -and $entry.Publisher -eq 'YOTOO')
   $upgradedSmoke = Smoke-App
   $preserved = & node $fixtureTool verify $dataPath $marker $testRoot

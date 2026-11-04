@@ -1,4 +1,16 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useState,
+  useId,
+  useRef,
+  cloneElement,
+  isValidElement,
+  type ReactNode,
+  type ReactElement,
+} from 'react';
+import { createPortal } from 'react-dom';
+import { helpFor } from './field-help';
 import { X, Check } from 'lucide-react';
 import { type Step, seconds } from './model';
 import { desktop } from './platform';
@@ -28,6 +40,90 @@ export function Card({
     </section>
   );
 }
+/** 提示放到页面浮层，避免在矮窗口或弹窗滚动区域内被裁掉。 */
+function FieldHelp({ label, text }: { label: string; text: string }) {
+  const id = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const tooltip = useRef<HTMLSpanElement>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ left: number; top: number }>();
+  const clear = () => {
+    if (timer.current) clearTimeout(timer.current);
+  };
+  const show = () => {
+    clear();
+    setOpen(true);
+  };
+  const leave = () => {
+    clear();
+    if (document.activeElement !== trigger.current)
+      timer.current = setTimeout(() => setOpen(false), 150);
+  };
+  useEffect(() => () => clear(), []);
+  useLayoutEffect(() => {
+    if (!open || !trigger.current || !tooltip.current) return;
+    const anchor = trigger.current.getBoundingClientRect();
+    const tip = tooltip.current.getBoundingClientRect();
+    const left = Math.max(12, Math.min(anchor.left, window.innerWidth - tip.width - 12));
+    const below = anchor.bottom + 8;
+    const top =
+      below + tip.height <= window.innerHeight - 12
+        ? below
+        : Math.max(12, anchor.top - tip.height - 8);
+    setPosition({ left, top });
+    const close = () => setOpen(false);
+    window.addEventListener('resize', close);
+    document.addEventListener('scroll', close, true);
+    return () => {
+      window.removeEventListener('resize', close);
+      document.removeEventListener('scroll', close, true);
+    };
+  }, [open]);
+  return (
+    <>
+      <button
+        ref={trigger}
+        type="button"
+        className="help-trigger"
+        aria-label={label + '说明'}
+        aria-describedby={open ? id : undefined}
+        onMouseEnter={show}
+        onMouseLeave={leave}
+        onFocus={show}
+        onBlur={() => setOpen(false)}
+        onKeyDownCapture={(event) => {
+          if (event.key === 'Escape' && open) {
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen(false);
+          }
+        }}
+      >
+        ?
+      </button>
+      {open &&
+        createPortal(
+          <span
+            ref={tooltip}
+            className="field-tooltip"
+            role="tooltip"
+            id={id}
+            style={{
+              left: position?.left ?? 0,
+              top: position?.top ?? 0,
+              visibility: position ? 'visible' : 'hidden',
+            }}
+            onMouseEnter={show}
+            onMouseLeave={leave}
+          >
+            {text}
+          </span>,
+          document.body,
+        )}
+    </>
+  );
+}
 export function Field({
   label,
   hint,
@@ -39,12 +135,19 @@ export function Field({
   children: ReactNode;
   wide?: boolean;
 }) {
+  const id = useId();
+  const help = helpFor(label);
   return (
-    <label className={'field ' + (wide ? 'wide' : '')}>
-      <span>{label}</span>
-      {children}
+    <div className={'field ' + (wide ? 'wide' : '')}>
+      <div className="field-label">
+        <label htmlFor={id}>{label}</label>
+        {help && <FieldHelp label={label} text={help} />}
+      </div>
+      {isValidElement(children)
+        ? cloneElement(children as ReactElement<{ id?: string }>, { id })
+        : children}
       {hint && <small>{hint}</small>}
-    </label>
+    </div>
   );
 }
 export function Switch({
@@ -239,7 +342,9 @@ export function PathInput({
   required,
   disabled,
   label,
+  id,
 }: {
+  id?: string;
   value: string;
   onChange: (v: string) => void;
   kind: 'directory' | 'jar' | 'key' | 'maven';
@@ -250,6 +355,7 @@ export function PathInput({
   return (
     <div className="path-input">
       <input
+        id={id}
         aria-label={label}
         required={required}
         disabled={disabled}

@@ -6,6 +6,10 @@ export type Health = {
   timeout: number;
   retries: number;
   interval: number;
+  /** 启动校验通过后的静默等待；缺省兼容旧配置。 */
+  startDelay?: number;
+  /** 静默等待之后的就绪探测窗口；设置后不再由重试次数提前结束。 */
+  maxWait?: number;
 };
 export type Backup = {
   enabled: boolean;
@@ -404,6 +408,12 @@ export function validDatabase(data: unknown): data is Database {
     object(v.health) &&
     ['none', 'http', 'tcp', 'command'].includes(v.health.type) &&
     typeof v.health.value === 'string' &&
+    (v.health.startDelay === undefined ||
+      (Number.isInteger(v.health.startDelay) &&
+        v.health.startDelay >= 0 &&
+        v.health.startDelay <= 3600)) &&
+    (v.health.maxWait === undefined ||
+      (Number.isInteger(v.health.maxWait) && v.health.maxWait >= 1 && v.health.maxWait <= 3600)) &&
     ['timeout', 'retries', 'interval'].every(
       (k) => Number.isFinite(v.health[k]) && v.health[k] > 0,
     );

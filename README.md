@@ -4,7 +4,7 @@
 
 ## 安装与启动
 
-运行 `YOTOO部署中心-1.0.0-x64-安装包.exe`，按中文向导选择目录和桌面快捷方式。开始菜单入口始终创建，完成页可选择立即运行。默认安装到当前用户的 Programs 目录；其他目录必须具备写入权限和足够空间，不自动请求管理员权限。
+运行 `YOTOO部署中心-1.1.0-x64-安装包.exe`，按中文向导选择目录和桌面快捷方式。开始菜单入口始终创建，完成页可选择立即运行。默认安装到当前用户的 Programs 目录；其他目录必须具备写入权限和足够空间，不自动请求管理员权限。
 
 正常使用不需要安装 Node.js、数据库服务，也不需要另开前端或后端。图标、界面、帮助和依赖随安装包提供。只有实际构建时才需要在应用里配置外部 JDK、Wrapper/Maven；部署时需要访问目标服务器。Maven 首次下载依赖可能需要网络。
 
@@ -80,7 +80,7 @@ SQLite 使用 better-sqlite3，asarUnpack 解包原生模块。`@electron/rebuil
 
 ## 测试与验收边界
 
-实际执行记录见 `docs/verification.md`。没有连接业务服务器，没有构建业务项目，没有执行真实 Docker 部署。
+1.1.0 的实际执行记录见 `docs/verification-v1.1.0.md`；1.0.0 安装全流程记录保留在 `docs/verification.md`。没有连接业务服务器，没有构建业务项目，没有执行真实 Docker 部署。
 
 - 假能力测试不调用文件、进程或网络；原生测试仅操作 `.test-data` 下临时文件和测试进程。
 - 临时 SSH2 测试服务器只监听 127.0.0.1 随机端口，验证真实指纹、认证、命令和 SFTP。
@@ -103,3 +103,21 @@ python scripts/package-source.py --output "YOTOO部署中心-1.0.0-source.zip"
 ```
 
 脚本包含源码、测试、构建脚本、安装品牌资源、dist、dist-electron、说明和逐文件 SHA256SUMS，排除 node_modules、release 和本机测试数据；生成后检查 ZIP CRC 和逐文件 SHA-256。
+
+
+## v1.1.0 本地优化
+
+1. **字段帮助**：构建路径、Wrapper/Maven、认证、远程命令、挂载、备份及健康检查等复杂字段后增加小问号，鼠标悬停或键盘聚焦显示说明与填写示例。简单名称不增加提示。`src/field-help.ts` 集中维护文案，`src/ui.tsx`、`src/style.css` 提供帮助控件，保持表单标签和输入框的独立关联。
+2. **部署操作布局**：部署与只读试运行统一放入纵向按钮组，宽度一致、间隔 12px。修改 `src/App.tsx`、`src/style.css`；Electron 回归检查真实按钮边界间距。
+3. **JAR / Git 信息**：进入部署页、切换服务、保存服务配置、任务完成后读取实际本机元数据，另有「刷新 JAR / Git 信息」。支持配置的产物路径及本次另选文件，显示大小、修改时间、分支、Commit、未提交修改和 JAR 早于 Git 提交的提醒。文件不存在、读取失败或非 Git 项目有明确状态。页面仅 stat 元数据，完整 ZIP/Manifest/CRC/SHA-256 仍在选文件或正式部署准备时执行。修改 `src/App.tsx`、`src/platform.ts`、`electron/files.ts`、`electron/main.ts`、`electron/preload.ts`；主进程仍限制可读 JAR 路径。
+4. **详情返回**：任务页常驻返回按钮，从历史打开任务时返回历史，从部署发起时返回部署；历史记录弹窗增加底部返回按钮。切换页面不取消后台任务。修改 `src/App.tsx`。
+5. **慢启动健康检查**：目标配置增加「启动等待（秒）」和「最长等待窗口（秒）」。启动命令及容器校验成功后先静默等待，再按间隔持续探测；第一次通过立即继续，窗口耗尽仍未就绪才失败并按原备份策略处理。最后一次探测超时按剩余窗口缩短。Docker 配置了应用健康检查时，其 starting/unhealthy 由就绪窗口继续观察，容器停机或新增重启仍由稳定性检查拦截。回滚恢复后同样执行健康检查。修改 `src/model.ts`、`src/defaults.ts`、`src/health-timing.ts`、`src/forms.tsx`、`electron/validate.ts`、`electron/health.ts`、`electron/remote.ts`、`electron/remote-runner.sh`、`electron/deployment.ts`。
+6. **版本与兼容**：版本为 1.1.0，应用 ID、用户目录、数据库 schema 均保持兼容，不需要重新配置服务和服务器。旧健康配置在尚未编辑保存前仍按原超时/间隔/次数执行；打开目标表单时显示等效窗口，保存后使用窗口方式。新目标默认窗口 300 秒。更新 `package.json`、`package-lock.json`；`scripts/package-source.py` 从包元数据读取版本。
+
+推荐填写：启动等待 **0–30 秒**、最长窗口 **300 秒**（慢项目 **600 秒**）、单次超时 **5–10 秒**、间隔 **5 秒**。例如等待 30 秒后，在接下来的 600 秒内探测；通常一旦就绪就立即完成，不会固定等满 10 分钟。窗口不含前面的静默等待及启动命令/容器校验时间；SSH 结果交接另留最多 30 秒传输余量。HTTP/TCP 的 127.0.0.1 指所选检查位置自身。
+
+回归用例在 `tests/v110-native.test.ts`、`tests/v110-ui.test.tsx`、`smoke/desktop.spec.ts`；旧表单测试改为按精确输入框角色定位，避免把新增问号当成输入框。没有连接业务服务器执行回归测试。
+
+问号说明采用独立浮层，在矮窗口和 150% 应用缩放下根据空间向上或向下显示；Escape 先关闭说明。页面上的「文件已读取」只说明元数据可读，部署确认前仍执行完整 JAR 校验。1.1.0 的构建和验收明细见 `docs/verification-v1.1.0.md`。
+
+1.1.0 本轮类型检查与构建通过；单元/组件测试 **91 通过、9 明确跳过**；打包后的程序在 150% 应用缩放下 **5 项桌面测试通过**，100% 缩放补测新交互 **1 项通过**。完整记录与限制见 `docs/verification-v1.1.0.md`。源码压缩命令可用 `python scripts/package-source.py --output "YOTOO部署中心-1.1.0-source.zip"`。
