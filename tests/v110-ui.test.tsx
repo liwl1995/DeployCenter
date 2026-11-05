@@ -41,6 +41,7 @@ it('健康检查可保存启动等待和分钟级窗口，原配置编辑时使�
   await user.type(screen.getByLabelText('启动等待（秒）'), '30');
   await user.clear(screen.getByLabelText('最长等待窗口（秒）'));
   await user.type(screen.getByLabelText('最长等待窗口（秒）'), '600');
+  await user.click(screen.getByRole('button', { name: '下一步' }));
   await user.click(screen.getByRole('button', { name: '保存配置' }));
   expect(onSave).toHaveBeenCalledOnce();
   expect(onSave.mock.calls[0][0].health).toMatchObject({ startDelay: 30, maxWait: 600 });

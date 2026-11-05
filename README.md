@@ -4,7 +4,7 @@
 
 ## 安装与启动
 
-运行 `YOTOO部署中心-1.2.2-x64-安装包.exe`，按中文向导选择目录和桌面快捷方式。开始菜单入口始终创建，完成页可选择立即运行。默认安装到当前用户的 Programs 目录；其他目录必须具备写入权限和足够空间，不自动请求管理员权限。
+运行 `YOTOO部署中心-1.2.3-x64-安装包.exe`，按中文向导选择目录和桌面快捷方式。开始菜单入口始终创建，完成页可选择立即运行。默认安装到当前用户的 Programs 目录；其他目录必须具备写入权限和足够空间，不自动请求管理员权限。
 
 正常使用不需要安装 Node.js、数据库服务，也不需要另开前端或后端。图标、界面、帮助和依赖随安装包提供。只有实际构建时才需要在应用里配置外部 JDK、Wrapper/Maven；部署时需要访问目标服务器。Maven 首次下载依赖可能需要网络。
 
@@ -198,3 +198,8 @@ python scripts/package-source.py --output "YOTOO部署中心-1.0.0-source.zip"
 主要修改 `src/App.tsx`、`src/style.css`、`src/ui.tsx`、`src/WorkspaceHome.tsx`、`src/BuildEnvironment.tsx`、`src/TaskHistory.tsx`、`src/DateFilter.tsx`、`src/DataSettings.tsx`、`src/DirectorySettings.tsx`、`src/features.ts`，新增 `src/layout-state.ts`、`src/TargetConfiguration.tsx`、`src/date-range.ts`、`src/DateRangeFilter.tsx`、`src/migration-view.ts`。迁移修改在 `electron/data-directory.ts`、`electron/migration-progress.ts` 和 `electron/main.ts` 的迁移接口。
 
 新增测试 `tests/v122-migration.test.ts`、`tests/v122-ui.test.tsx`，同步调整相关旧组件和桌面用例。完整回归实际为 **201 项通过、9 项环境相关跳过**；类型检查和正式构建成功。窗口、缩放、正式程序与交付包的实际结果见 `docs/verification-v1.2.2.md`。未执行 Git 提交、推送或 Releases 发布。
+
+## v1.2.3 部署目标表单
+
+- 新增和编辑部署目标时，「部署后日志观察」只出现在「健康检查」标签页。日志配置校验失败时，表单会返回该页并展开相关设置。
+- 通过「上一步」和「下一步」切换时会保留已填内容；只在最后一页「备份与安全」保存配置。

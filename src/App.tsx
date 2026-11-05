@@ -3059,7 +3059,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         </main>
         <footer className="workspace-footer" aria-label="应用状态">
           <span className="footer-version">
-            {desktop ? 'v' + (boot?.version || '1.2.2') : '界面原型 v0.3'}
+            {desktop ? 'v' + (boot?.version || '1.2.3') : '界面原型 v0.3'}
           </span>
           <button
             className="footer-directory"

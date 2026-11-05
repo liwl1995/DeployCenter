@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { DesktopAPI } from '../src/platform';
 const bridge = vi.hoisted(() => ({
@@ -124,20 +124,60 @@ it('JDK自动检测展示版本和服务引用；Maven显示实际工具与版�
   await userEvent.setup().click(screen.getByRole('tab', { name: 'JDK 管理' }));
   expect(bridge.checkTool).toHaveBeenCalledTimes(db.jdks.length);
 });
-it('普通JAR自动观察必须配置日志路径，设置保存后不带口令', async () => {
+it('部署目标只在最后一步保存，日志观察只在健康检查页显示', async () => {
+  const db = seed(),
+    save = vi.fn(),
+    user = userEvent.setup();
+  const { container } = render(
+    <TargetForm initial={db.targets[0]} db={db} onSave={save} onClose={() => {}} />,
+  );
+  const logSections = screen.getAllByText('部署后日志观察');
+  expect(logSections).toHaveLength(1);
+  const [logs] = logSections;
+  expect(logs.closest('[hidden]')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: '上一步' })).toBeNull();
+  await user.clear(screen.getByLabelText('环境名称'));
+  await user.type(screen.getByLabelText('环境名称'), '验收环境{Enter}');
+  for (const name of ['运行方式', '健康检查', '备份与安全']) {
+    expect(screen.queryByRole('button', { name: '保存配置' })).toBeNull();
+    fireEvent.submit(container.querySelector('form')!);
+    expect(save).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: '下一步' }));
+    const tab = screen.getByRole('tab', { name, selected: true });
+    expect(document.activeElement).toBe(tab);
+    expect(Boolean(logs.closest('[hidden]'))).toBe(name !== '健康检查');
+  }
+  expect(screen.queryByRole('button', { name: '下一步' })).toBeNull();
+  await user.click(screen.getByRole('button', { name: '上一步' }));
+  expect(screen.getByRole('tab', { name: '健康检查', selected: true })).toBeTruthy();
+  await user.click(screen.getByRole('tab', { name: '基本信息' }));
+  expect((screen.getByLabelText('环境名称') as HTMLInputElement).value).toBe('验收环境');
+  await user.click(screen.getByRole('tab', { name: '备份与安全' }));
+  await user.click(screen.getByRole('button', { name: '保存配置' }));
+  expect(save).toHaveBeenCalledOnce();
+  expect(save.mock.calls[0][0].name).toBe('验收环境');
+});
+it('普通JAR自动观察必须配置日志路径，校验失败会返回健康检查并展开设置', async () => {
   const db = seed(),
     initial = db.targets.find((t) => t.mode === 'jar')!,
     save = vi.fn(),
     user = userEvent.setup();
   render(<TargetForm initial={initial} db={db} onSave={save} onClose={() => {}} />);
-  await user.click(screen.getByText('部署后日志观察'));
+  await user.click(screen.getByRole('tab', { name: '健康检查' }));
+  const logs = screen.getByText('部署后日志观察');
+  await user.click(logs);
   await user.click(screen.getByRole('switch', { name: '健康未验证时自动观察日志' }));
+  await user.click(logs);
+  await user.click(screen.getByRole('button', { name: '下一步' }));
   await user.click(screen.getByRole('button', { name: '保存配置' }));
   expect(save).not.toHaveBeenCalled();
+  expect(screen.getByRole('tab', { name: '健康检查', selected: true })).toBeTruthy();
+  expect(logs.closest('details')?.open).toBe(true);
   expect(screen.getByRole('alert').textContent).toContain('应用日志绝对路径');
   await user.type(screen.getByLabelText('应用日志绝对路径'), '/var/log/应用.log');
   await user.clear(screen.getByLabelText('默认观察时间（秒）'));
   await user.type(screen.getByLabelText('默认观察时间（秒）'), '90');
+  await user.click(screen.getByRole('button', { name: '下一步' }));
   await user.click(screen.getByRole('button', { name: '保存配置' }));
   expect(save.mock.calls[0][0].observation).toEqual({ enabled: true, duration: 90 });
 });

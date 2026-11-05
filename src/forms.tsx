@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import type { DiagnosticResult } from './features';
 import { fmtTime } from './model';
 import { ShieldCheck } from 'lucide-react';
@@ -404,6 +404,7 @@ export function BackupFields({
     </>
   );
 }
+const targetTabs = ['基本信息', '运行方式', '健康检查', '备份与安全'] as const;
 export function TargetForm({ initial, db, onSave, onClose }: SaveProps<Target>) {
   const [v, set] = useState(() => ({
     ...structuredClone(initial),
@@ -413,14 +414,28 @@ export function TargetForm({ initial, db, onSave, onClose }: SaveProps<Target>) 
       maxWait: healthTiming(initial.health).window,
     },
   }));
-  const [tab, setTab] = useState('基本信息');
+  const [tab, setTab] = useState<(typeof targetTabs)[number]>(targetTabs[0]);
   const [error, setError] = useState('');
+  const tabId = useId();
+  const logObservation = useRef<HTMLDetailsElement>(null);
+  const step = targetTabs.indexOf(tab);
+  const lastStep = step === targetTabs.length - 1;
+  const showTab = (next: (typeof targetTabs)[number], message = '') => {
+    setTab(next);
+    setError(message);
+    document.getElementById(tabId + '-' + next)?.focus();
+  };
+  const showObservationError = (message: string) => {
+    showTab('健康检查', message);
+    if (logObservation.current) logObservation.current.open = true;
+  };
   const update = <K extends keyof Target>(key: K, value: Target[K]) =>
     set((old) => ({ ...old, [key]: value }));
   const health = <K extends keyof Health>(key: K, value: Health[K]) =>
     update('health', { ...v.health, [key]: value });
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!lastStep) return;
     if (
       !v.name.trim() ||
       !v.fileName.endsWith('.jar') ||
@@ -428,18 +443,15 @@ export function TargetForm({ initial, db, onSave, onClose }: SaveProps<Target>) 
       !v.directory.startsWith('/') ||
       !v.serverId
     ) {
-      setTab('基本信息');
-      setError('请填写环境名称、服务器、绝对远程目录和独立的 .jar 文件名。');
+      showTab('基本信息', '请填写环境名称、服务器、绝对远程目录和独立的 .jar 文件名。');
       return;
     }
     if (v.mode === 'jar' && !v.start.trim() && !v.restart.trim()) {
-      setTab('运行方式');
-      setError('请补齐启动命令，或容器名称和容器内绝对 JAR 路径。');
+      showTab('运行方式', '请补齐启动命令，或容器名称和容器内绝对 JAR 路径。');
       return;
     }
     if (v.mode === 'docker' && (!v.container.trim() || !v.containerJar.startsWith('/'))) {
-      setTab('运行方式');
-      setError('请补齐启动命令，或容器名称和容器内绝对 JAR 路径。');
+      showTab('运行方式', '请补齐启动命令，或容器名称和容器内绝对 JAR 路径。');
       return;
     }
     if (
@@ -449,8 +461,7 @@ export function TargetForm({ initial, db, onSave, onClose }: SaveProps<Target>) 
           (n) => !Number.isInteger(n) || n < 1,
         ))
     ) {
-      setTab('健康检查');
-      setError('请填写健康检查地址或命令，检查超时、等待窗口及间隔必须为正整数。');
+      showTab('健康检查', '请填写健康检查地址或命令，检查超时、等待窗口及间隔必须为正整数。');
       return;
     }
     if (
@@ -459,8 +470,7 @@ export function TargetForm({ initial, db, onSave, onClose }: SaveProps<Target>) 
       v.health.startDelay! > 3600 ||
       v.health.maxWait! > 3600
     ) {
-      setTab('健康检查');
-      setError('启动等待应为 0–3600 秒，最长等待窗口应为 1–3600 秒。');
+      showTab('健康检查', '启动等待应为 0–3600 秒，最长等待窗口应为 1–3600 秒。');
       return;
     }
     if (
@@ -469,39 +479,43 @@ export function TargetForm({ initial, db, onSave, onClose }: SaveProps<Target>) 
         v.observation.duration < 10 ||
         v.observation.duration > 3600)
     ) {
-      setError('观察持续时间应为 10–3600 秒。');
+      showObservationError('观察持续时间应为 10–3600 秒。');
       return;
     }
     if (
       (v.appLogPath && (!v.appLogPath.startsWith('/') || /[\r\n\0]/.test(v.appLogPath))) ||
       (v.mode === 'jar' && v.observation?.enabled && !v.appLogPath)
     ) {
-      setError('请填写有效的应用日志绝对路径后再启用观察。');
+      showObservationError('请填写有效的应用日志绝对路径后再启用观察。');
       return;
     }
     if (v.backup.enabled && !v.backup.template.trim()) {
-      setTab('备份与安全');
-      setError('请填写备份文件名模板。');
+      showTab('备份与安全', '请填写备份文件名模板。');
       return;
     }
-    setError('');
     onSave(v);
   };
   return (
     <form noValidate onSubmit={submit}>
       <div className="tabs" role="tablist" aria-label="部署目标配置">
-        {['基本信息', '运行方式', '健康检查', '备份与安全'].map((t) => (
+        {targetTabs.map((t) => (
           <button
             type="button"
             key={t}
+            id={tabId + '-' + t}
             role="tab"
             aria-selected={t === tab}
-            onClick={() => setTab(t)}
+            onClick={() => showTab(t)}
           >
             {t}
           </button>
         ))}
       </div>
+      {error && (
+        <p className="warning" role="alert">
+          {error}
+        </p>
+      )}
       <div className="form-grid" hidden={tab !== '基本信息'}>
         <Field label="关联服务">
           <select value={v.serviceId} onChange={(e) => update('serviceId', e.target.value)}>
@@ -740,6 +754,45 @@ export function TargetForm({ initial, db, onSave, onClose }: SaveProps<Target>) 
             ? 'HTTP/TCP 按所选位置执行，自定义命令在服务器上执行；未配置时标记健康未验证。'
             : '从目标服务器执行。未配置健康检查时，任务结果会明确标记「健康未验证」。'}
         </p>
+        {desktop && (
+          <details className="mt" ref={logObservation}>
+            <summary>部署后日志观察</summary>
+            {v.mode === 'jar' && (
+              <Field
+                label="应用日志绝对路径"
+                hint="只读取此文件，不执行启动脚本。健康检查失败时也可用它查看最近日志。"
+              >
+                <input
+                  value={v.appLogPath || ''}
+                  onChange={(e) => update('appLogPath', e.target.value)}
+                  placeholder="/var/log/service/application.log"
+                />
+              </Field>
+            )}
+            <Switch
+              label="健康未验证时自动观察日志"
+              checked={v.observation?.enabled || false}
+              onChange={(enabled) =>
+                update('observation', { enabled, duration: v.observation?.duration || 60 })
+              }
+              description="部署完成后跟随应用或容器日志，不影响部署结果。本次部署中可以临时覆盖。"
+            />
+            <Field label="默认观察时间（秒）" hint="10–3600 秒；到时或关闭日志窗口即停止连接。">
+              <input
+                type="number"
+                min="10"
+                max="3600"
+                value={v.observation?.duration ?? 60}
+                onChange={(e) =>
+                  update('observation', {
+                    enabled: v.observation?.enabled || false,
+                    duration: Number(e.target.value),
+                  })
+                }
+              />
+            </Field>
+          </details>
+        )}
       </div>
       <div hidden={tab !== '备份与安全'}>
         <BackupFields value={v.backup} onChange={(x) => update('backup', x)} />
@@ -770,51 +823,30 @@ export function TargetForm({ initial, db, onSave, onClose }: SaveProps<Target>) 
           </Demo>
         )}
       </div>
-      {error && (
-        <p className="warning" role="alert">
-          {error}
-        </p>
-      )}
-      {desktop && (
-        <details className="mt">
-          <summary>部署后日志观察</summary>
-          {v.mode === 'jar' && (
-            <Field
-              label="应用日志绝对路径"
-              hint="只读取此文件，不执行启动脚本。健康检查失败时也可用它查看最近日志。"
-            >
-              <input
-                value={v.appLogPath || ''}
-                onChange={(e) => update('appLogPath', e.target.value)}
-                placeholder="/var/log/service/application.log"
-              />
-            </Field>
-          )}
-          <Switch
-            label="健康未验证时自动观察日志"
-            checked={v.observation?.enabled || false}
-            onChange={(enabled) =>
-              update('observation', { enabled, duration: v.observation?.duration || 60 })
-            }
-            description="部署完成后跟随应用或容器日志，不影响部署结果。本次部署中可以临时覆盖。"
-          />
-          <Field label="默认观察时间（秒）" hint="10–3600 秒；到时或关闭日志窗口即停止连接。">
-            <input
-              type="number"
-              min="10"
-              max="3600"
-              value={v.observation?.duration ?? 60}
-              onChange={(e) =>
-                update('observation', {
-                  enabled: v.observation?.enabled || false,
-                  duration: Number(e.target.value),
-                })
-              }
-            />
-          </Field>
-        </details>
-      )}
-      <Submit onClose={onClose} />
+      <footer className="modal-actions">
+        <button type="button" className="button" onClick={onClose}>
+          取消
+        </button>
+        {step > 0 && (
+          <button type="button" className="button" onClick={() => showTab(targetTabs[step - 1])}>
+            上一步
+          </button>
+        )}
+        {lastStep ? (
+          <button key="save" type="submit" className="button primary">
+            保存配置
+          </button>
+        ) : (
+          <button
+            key="next"
+            type="button"
+            className="button primary"
+            onClick={() => showTab(targetTabs[step + 1])}
+          >
+            下一步
+          </button>
+        )}
+      </footer>
     </form>
   );
 }
