@@ -6,6 +6,7 @@ import Sqlite from 'better-sqlite3';
 import { z } from 'zod';
 import { plainPath } from './managed-path';
 import { MigrationReporter } from './migration-progress';
+import { databaseVersion } from './storage';
 
 /** 新迁移入口接受上级目录；既有位置指针和恢复日志继续使用原绝对路径。 */
 export function migrationDestination(parent: string) {
@@ -111,7 +112,7 @@ function checkDatabase(file: string) {
     if (sql.pragma('quick_check', { simple: true }) !== 'ok')
       throw new Error('数据库完整性检查未通过');
     const version = Number(sql.pragma('user_version', { simple: true }));
-    if (version > 4) throw new Error('数据库由更新版本创建');
+    if (version > databaseVersion) throw new Error('数据库由更新版本创建');
     sql.prepare('SELECT json FROM config WHERE id=1').get();
     return {
       tasks: (sql.prepare('SELECT count(*) AS n FROM tasks').get() as { n: number }).n,

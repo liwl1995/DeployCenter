@@ -29,7 +29,7 @@ export function pruneHistory(db: Database): Database {
     taskHistory: Object.fromEntries(Object.entries(db.taskHistory).filter(([id]) => ids.has(id))),
   };
 }
-export function recordTask(db: Database, task: Task): Database {
+export function recordTask(db: Database, task: Task, updateTargets = true): Database {
   if (
     db.history.some((h) => h.taskId === task.id) &&
     !db.history.some((h) => h.taskId === task.id && h.status === 'unknown')
@@ -53,7 +53,7 @@ export function recordTask(db: Database, task: Task): Database {
       : db.taskHistory,
     targets: db.targets.map((t) => {
       const r = task.targets.find((r) => r.target.id === t.id);
-      return r && ['success', 'unverified', 'rolledback'].includes(r.status)
+      return updateTargets && r && ['success', 'unverified', 'rolledback'].includes(r.status)
         ? {
             ...t,
             version:

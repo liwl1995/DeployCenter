@@ -182,3 +182,17 @@ export type MaintenanceRecord = {
   deleted: string[];
   message: string;
 };
+
+export type WorkbenchAction = 'import' | 'cleanup' | 'discard' | 'archive';
+export type WorkbenchReview = {
+  token: string;
+  target: string;
+  directory: string;
+  owner: string;
+  state: string;
+  evidence: string[];
+  unknown: string[];
+  legacy: string[];
+  message: string;
+  action?: WorkbenchAction;
+};

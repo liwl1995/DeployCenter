@@ -10,6 +10,7 @@ export function fakeCapabilities(
     oldJar?: boolean;
     disconnect?: boolean;
     onUpload?: () => void;
+    cleanupFails?: boolean;
   } = {},
 ) {
   let now = input.task.startedAt,
@@ -75,6 +76,12 @@ export function fakeCapabilities(
         }
         return Buffer.from(lines.join('\n') + '\n');
       };
+      let state = 'PREPARED';
+      let journalBytes: Buffer | undefined;
+      const fileBytes = (name: string) =>
+        name === 'journal' ? (journalBytes ??= journal()) :
+        name === 'state' ? Buffer.from(state) :
+        name === 'output.log' ? Buffer.from('最终 Docker 日志\n') : Buffer.from('任务标识');
       const session: RemoteSession = {
         connect: async () => {
           sessions.push(server.id);
@@ -88,6 +95,27 @@ export function fakeCapabilities(
         close: () => {},
         exec: async (command, opts) => {
           commands.push(command + (opts?.input || ''));
+          const script = opts?.input || '';
+          if (script.includes('nohup bash "$JOB/runner.sh"'))
+            state = options.failed === target.target.id ? 'FAILED' : 'UNVERIFIED';
+          if (script.includes('alive=0; dc_alive') && script.includes('printf "%s\\t%s"')) {
+            if (options.disconnect) throw new Error('SSH disconnected');
+            return { code: 0, stdout: state + '\t1', stderr: '' };
+          }
+          if (script.includes('printf "%s\\t%s\\t%s\\n" "$name"')) {
+            const stdout = ['task', 'state', 'journal', 'output.log']
+              .map((name) => [name, fileBytes(name).length, '-'].join('\t')).join('\n');
+            return { code: 0, stdout, stderr: '' };
+          }
+          if (script.includes('printf NOT_OURS')) {
+            state = 'CANCELLED';
+            return { code: 0, stdout: state, stderr: '' };
+          }
+          if (script.includes('printf CLEANED')) {
+            return options.cleanupFails
+              ? { code: 1, stdout: 'UNEXPECTED\tkeep.txt', stderr: '' }
+              : { code: 0, stdout: 'CLEANED', stderr: '' };
+          }
           if (command.includes("'/state'"))
             return {
               code: 0,
@@ -110,8 +138,8 @@ export function fakeCapabilities(
             };
           return { code: 0, stdout: '检查通过\n', stderr: '' };
         },
-        read: async (file, offset) =>
-          file.endsWith('/journal') && offset === 0 ? journal() : Buffer.alloc(0),
+        read: async (file, offset, max = 262144) =>
+          fileBytes(file.split('/').at(-1)!).subarray(offset, offset + max),
       };
       return session;
     },

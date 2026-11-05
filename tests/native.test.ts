@@ -70,6 +70,7 @@ describe('真实引擎的假能力测试（不访问文件、进程或网络）'
       (e) => events.push(e),
       async () => false,
       fake.deps,
+      async () => {},
     );
     await engine.run();
     expect(fake.builds).toBe(1);
@@ -88,6 +89,7 @@ describe('真实引擎的假能力测试（不访问文件、进程或网络）'
       () => {},
       async () => false,
       fake.deps,
+      async () => {},
     );
     await engine.run();
     expect(engine.task.targets[0].status).toBe('failed');
@@ -105,6 +107,7 @@ describe('真实引擎的假能力测试（不访问文件、进程或网络）'
         () => {},
         async () => false,
         fake.deps,
+      async () => {},
       );
       await engine.run();
       expect(engine.task.targets[0].backupVersion).toBe(known ? 'commit-v1' : 'b'.repeat(12));
@@ -118,6 +121,7 @@ describe('真实引擎的假能力测试（不访问文件、进程或网络）'
       () => {},
       async () => false,
       fake.deps,
+      async () => {},
     );
     await engine.run();
     expect(engine.task.targets[0]).toMatchObject({
@@ -125,6 +129,38 @@ describe('真实引擎的假能力测试（不访问文件、进程或网络）'
       backupSize: 99,
       backupHash: 'b'.repeat(64),
     });
+  });
+  it('保存结果失败前绝不清理远端，后续目标停止', async () => {
+    const value = input(2);
+    const fake = fakeCapabilities(value);
+    const messages: WorkerMessage[] = [];
+    const engine = new Deployment(value, (message) => messages.push(message), async () => false, fake.deps,
+      async (task, targetId, receipt) => {
+        expect(receipt.state).toBe('UNVERIFIED');
+        expect(task.targets[0].remote?.phase).toBe('complete');
+        expect(targetId).toBe(task.targets[0].target.id);
+        expect(messages.some((message) => message.kind === 'log' && message.text.includes('最终 Docker 日志'))).toBe(true);
+        expect(fake.commands.some((command) => command.includes('printf CLEANED'))).toBe(false);
+        throw new Error('本机磁盘不可写');
+      });
+    await engine.run();
+    expect(engine.task.status).toBe('interrupted');
+    expect(engine.task.targets.map((target) => target.status)).toEqual(['unknown', 'skipped']);
+    expect(fake.commands.some((command) => command.includes('printf CLEANED'))).toBe(false);
+  });
+  it('远端已结束后清理失败只保留警告，成功结果继续写入历史', async () => {
+    const value = input();
+    const fake = fakeCapabilities(value, { cleanupFails: true });
+    let confirmed = false;
+    const engine = new Deployment(value, () => {}, async () => false, fake.deps,
+      async () => {
+        expect(fake.commands.some((command) => command.includes('printf CLEANED'))).toBe(false);
+        confirmed = true;
+      });
+    await engine.run();
+    expect(confirmed).toBe(true);
+    expect(engine.task.status).toBe('success');
+    expect(engine.task.targets[0]).toMatchObject({ status: 'unverified', cleanupWarning: expect.stringContaining('keep.txt') });
   });
   it('切换后断线标记远端未知，不继续后续目标', async () => {
     const value = input(2),
@@ -134,6 +170,7 @@ describe('真实引擎的假能力测试（不访问文件、进程或网络）'
       () => {},
       async () => false,
       fake.deps,
+      async () => {},
     );
     await engine.run();
     expect(engine.task.status).toBe('interrupted');
@@ -154,6 +191,7 @@ describe('真实引擎的假能力测试（不访问文件、进程或网络）'
       () => {},
       async () => false,
       fake.deps,
+      async () => {},
     );
     await engine.run();
     expect(fake.uploads).toHaveLength(0);
@@ -170,6 +208,7 @@ describe('真实引擎的假能力测试（不访问文件、进程或网络）'
       () => {},
       async () => false,
       fake.deps,
+      async () => {},
     );
     await engine.run();
     expect(engine.task.status).toBe('cancelled');

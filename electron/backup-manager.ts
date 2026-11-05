@@ -1,3 +1,4 @@
+import { workbenchHeader } from './workbench';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { shellQuote as q, remoteJar, type Server, type Target } from '../src/model';
@@ -75,29 +76,18 @@ export function cleanupBackupsScript(
     throw new Error('备份清理范围无效');
   const verify = (e: (typeof entries)[number]) =>
     `check_file ${q('./' + path.posix.basename(e.path))} ${q(String(e.size))} ${q(String(e.modified))} ${q(e.hash)}`;
-  return `set -eu
-(
-cd -P -- ${q(path.posix.normalize(target.directory))}
-[ "$(pwd -P)" = ${q(path.posix.normalize(target.directory))} ] || { printf 'REJECTED:部署目录包含链接\\n'; exit 1; }
-mkdir -m 700 -- './.deploy-center.lock' || { printf 'REJECTED:目标已有任务锁\\n'; exit 1; }
-owner=${q(auditId)}
-cleanup_lock() { if [ ! -L './.deploy-center.lock' ]; then ( cd -P -- './.deploy-center.lock' 2>/dev/null && [ "$(pwd -P)" = ${q(path.posix.normalize(target.directory) + '/.deploy-center.lock')} ] && [ "$(cat owner 2>/dev/null || true)" = "$owner" ] && rm -f -- owner created ) || true; rmdir -- './.deploy-center.lock' 2>/dev/null || true; fi; }
+  return workbenchHeader(target, auditId) +
+`[ -d "$DIR" ] && dc_path "$DIR" || { printf 'REJECTED:部署目录包含链接或归属不符\\n'; exit 1; }
+dc_acquire || { printf 'REJECTED:目标已有任务锁\\n'; exit 1; }
+cleanup_lock() {
+  if dc_lock; then
+    if dc_file "$LOCK/pid"; then rm -- "$LOCK/pid"; fi
+    dc_unlock || true
+  fi
+}
 trap cleanup_lock EXIT
 trap 'exit 129' HUP INT TERM
-( cd -P -- './.deploy-center.lock'; [ "$(pwd -P)" = ${q(path.posix.normalize(target.directory) + '/.deploy-center.lock')} ]; printf '%s' "$owner" > owner; date +%s > created )
-[ ! -L './.deploy-center' ] || { printf 'REJECTED:工具目录包含链接\\n'; exit 1; }
-if [ ! -e './.deploy-center' ]; then mkdir -m 700 -- './.deploy-center'; fi
-[ -d './.deploy-center' ] && [ -O './.deploy-center' ] || { printf 'REJECTED:工具目录归属不符\\n'; exit 1; }
-(
-cd -P -- './.deploy-center'
-[ "$(pwd -P)" = ${q(path.posix.normalize(target.directory) + '/.deploy-center')} ] || { printf 'REJECTED:工具目录路径变化\\n'; exit 1; }
-mkdir -m 700 -- ${q('./' + auditId)}
-(
-cd -P -- ${q('./' + auditId)}
-[ "$(pwd -P)" = ${q(path.posix.normalize(target.directory) + '/.deploy-center/' + auditId)} ] || { printf 'REJECTED:核实目录路径变化\\n'; exit 1; }
-printf '%s' "$BASHPID" > pid; printf RUNNING > state
-set +e
-(
+(umask 077; set -C; printf '%s %s %s\\n' "$$" "$(dc_proc "$$")" "$(cat /proc/sys/kernel/random/boot_id)" > "$LOCK/pid")
 set -eu
 cd -P -- ${q(directory)}
 [ "$(pwd -P)" = ${q(directory)} ] || { printf 'REJECTED:备份目录包含链接\\n'; exit 1; }
@@ -109,11 +99,6 @@ failed=0
 ${entries.map((e) => `if ${verify(e)} && rm -f -- ${q('./' + path.posix.basename(e.path))}; then printf 'DELETED\\t%s\\n' ${q(e.id)}; else printf 'FAILED\\t%s\\n' ${q(e.id)}; failed=1; fi`).join('\n')}
 printf 'FINISHED\\n'
 exit "$failed"
-)
-code=$?; printf '%s' "$code" > exit-code; printf FINISHED > state; exit "$code"
-)
-)
-)
 `;
 }
 export class BackupManager {
@@ -269,7 +254,7 @@ export class BackupManager {
         effects: [
           '只列出本机实际部署任务确认创建的备份，导入历史不作为删除依据。',
           '清理前再次核对文件大小、修改时间和完整指纹，不一致就保留。',
-          '清理时临时占用目标任务锁，并在 .deploy-center 下创建小型核实记录。',
+          '清理时临时占用目标任务锁，审计结果保存到本机。',
           '保留数量只用于建议选择，不会后台静默删除；每批最多 100 个文件。',
           ...(records.length === 2000
             ? ['本次最多列出 2000 条未清理记录，完成后可再次查询更早记录。']

@@ -194,6 +194,8 @@ export type RunTarget = {
   upload: { bytes: number; total: number; percent: number; speed: number };
   hashMismatch: boolean;
   remote?: {
+    protocol?: 2;
+    finalState?: string;
     jobDir: string;
     lockDir: string;
     stagePath: string;
@@ -209,6 +211,7 @@ export type RunTarget = {
   elapsed: number;
   error?: string;
   recovery?: string;
+  cleanupWarning?: string;
 };
 export type Task = {
   id: string;
@@ -260,6 +263,7 @@ export type History = {
   logs: string[];
   error?: string;
   recovery?: string;
+  cleanupWarning?: string;
   note?: string;
   deployedCommit?: string;
 };

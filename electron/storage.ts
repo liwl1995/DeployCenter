@@ -18,12 +18,14 @@ import type { LogContext } from '../src/features';
 import { plainPath } from './managed-path';
 import { parseTaskRecord } from './task-record';
 import { backupConnection, RemoteBackupCatalog } from './backup-catalog';
+import type { Receipt } from './workbench';
 import type { MaintenanceRecord } from '../src/features';
 
 export type Cryptography = {
   encrypt(value: string): Promise<Buffer>;
   decrypt(value: Buffer): Promise<string>;
 };
+export const databaseVersion = 5;
 export const productionSeed = emptyDatabase;
 export class Storage {
   private sql!: Sqlite.Database;
@@ -69,11 +71,11 @@ export class Storage {
       const version = Number(
         (this.sql.prepare('PRAGMA user_version').get() as { user_version: number }).user_version,
       );
-      if (version > 4) throw new Error('数据库由更新版本创建，请升级应用');
+      if (version > databaseVersion) throw new Error('数据库由更新版本创建，请升级应用');
       this.sql.pragma('journal_mode = WAL');
       this.sql.pragma('synchronous = FULL');
       this.sql.pragma('busy_timeout = 5000');
-      if (version < 4) {
+      if (version < databaseVersion) {
         // 迁移在事务内执行；原数据库先 checkpoint 并备份，失败不替换原文件。
         if (fs.statSync(file).size > 0) this.backup();
         this.sql.transaction(() => {
@@ -82,7 +84,10 @@ export class Storage {
           );
           ArtifactStore.initialize(this.sql);
           RemoteBackupCatalog.initialize(this.sql);
-          this.sql.pragma('user_version = 4');
+          this.sql.exec(
+            'CREATE TABLE IF NOT EXISTS workbench_receipts (scope TEXT NOT NULL, owner TEXT NOT NULL, json TEXT NOT NULL, PRIMARY KEY (scope,owner));',
+          );
+          this.sql.pragma('user_version = ' + databaseVersion);
         })();
       }
     } catch (e) {
@@ -247,11 +252,83 @@ export class Storage {
         ['running', 'cancelling'].includes(task.status) ? 1 : 0,
       );
   }
-  complete(task: Task) {
+  workbenchReceipts(scopes: Set<string>): Receipt[] {
+    const rows = this.sql.prepare('SELECT scope,json FROM workbench_receipts').all() as {
+      scope: string;
+      json: string;
+    }[];
+    return rows.filter((row) => scopes.has(row.scope)).map((row) => JSON.parse(row.json) as Receipt);
+  }
+  persistWorkbench(task: Task, targetId: string, receipt: Receipt, imported = false) {
+    // 日志先落盘，再在 SQLite 提交远端交接确认。清理许可只在两步成功后返回。
+    const fd = fs.openSync(this.logPath(task.id, targetId), 'r+');
+    try {
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const previous = this.state;
+    try {
+      this.sql.transaction(() => {
+        this.saveTask(task);
+        if (imported) {
+          this.state = recordTask(this.state, task, false);
+          this.writeState();
+        }
+        this.sql
+          .prepare('INSERT OR REPLACE INTO workbench_receipts VALUES (?,?,?)')
+          .run(receipt.scope, receipt.owner, JSON.stringify({ ...receipt, taskId: task.id, targetId }));
+      })();
+    } catch (error) {
+      this.state = previous;
+      throw error;
+    }
+  }
+  discardUncommittedLog(taskId: string, targetId: string) {
+    if (!this.task(taskId)) fs.rmSync(this.logPath(taskId, targetId), { force: true });
+  }
+  private setCleanupWarning(taskId: string, targetId: string, warning?: string) {
+    const task = this.task(taskId);
+    const run = task?.targets.find((entry) => entry.target.id === targetId);
+    if (task && run && run.cleanupWarning !== warning) {
+      run.cleanupWarning = warning;
+      this.sql.prepare('UPDATE tasks SET json=? WHERE id=?').run(JSON.stringify(task), taskId);
+    }
+    const history = this.state.history.map((entry) =>
+      entry.taskId === taskId && entry.target.id === targetId
+        ? { ...entry, cleanupWarning: warning }
+        : entry,
+    );
+    this.state = { ...this.state, history };
+    this.writeState();
+  }
+  workbenchCleanupPending(taskId: string, targetId: string, warning: string) {
+    this.setCleanupWarning(taskId, targetId, warning);
+  }
+  workbenchCleaned(receipt: Receipt) {
+    const previous = this.state;
+    try {
+      this.sql.transaction(() => {
+        const row = this.sql
+          .prepare('SELECT json FROM workbench_receipts WHERE scope=? AND owner=?')
+          .get(receipt.scope, receipt.owner) as { json: string } | undefined;
+        if (!row) return;
+        const { taskId, targetId } = JSON.parse(row.json) as { taskId?: string; targetId?: string };
+        if (taskId && targetId) this.setCleanupWarning(taskId, targetId);
+        this.sql
+          .prepare('DELETE FROM workbench_receipts WHERE scope=? AND owner=?')
+          .run(receipt.scope, receipt.owner);
+      })();
+    } catch (error) {
+      this.state = previous;
+      throw error;
+    }
+  }
+  complete(task: Task, updateTargets = true) {
     // 任务结果、目标版本与历史在同一事务提交，崩溃不能留下“成功但版本未更新”。
     this.sql.transaction(() => {
       this.saveTask(task);
-      if (!task.dryRun) this.state = recordTask(this.state, task);
+      if (!task.dryRun) this.state = recordTask(this.state, task, updateTargets);
       for (const h of this.state.history) h.logs = [];
       for (const r of Object.values(this.state.taskHistory)) r.buildLogs = [];
       this.writeState();
@@ -445,7 +522,7 @@ export class Storage {
       for (const r of task.targets)
         if (
           ['running', 'rollingback'].includes(r.status) ||
-          (r.remote && !['success', 'unverified', 'rolledback', 'failed'].includes(r.status))
+          (r.remote && r.remote.phase !== 'complete')
         ) {
           r.status = 'unknown';
           r.error = '上次应用退出时任务未结束，请核实远端任务；不会自动重试替换。';

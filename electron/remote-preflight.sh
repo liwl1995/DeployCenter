@@ -1,18 +1,33 @@
 set -Eeuo pipefail
 fail() { printf '%s\n' "$*" >&2; exit 1; }
-for name in bash mkdir cp mv chmod stat df awk base64 tail head nohup timeout cat dirname readlink rm rmdir date sleep chown; do command -v "$name" >/dev/null || fail "远端缺少命令：$name"; done
+for name in bash mkdir cp mv chmod stat df awk base64 tail head nohup timeout cat dirname readlink rm rmdir date sleep chown flock basename; do command -v "$name" >/dev/null || fail "远端缺少命令：$name"; done
+[ -r /proc/sys/kernel/random/boot_id ] || fail '远端无法核对进程启动身份'
+dc_path "$DIR" || fail '部署目录包含符号链接，或实际路径与配置不一致'
 if [ ! -d "$DIR" ]; then [ "$CREATE_DIR" = 1 ] || fail '部署目录不存在，未允许创建'; mkdir -p -- "$DIR"; fi
 [ -w "$DIR" ] || fail '部署目录不可写'
 [ ! -L "$JAR" ] || fail '目标 JAR 是符号链接，请配置实际文件路径'
 if [ -e "$JAR" ]; then [ -f "$JAR" ] && [ -r "$JAR" ] || fail '旧 JAR 不是可读普通文件'; fi
-if ! mkdir -- "$LOCK" 2>/dev/null; then fail "已有任务锁，持有者=$(cat "$LOCK/owner" 2>/dev/null || true)，时间=$(cat "$LOCK/created" 2>/dev/null || true)，禁止交叉替换：$LOCK"; fi
-printf '%s' "$OWNER" > "$LOCK/owner"; date +%s > "$LOCK/created"
-cleanup_failure() { code=$?; if [ "$code" != 0 ] && [ "$(cat "$LOCK/owner" 2>/dev/null || true)" = "$OWNER" ]; then rm -f -- "$LOCK/owner" "$LOCK/created"; rmdir -- "$LOCK" 2>/dev/null || true; fi; }
+if ! dc_acquire 2>/dev/null; then
+  fail '目标已有任务锁。请核实远程工作台，禁止交叉替换。'
+fi
+claimed=0
+cleanup_failure() {
+  code=$?
+  if [ "$code" != 0 ] && [ "$claimed" = 0 ]; then dc_unlock || true; fi
+}
 trap cleanup_failure EXIT
-root="$(dirname "$JOB")"
-[ ! -L "$root" ] || fail '任务目录不能是符号链接'
-mkdir -p -- "$root"; [ -O "$root" ] || fail '任务目录不属于当前用户'; chmod 700 "$root"
-mkdir -m 700 -- "$JOB"
+shopt -s nullglob dotglob
+dc_path "$JOB" || fail '远程工作台包含符号链接'
+if [ -e "$JOB" ]; then
+  dc_dir "$JOB" || fail '远程工作台目录归属不符'
+  entries=("$JOB"/*)
+  if [ "${#entries[@]}" -ne 0 ]; then
+    for entry in "${entries[@]}"; do printf '工作台已有内容：%q\n' "${entry##*/}" >&2; done
+    fail '远程工作台已有任务或未知文件，请先核实上一任务。'
+  fi
+  # 空挂载点无法 rmdir。重新在部署目录下创建，避免 mv 跨挂载点退化为复制。
+  rmdir -- "$JOB" || fail '空工作台不能安全复用，可能是独立挂载点'
+fi
 algorithm=none
 if command -v sha256sum >/dev/null; then algorithm=sha256sum; elif command -v shasum >/dev/null; then algorithm=shasum; elif command -v openssl >/dev/null; then algorithm=openssl; fi
 hash_file() { case "$algorithm" in sha256sum) sha256sum -- "$1" | awk '{print $1}';; shasum) shasum -a 256 -- "$1" | awk '{print $1}';; openssl) openssl dgst -sha256 "$1" | awk '{print $NF}';; none) printf '';; esac; }
@@ -30,6 +45,14 @@ if [ "$BACKUP_ENABLED" = 1 ] && [ "$old_exists" = 1 ]; then
 fi
 if [ "$MODE" = docker ]; then command -v docker >/dev/null || fail '远端未安装 Docker'; command -v tar >/dev/null || fail '容器内校验需要宿主机 tar'; docker inspect "$CONTAINER" >/dev/null; fi
 if [ "$HEALTH_TYPE" = http ] && [ "$HEALTH_LOCATION" != local ]; then command -v curl >/dev/null || fail 'HTTP 健康检查需要 curl'; fi
+umask 077
+mkdir -m 700 -- "$JOB"
+claimed=1
+( set -C
+  printf '%s\n%s\n' "$OWNER" "$TASK_INFO" > "$JOB/task"
+  : > "$JOB/journal"
+  : > "$JOB/output.log"
+  printf 'PREPARED' > "$JOB/state"
+)
 printf 'old_exists=%s\nold_size=%s\nold_hash=%s\nold_mode=%s\nalgorithm=%s\n' "$old_exists" "$old_size" "$old_hash" "$old_mode" "$algorithm" > "$JOB/preflight"
-printf 'PREPARED' > "$JOB/state"
 printf '远端预检通过\n'

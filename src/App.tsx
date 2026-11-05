@@ -79,6 +79,7 @@ import {
 import { deploymentBlockReason, HashValue, PrecheckPanel, VersionFacts } from './DeployDetails';
 import type { LocalPrecheck } from './features';
 import { RemoteBackups, BackupAudit } from './RemoteBackups';
+import { WorkbenchReviewPanel } from './WorkbenchReview';
 import { Overview, PresetShelf, FirstGuide, ShortcutHelp } from './WorkspaceHome';
 import { preparePreset, type WorkspacePage } from './workspace-model';
 import { TaskHistory } from './TaskHistory';
@@ -293,6 +294,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     logs?: string;
     logSession?: string;
     lockTarget?: string;
+    workbenchTarget?: string;
+    workbench?: import('./features').WorkbenchReview;
     diagnostic?: { target?: Target; server: Server; kind?: DiagnosticKind };
     lock?: { token: string; owner: string; created: number; stale: boolean; message: string };
   } | null>(null);
@@ -1989,6 +1992,17 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                                       }),
                                   },
                                   {
+                                    label: '核实远程工作台',
+                                    disabled: isActive(task),
+                                    reason: isActive(task) ? '请先等待当前任务结束' : undefined,
+                                    onClick: () =>
+                                      setNativeDialog({
+                                        title: t.name + ' · 核实远程工作台',
+                                        server: db.servers.find((s) => s.id === t.serverId),
+                                        workbenchTarget: t.id,
+                                      }),
+                                  },
+                                  {
                                     label: '检查或接管任务锁',
                                     disabled: isActive(task),
                                     reason: isActive(task) ? '任务执行中不能接管锁' : undefined,
@@ -3085,7 +3099,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         </main>
         <footer className="workspace-footer" aria-label="应用状态">
           <span className="footer-version">
-            {desktop ? 'v' + (boot?.version || '1.2.4') : '界面原型 v0.3'}
+            {desktop ? 'v' + (boot?.version || '1.4.0') : '界面原型 v0.3'}
           </span>
           <button
             className="footer-directory"
@@ -3408,6 +3422,18 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       )}
       {nativeDialog && (
         <Modal title={nativeDialog.title} wide onClose={() => setNativeDialog(null)}>
+          {nativeDialog.workbench && (
+            <WorkbenchReviewPanel
+              key={nativeDialog.workbench.token}
+              review={nativeDialog.workbench}
+              onDone={(result) => {
+                setNativeDialog(null);
+                notify(result);
+                void desktop!.load().then((state) => setUnfinished(state.unfinished)).catch(() => {});
+                void desktop!.listTasks().then(setTaskRows).catch(() => {});
+              }}
+            />
+          )}
           {nativeDialog.lock && (
             <LockTakeover
               {...nativeDialog.lock}
@@ -3443,9 +3469,21 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                       .recover!.targets.filter((r) => r.remote && r.remote.phase !== 'complete')
                       .map((r) => r.server)
               }
-              label={nativeDialog.recover ? '核实原任务' : '测试连接'}
+              label={
+                nativeDialog.recover
+                  ? '核实原任务'
+                  : nativeDialog.workbenchTarget
+                    ? '读取远程工作台'
+                    : '测试连接'
+              }
               onSubmit={async (values) => {
-                if (nativeDialog.server && nativeDialog.lockTarget) {
+                if (nativeDialog.server && nativeDialog.workbenchTarget) {
+                  const workbench = await desktop!.inspectWorkbench(
+                    nativeDialog.workbenchTarget,
+                    values[nativeDialog.server.id],
+                  );
+                  setNativeDialog({ title: nativeDialog.title, workbench });
+                } else if (nativeDialog.server && nativeDialog.lockTarget) {
                   const lock = await desktop!.inspectLock(
                     nativeDialog.lockTarget,
                     values[nativeDialog.server.id],
@@ -4046,6 +4084,9 @@ function TaskView({
                           {r.recovery || '正在按配置尝试自动回滚。'}
                         </p>
                       )}
+                      {r.cleanupWarning && (
+                        <p className="warning" role="status">{r.cleanupWarning}</p>
+                      )}
                       {task.status === 'cancelling' && (
                         <p className="warning" role="status">
                           取消中：等待当前目标到达安全边界，不强制中断替换。
@@ -4323,6 +4364,7 @@ function HistoryDetail({
           {h.recovery}
         </p>
       )}
+      {h.cleanupWarning && <p className="warning">{h.cleanupWarning}</p>}
       <h3>构建日志</h3>
       <LogViewer lines={nativeLog?.build || taskRecord?.buildLogs || []} />
       <h3 className="mt">目标日志</h3>

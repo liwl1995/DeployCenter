@@ -1,10 +1,12 @@
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { shellQuote as q, seconds, type RunTarget, type Step, type Task } from '../src/model';
 import { acceptBuild } from '../src/validation';
 import { jarPath } from './files';
 import { nativeCapabilities } from './native-capabilities';
 import { knownCommit, targetLabels } from '../src/presentation';
 import type { EngineDependencies } from './capabilities';
+import { applyRemoteJournal, targetOutcome } from './remote-events';
 import { localHealth } from './health';
 import { mustExec, type Transport } from './ssh';
 import {
@@ -14,11 +16,22 @@ import {
   remotePaths,
   writeRemoteFile,
   cleanupPrepared,
+  launchRunner,
   dryRunScript,
   type DockerInfo,
 } from './remote';
 import { errorText, type WorkerInput, type WorkerMessage } from './contracts';
 import type { TrustRequest } from '../src/platform';
+import {
+  cleanWorkbench,
+  isFinalState,
+  pollWorkbench,
+  verifyWorkbench,
+  workbenchHeader,
+  workbenchScope,
+  type FinalState,
+  type Receipt,
+} from './workbench';
 
 const completed = (s: string) =>
   ['success', 'unverified', 'failed', 'rolledback', 'skipped', 'cancelled'].includes(s);
@@ -34,6 +47,7 @@ export class Deployment {
     private send: (message: WorkerMessage) => void,
     private trust: (request: TrustRequest, key: string) => Promise<boolean>,
     private deps: EngineDependencies = nativeCapabilities(input.credentials, input.artifactSources),
+    private persist?: (task: Task, targetId: string, receipt: Receipt) => Promise<void>,
   ) {
     this.task = structuredClone(input.task);
   }
@@ -132,13 +146,20 @@ export class Deployment {
     });
   }
   async cancel() {
+    const r = this.task.targets[this.task.active];
+    const settling = r?.remote?.protocol === 2 && completed(r.status);
+    if (settling && this.task.active === this.task.targets.length - 1) return;
     this.cancelled = true;
     this.task.status = 'cancelling';
-    const r = this.task.targets[this.task.active];
     this.emit(true);
+    // 已取得终态时只停止后续目标，不能打断正在进行的本机保存或工作台清理。
+    if (settling) return;
     if (r?.remote && ['running', 'launching'].includes(r.remote.phase)) {
       try {
-        await mustExec(this.transport!, 'printf 1 > ' + q(r.remote.jobDir + '/cancel'));
+        if (r.remote.protocol === 2)
+          await this.writeControl(r, 'cancel', '1');
+        else
+          await mustExec(this.transport!, 'printf 1 > ' + q(r.remote.jobDir + '/cancel'));
         this.log('已向远端写入取消请求，等待安全边界。\n', r);
       } catch {
         this.log('取消标记暂未送达；不会强制杀死远端切换，需核实执行结果。\n', r);
@@ -372,6 +393,29 @@ export class Deployment {
     t.buildPhase = 3;
     this.emit(true);
   }
+  private owner(r: RunTarget) {
+    return this.task.id + '-' + r.target.id;
+  }
+  private async writeControl(r: RunTarget, name: 'cancel' | 'local-health', value: string) {
+    const script = workbenchHeader(r.target, this.owner(r)) + [
+      'dc_verify',
+      'if [ -e "$JOB/' + name + '" ]; then [ "$(dc_value "$JOB/' + name + '")" = ' + q(value) + ' ];',
+      'else (umask 077; set -C; printf "%s" ' + q(value) + ' > "$JOB/' + name + '"); fi',
+    ].join('\n');
+    await mustExec(this.transport!, 'bash -s', script);
+  }
+  private async retryWorkbenchCleanup(r: RunTarget) {
+    const scope = workbenchScope(r.target, r.server);
+    for (const receipt of this.input.workbenchReceipts || []) {
+      if (receipt.scope !== scope) continue;
+      try {
+        await cleanWorkbench(this.transport!, r.target, receipt);
+        this.send({ kind: 'workbench-cleaned', receipt });
+      } catch {
+        // 不覆盖远端现场。预检会在拿到锁后再次判断能否复用。
+      }
+    }
+  }
   private async deployTarget(r: RunTarget) {
     r.startedAt = this.deps.clock.now();
     r.status = 'running';
@@ -390,7 +434,9 @@ export class Deployment {
         if (!Number.isSafeInteger(size) || size <= 0 || size !== this.task.artifact.size)
           throw new Error('远端备份文件无效或大小与历史记录不一致');
       }
+      await this.retryWorkbenchCleanup(r);
       r.remote = remotePaths(this.task, r);
+      this.emit(true);
       const checked = await this.transport.exec('bash -s', {
         input: preflightScript(this.task, r, this.input.allowWeak, docker),
         timeout: 120000,
@@ -470,10 +516,7 @@ export class Deployment {
       );
       r.remote.phase = 'launching';
       this.emit(true);
-      await mustExec(
-        this.transport,
-        `printf LAUNCHING > ${q(r.remote.jobDir + '/state')}; nohup bash ${q(r.remote.jobDir + '/runner.sh')} > ${q(r.remote.jobDir + '/output.log')} 2>&1 < /dev/null & pid=$!; printf '%s' "$pid" > ${q(r.remote.jobDir + '/pid')}; printf '%s' "$pid"`,
-      );
+      await mustExec(this.transport, 'bash -s', launchRunner(r, this.owner(r)));
       r.remote.phase = 'running';
       this.emit(true);
       await this.monitor(r);
@@ -493,8 +536,9 @@ export class Deployment {
             this.transport?.close();
             this.transport = this.makeTransport(r, true);
             await this.transport.connect();
-            await cleanupPrepared(this.transport, this.task, r);
-            r.remote.phase = 'complete';
+            const state = this.cancelled ? 'CANCELLED' : 'FAILED';
+            if (await this.finishPrepared(r, state)) await this.finishWorkbench(r, state);
+            else r.remote.phase = 'complete';
           } catch (cleanupError) {
             this.task.status = 'interrupted';
             r.recovery =
@@ -510,52 +554,12 @@ export class Deployment {
       this.emit(true);
     }
   }
-  private journal(r: RunTarget, text: string) {
-    for (const line of text.split('\n').filter(Boolean)) {
-      const [stamp, kind, key, status] = line.split('\t');
-      const time = Number(stamp);
-      if (!Number.isFinite(time)) throw new Error('远端任务事件无效');
-      if (kind === 'BACKUP') {
-        r.backupCreated = true;
-        r.backupCreatedAt = time;
-        r.backupPath = r.plannedBackupPath;
-        r.backupSize = Number(key);
-        r.backupHash = /^[a-f0-9]{64}$/i.test(status) ? status : undefined;
-        continue;
-      }
-      if (kind !== 'STEP') continue;
-      let index = r.steps.findIndex((s) => s.key === key);
-      if (key === 'rollback' && index < 0) {
-        r.steps.push({ key: 'rollback', label: '恢复旧版本并重新启动、检查', critical: true });
-        index = r.steps.length - 1;
-      }
-      if (index < 0) continue;
-      const step = r.steps[index];
-      r.phase = index;
-      if (status === 'START') {
-        step.startedAt = time;
-        step.status = 'running';
-        if (key === 'rollback') r.status = 'rollingback';
-      } else {
-        step.endedAt = time;
-        step.elapsed = Math.max(0, time - (step.startedAt ?? time)) / 1000;
-        step.status = status === 'OK' ? 'success' : status === 'FAIL' ? 'failed' : 'skipped';
-        if (status !== 'FAIL') r.phase = index + 1;
-        else {
-          r.steps.slice(index + 1).forEach((s) => {
-            if (s.status === 'pending') s.status = 'skipped';
-          });
-          r.error = '远端步骤失败：' + step.label;
-        }
-      }
-    }
-  }
   private async readRemote(r: RunTarget, final = false) {
     const remote = r.remote!;
     const journal = await this.transport!.read(remote.jobDir + '/journal', remote.journalOffset);
     const last = journal.lastIndexOf(10);
     if (last >= 0) {
-      this.journal(r, journal.subarray(0, last + 1).toString('utf8'));
+      applyRemoteJournal(r, journal.subarray(0, last + 1).toString('utf8'));
       remote.journalOffset += last + 1;
     }
     for (let i = 0; i < 20; i++) {
@@ -575,71 +579,139 @@ export class Deployment {
       if (data.length < 262144) break;
     }
   }
+  private applyFinalState(r: RunTarget, state: FinalState) {
+    r.status = targetOutcome(state);
+    if (state === 'ROLLBACK_FAILED') {
+      r.error = '新版本失败且自动回滚失败';
+      r.recovery = '请查看回滚阶段日志，原备份未删除：' + (r.backupPath || '无可用备份');
+    } else if (state === 'ROLLEDBACK')
+      r.recovery = '已恢复旧 JAR，并按目标配置重新启动和检查。';
+    else if (state === 'FAILED')
+      r.recovery = r.backupCreated
+        ? '存在备份，但未成功自动恢复。请查看日志或发起历史回滚。'
+        : '无本次有效备份，请查看日志和排查命令，必要时选择更早的历史备份。';
+    if (['success', 'unverified'].includes(r.status)) r.phase = r.steps.length;
+    this.log(
+      `目标结果：${this.task.dryRun && r.status === 'success' ? '检查通过' : targetLabels[r.status]}。\n`,
+      r,
+      true,
+    );
+  }
+  private async finishPrepared(r: RunTarget, state: 'CANCELLED' | 'FAILED') {
+    const result = (await mustExec(
+      this.transport!,
+      'bash -s',
+      workbenchHeader(r.target, this.owner(r)) + [
+        'dc_path "$JOB"; dc_path "$LOCK"',
+        'if ! dc_lock; then printf NOT_OURS; exit 0; fi',
+        'dc_verify',
+        'current="$(dc_value "$JOB/state")"',
+        'if dc_terminal "$current"; then printf "%s" "$current"; exit 0; fi',
+        '[ "$current" = PREPARED ] && [ ! -e "$JOB/pid" ] && [ ! -L "$JOB/pid" ]',
+        '(umask 077; set -C; printf "%s" ' + q(state) + ' > "$JOB/state.next")',
+        'mv -f -- "$JOB/state.next" "$JOB/state"; printf "%s" ' + q(state),
+      ].join('\n'),
+    )).trim();
+    if (result === 'NOT_OURS') return false;
+    if (result !== state) throw new Error('远端已留下其他结果，请重新核实');
+    return true;
+  }
+  private async finishWorkbench(r: RunTarget, state: FinalState) {
+    const job = r.remote!;
+    const journalDecoder = new StringDecoder('utf8');
+    const logDecoder = new StringDecoder('utf8');
+    let journalTail = '';
+    const receipt = await verifyWorkbench(
+      this.transport!, r, this.owner(r), state,
+      (file, chunk, offset) => {
+        if (file === 'journal') {
+          journalTail += journalDecoder.write(chunk.subarray(Math.max(0, job.journalOffset - offset)));
+          const end = journalTail.lastIndexOf('\n') + 1;
+          if (end > 0) {
+            applyRemoteJournal(r, journalTail.slice(0, end));
+            journalTail = journalTail.slice(end);
+          }
+          if (journalTail.length > 65536) throw new Error('远端步骤日志格式异常');
+        } else if (file === 'output.log') {
+          this.log(logDecoder.write(chunk.subarray(Math.max(0, job.logOffset - offset))), r);
+        }
+      },
+    );
+    if (journalTail || journalDecoder.end()) throw new Error('远端步骤日志没有完整结束');
+    const journalSize = receipt.files.find((file) => file.file === 'journal')!.size;
+    const logSize = receipt.files.find((file) => file.file === 'output.log')!.size;
+    if (job.journalOffset > journalSize || job.logOffset > logSize)
+      throw new Error('远端日志在确认前缩短，已保留现场');
+    this.log(logDecoder.end(), r, true);
+    this.applyFinalState(r, state);
+    r.endedAt = this.deps.clock.now();
+    r.elapsed = (r.endedAt - (r.startedAt || r.endedAt)) / 1000;
+    const checkpoint = structuredClone(this.task);
+    const target = checkpoint.targets[checkpoint.active];
+    target.remote!.phase = 'complete';
+    target.remote!.finalState = state;
+    target.remote!.journalOffset = journalSize;
+    target.remote!.logOffset = logSize;
+    if (!this.persist) throw new Error('本机工作台保存通道不可用');
+    await this.persist(checkpoint, r.target.id, receipt);
+    Object.assign(job, target.remote);
+    try {
+      await cleanWorkbench(this.transport!, r.target, receipt);
+      this.send({ kind: 'workbench-cleaned', receipt });
+    } catch (e) {
+      r.cleanupWarning = '远程工作文件待清理：' + this.redact(errorText(e));
+      this.log(r.cleanupWarning + '\n', r, true);
+    }
+  }
   private async monitor(r: RunTarget) {
     let empty = 0;
     while (true) {
-      const state = (
+      const versioned = r.remote?.protocol === 2;
+      const polled = versioned ? await pollWorkbench(this.transport!, r, this.owner(r)) : undefined;
+      const state = polled?.state ?? (
         await mustExec(this.transport!, 'cat -- ' + q(r.remote!.jobDir + '/state'))
       ).trim();
-      const final = [
-        'SUCCESS',
-        'UNVERIFIED',
-        'FAILED',
-        'ROLLEDBACK',
-        'ROLLBACK_FAILED',
-        'CANCELLED',
-      ].includes(state);
-      await this.readRemote(r, final);
-      this.emit(true);
-      if (state === 'AWAITING_LOCAL') {
-        const passed = await localHealth(
-          { ...r.target.health, startDelay: 0 }, // 静默等待已由远端 runner 执行，不重复等待。
-          this.deps.clock,
-          this.controller.signal,
-          (text) => this.log(text, r),
-        );
-        await mustExec(
-          this.transport!,
-          'printf ' + q(passed ? 'PASS' : 'FAIL') + ' > ' + q(r.remote!.jobDir + '/local-health'),
-        );
-      }
-      if (final) {
-        r.remote!.phase = 'complete';
-        r.status =
-          state === 'SUCCESS'
-            ? 'success'
-            : state === 'UNVERIFIED'
-              ? 'unverified'
-              : state === 'ROLLEDBACK'
-                ? 'rolledback'
-                : state === 'CANCELLED'
-                  ? 'cancelled'
-                  : 'failed';
-        if (state === 'ROLLBACK_FAILED') {
-          r.error = '新版本失败且自动回滚失败';
-          r.recovery = '请查看回滚阶段日志，原备份未删除：' + (r.backupPath || '无可用备份');
-        } else if (state === 'ROLLEDBACK')
-          r.recovery = '已恢复旧 JAR，并按目标配置重新启动和检查。';
-        else if (state === 'FAILED')
-          r.recovery = r.backupCreated
-            ? '存在备份，但未成功自动恢复。请查看日志或发起历史回滚。'
-            : '无本次有效备份，请查看日志和排查命令，必要时选择更早的历史备份。';
-        if (['success', 'unverified'].includes(r.status)) r.phase = r.steps.length;
-        this.log(
-          `目标结果：${this.task.dryRun && r.status === 'success' ? '检查通过' : targetLabels[r.status]}。\n`,
-          r,
-          true,
-        );
+      if (isFinalState(state)) {
+        if (polled) {
+          // 终态公布到监督进程真正退出之间可能相隔一个轮询周期。
+          if (polled.alive) {
+            await this.deps.clock.sleep(1000);
+            continue;
+          }
+          await this.finishWorkbench(r, state);
+        } else {
+          // 旧任务仍可按原地址核实，不尝试删除旧目录。
+          await this.readRemote(r, true);
+          r.remote!.phase = 'complete';
+          this.applyFinalState(r, state);
+        }
         return;
       }
       if (!['RUNNING', 'LAUNCHING', 'PREPARED', 'AWAITING_LOCAL'].includes(state))
         throw new Error('无法识别远端任务状态：' + state);
-      const alive = await this.transport!.exec(
-        `pid=$(cat ${q(r.remote!.jobDir + '/pid')} 2>/dev/null || true); case "$pid" in ''|*[!0-9]*) exit 1;; esac; kill -0 "$pid" 2>/dev/null`,
-      );
-      if (alive.code && ++empty >= 3)
-        throw new Error('远端任务进程已退出，但未写入最终状态，必须人工核实');
-      if (!alive.code) empty = 0;
+      await this.readRemote(r);
+      this.emit(true);
+      if (state === 'AWAITING_LOCAL') {
+        const passed = await localHealth(
+          { ...r.target.health, startDelay: 0 },
+          this.deps.clock,
+          this.controller.signal,
+          (text) => this.log(text, r),
+        );
+        if (versioned) await this.writeControl(r, 'local-health', passed ? 'PASS' : 'FAIL');
+        else
+          await mustExec(
+            this.transport!,
+            'printf ' + q(passed ? 'PASS' : 'FAIL') + ' > ' + q(r.remote!.jobDir + '/local-health'),
+          );
+      }
+      const alive = polled?.alive ?? !(await this.transport!.exec(
+        'pid=$(cat ' + q(r.remote!.jobDir + '/pid') +
+          ' 2>/dev/null || true); case "$pid" in ""|*[!0-9]*) exit 1;; esac; kill -0 "$pid" 2>/dev/null',
+      )).code;
+      if (!alive && ++empty >= 3)
+        throw new Error('远端任务进程已退出或身份无法核对，且没有最终结果，必须人工核实');
+      if (alive) empty = 0;
       await this.deps.clock.sleep(1000);
     }
   }
@@ -650,14 +722,19 @@ export class Deployment {
     t.active = t.targets.indexOf(r);
     this.transport = this.makeTransport(r, true);
     await this.transport.connect();
-    const state = (
-      await mustExec(this.transport, 'cat -- ' + q(r.remote!.jobDir + '/state'))
-    ).trim();
+    const state = r.remote!.protocol === 2
+      ? (await pollWorkbench(this.transport, r, this.owner(r))).state
+      : (await mustExec(this.transport, 'cat -- ' + q(r.remote!.jobDir + '/state'))).trim();
     if (state === 'PREPARED') {
-      await cleanupPrepared(this.transport, t, r);
-      r.status = 'cancelled';
-      r.remote!.phase = 'complete';
-      this.log('已清理尚未启动的上传任务，未修改运行版本。\n', r);
+      if (r.remote!.protocol === 2) {
+        if (!(await this.finishPrepared(r, 'CANCELLED'))) throw new Error('远端任务 ID 已变化');
+        await this.finishWorkbench(r, 'CANCELLED');
+      } else {
+        await cleanupPrepared(this.transport, t, r);
+        r.status = 'cancelled';
+        r.remote!.phase = 'complete';
+      }
+      this.log('已核实尚未启动的上传任务，未修改运行版本。\n', r);
     } else {
       r.status = 'running';
       this.log('只核实原任务，不重复上传、备份或替换，也不继续其他目标。\n', r);

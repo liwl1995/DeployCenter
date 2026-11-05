@@ -359,6 +359,7 @@ export function toHistory(task: Task): History[] {
       logs: [...r.logs],
       error: r.error,
       recovery: r.recovery,
+      cleanupWarning: r.cleanupWarning,
       note: task.note,
       deployedCommit: task.deployedCommit,
     }));

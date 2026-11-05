@@ -1,3 +1,4 @@
+import { workbenchPath, workbenchScope } from './workbench';
 import { randomBytes } from 'node:crypto';
 import { mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -112,6 +113,7 @@ export class Controller {
       if (!target) throw new Error('部署目标不属于当前服务');
       return target;
     });
+    if (!request.dryRun) for (const target of targets) workbenchPath(target);
     if (history && (targets.length !== 1 || targets[0].id !== history.target.id))
       throw new Error('回滚必须使用历史记录对应的单个目标');
     for (const b of Object.values(request.overrides)) validateBackup(b);
@@ -339,11 +341,16 @@ export class Controller {
         throw new Error('服务器身份已变化，请先恢复原连接配置再核实');
     }
     if (!task.targets.some((r) => r.remote && r.remote.phase !== 'complete')) {
-      task.status = 'failed';
+      const succeeded = task.targets.some((r) => r.status === 'success' || r.status === 'unverified');
+      const incomplete = task.targets.some((r) => r.status !== 'success' && r.status !== 'unverified');
+      task.status = succeeded
+        ? incomplete ? 'partial' : 'success'
+        : task.targets.some((r) => r.status === 'cancelled') &&
+          task.targets.every((r) => ['cancelled', 'skipped', 'pending'].includes(r.status))
+          ? 'cancelled' : 'failed';
       task.endedAt = Date.now();
       for (const r of task.targets)
-        if (!['success', 'unverified', 'rolledback', 'failed'].includes(r.status))
-          r.status = 'skipped';
+        if (r.status === 'pending' || r.status === 'running') r.status = 'skipped';
       this.storage.complete(task);
       this.emit({ kind: 'task', task });
       return task;
@@ -367,6 +374,11 @@ export class Controller {
   }
   private launch(input: WorkerInput) {
     input.artifactSources = this.storage.artifacts.sources();
+    if (input.kind === 'deploy' && !input.task.dryRun)
+      input.workbenchReceipts = this.storage.workbenchReceipts(
+        new Set(input.task.targets.map((run) => workbenchScope(run.target, run.server))),
+      );
+    let logWriteFailed = false;
     this.current = input.task;
     this.storage.saveTask(input.task);
     this.emit({ kind: 'task', task: input.task });
@@ -391,23 +403,64 @@ export class Controller {
       (message) => {
         if (message.kind === 'snapshot') {
           this.current = message.task;
-          this.storage.saveTask(message.task);
+          if (!logWriteFailed) this.storage.saveTask(message.task);
           this.emit({ kind: 'task', task: message.task });
         } else if (message.kind === 'log') {
-          const offset = this.storage.appendLog(
-            message.taskId,
-            message.text,
-            message.targetId,
-            message.context,
-          );
-          this.emit({ ...message, offset });
+          try {
+            const offset = this.storage.appendLog(
+              message.taskId,
+              message.text,
+              message.targetId,
+              message.context,
+            );
+            this.emit({ ...message, offset });
+          } catch {
+            logWriteFailed = true;
+          }
+        } else if (message.kind === 'handoff') {
+          const { receipt, task, targetId } = message;
+          let error: string | undefined;
+          try {
+            const target = task.targets[task.active];
+            if (
+              task.id !== input.task.id ||
+              target?.target.id !== targetId ||
+              target.remote?.protocol !== 2 ||
+              target.remote.phase !== 'complete' ||
+              receipt.owner !== task.id + '-' + targetId ||
+              receipt.scope !== workbenchScope(target.target, target.server)
+            )
+              throw new Error('任务身份不符');
+            if (logWriteFailed) throw new Error('本机完整日志写入失败');
+            this.storage.persistWorkbench(task, targetId, receipt);
+          } catch {
+            error = '本机未能保存完整结果和日志，远端工作台已保留。';
+          }
+          this.worker?.send({ kind: 'handoff-result', owner: receipt.owner, error });
+        } else if (message.kind === 'workbench-cleaned') {
+          try {
+            this.storage.workbenchCleaned(message.receipt);
+          } catch {
+            // 远端已清理；保留本机确认仍可在下一次连接时安全核实。
+          }
         } else if (message.kind === 'trust')
           void this.trust
             .request(message.request, message.key)
             .then((accepted) =>
               this.worker?.send({ kind: 'trust-result', id: message.request.id, accepted }),
             );
-        else if (message.kind === 'done') finish(message.task);
+        else if (message.kind === 'done') {
+          if (logWriteFailed && !message.task.dryRun) {
+            // 保留最近一次已持久化的偏移，恢复时重新读取尚未完整保存的日志。
+            const saved = this.storage.task(input.task.id) || structuredClone(input.task);
+            saved.status = 'interrupted';
+            for (const run of saved.targets) {
+              if (run.status === 'running' || run.status === 'rollingback') run.status = 'unknown';
+              if (run.status === 'unknown') run.error = '本机完整日志写入失败，请核实中断任务。';
+            }
+            finish(saved);
+          } else finish(message.task);
+        }
         else if (message.kind === 'fatal') {
           const task = structuredClone(this.current!);
           task.status = 'interrupted';

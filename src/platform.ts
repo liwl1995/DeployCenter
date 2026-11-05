@@ -147,6 +147,9 @@ export interface DesktopAPI {
   detectJdks(): Promise<{ name: string; path: string }[]>;
   checkTool(kind: 'jdk' | 'maven', value: string): Promise<string>;
   resolveAlias(serverId: string): Promise<{ host: string; user: string; port: number }>;
+  inspectWorkbench(targetId: string, credential?: string): Promise<import('./features').WorkbenchReview>;
+  resolveWorkbench(token: string, confirmation: string): Promise<string>;
+  cancelWorkbenchReview(token: string): Promise<void>;
   inspectLock(
     targetId: string,
     credential?: string,

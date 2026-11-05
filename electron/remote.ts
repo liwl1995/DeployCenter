@@ -1,21 +1,24 @@
 import { healthTiming } from '../src/health-timing';
 import preflight from './remote-preflight.sh';
 import runner from './remote-runner.sh';
+import workbench from './remote-workbench.sh';
+import { workbenchHeader, workbenchPath, validOwner } from './workbench';
 import { shellQuote as q, remoteJar, type RunTarget, type Task } from '../src/model';
 import { mustExec, type Transport } from './ssh';
 
-export function remotePaths(task: Task, target: RunTarget) {
-  const id = task.id + '-' + target.target.id;
-  if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error('部署目标内部标识不能用于远端任务目录');
-  const base = target.target.directory.replace(/\/$/, '');
-  const jobDir = base + '/.deploy-center/' + id;
+export function remotePaths(task: Task, target: RunTarget): NonNullable<RunTarget['remote']> {
+  const owner = task.id + '-' + target.target.id;
+  if (!validOwner(owner)) throw new Error('部署目标内部标识不能用于远端任务');
+  const base = workbenchPath(target.target);
+  const jobDir = base + '/.deploy-center';
   return {
+    protocol: 2,
     jobDir,
     lockDir: base + '/.deploy-center.lock',
-    stagePath: base + '/.' + target.target.fileName + '.' + id + '.uploading',
+    stagePath: jobDir + '/upload.jar',
     journalOffset: 0,
     logOffset: 0,
-    phase: 'prepared' as const,
+    phase: 'prepared',
   };
 }
 export type DockerInfo = {
@@ -72,21 +75,31 @@ export function header(task: Task, r: RunTarget, allowWeak: boolean, docker?: Do
     tcpPort = parsed[3];
   }
   const vars: Record<string, string> = {
-    DIR: target.directory,
+    DIR: workbenchPath(target),
     JAR: remoteJar(target),
     JOB: job.jobDir,
     STAGE: job.stagePath,
     LOCK: job.lockDir,
     OWNER: task.id + '-' + target.id,
-    RESTORE:
-      target.directory.replace(/\/$/, '') +
-      '/.' +
-      target.fileName +
-      '.' +
-      task.id +
-      '-' +
-      target.id +
-      '.restore',
+    RESTORE: job.jobDir + '/restore.jar',
+    TASK_INFO: JSON.stringify({
+      id: task.id,
+      targetId: target.id,
+      directory: workbenchPath(target),
+      fileName: target.fileName,
+      mode: target.mode,
+      operation: task.operation,
+      startedAt: task.startedAt,
+      artifact: {
+        size: task.artifact.size,
+        sha256: task.artifact.sha256,
+        modified: task.artifact.modified,
+      },
+      build: task.build,
+      branch: task.service.git.branch,
+      commit: task.deployedCommit,
+      backupPath: r.backup.enabled ? r.plannedBackupPath : undefined,
+    }),
     NEW_SIZE: String(task.artifact.size),
     NEW_HASH: task.artifact.sha256 || '',
     BACKUP: r.plannedBackupPath,
@@ -129,10 +142,10 @@ export function header(task: Task, r: RunTarget, allowWeak: boolean, docker?: Do
   );
 }
 export function preflightScript(task: Task, r: RunTarget, allowWeak: boolean, docker?: DockerInfo) {
-  return header(task, r, allowWeak, docker) + preflight;
+  return header(task, r, allowWeak, docker) + workbench + preflight;
 }
 export function runnerScript(task: Task, r: RunTarget, allowWeak: boolean, docker?: DockerInfo) {
-  return header(task, r, allowWeak, docker) + runner;
+  return header(task, r, allowWeak, docker) + workbench + runner;
 }
 export async function cleanupPrepared(transport: Transport, task: Task, r: RunTarget) {
   const job = r.remote;
@@ -143,8 +156,16 @@ export async function cleanupPrepared(transport: Transport, task: Task, r: RunTa
     `if [ "$(cat ${q(job.lockDir + '/owner')} 2>/dev/null)" = ${q(owner)} ] && [ "$(cat ${q(job.jobDir + '/state')} 2>/dev/null)" = PREPARED ]; then rm -f -- ${q(job.stagePath)} ${q(job.lockDir + '/owner')} ${q(job.lockDir + '/created')}; rmdir -- ${q(job.lockDir)}; printf CANCELLED > ${q(job.jobDir + '/state')}; fi`,
   );
 }
+export function launchRunner(target: RunTarget, owner: string) {
+  return workbenchHeader(target.target, owner) + [
+    'dc_verify; [ "$(dc_value "$JOB/state")" = PREPARED ]; dc_file "$JOB/runner.sh"',
+    '(umask 077; set -C; printf LAUNCHING > "$JOB/state.next")',
+    'mv -f -- "$JOB/state.next" "$JOB/state"',
+    'nohup bash "$JOB/runner.sh" > /dev/null 2>&1 < /dev/null &',
+  ].join('\n');
+}
 export async function writeRemoteFile(transport: Transport, file: string, text: string) {
-  await mustExec(transport, 'umask 077; cat > ' + q(file), text);
+  await mustExec(transport, 'umask 077; set -C; cat > ' + q(file), text);
 }
 
 export function dryRunScript(task: Task, r: RunTarget) {

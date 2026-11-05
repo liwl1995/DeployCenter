@@ -19,6 +19,8 @@ import { LogSessions, observeTask } from './observation';
 import { Storage } from './storage';
 import { migrationDestination, DataDirectory } from './data-directory';
 import { BackupManager } from './backup-manager';
+import { WorkbenchRecovery } from './workbench-recovery';
+import { workbenchHeader, workbenchPath } from './workbench';
 import { Controller } from './controller';
 import { detectJdks, inspectJar, checkJdk, resolveBuild, serviceInfo } from './files';
 import { runBatch, runProcess } from './process';
@@ -89,6 +91,7 @@ if (!lock) {
 }
 let win: BrowserWindow | undefined, storage: Storage, controller: Controller;
 let backups: BackupManager;
+let workbench: WorkbenchRecovery;
 const approvedJars = new Set<string>();
 const historySearch = new HistorySearch();
 const pendingLocks = new Map<
@@ -247,6 +250,15 @@ async function boot() {
         emit({ kind: 'database', database: storage.database() });
       },
     );
+    workbench = new WorkbenchRecovery(
+      storage,
+      (server, credential) => createTransport(server, {
+        credential,
+        pins: storage.pins(),
+        trust: (r, k) => controller.trust.request(r, k),
+      }),
+      () => !controller.active() && !backups.isBusy() && !storage.artifacts.isBusy(),
+    );
     const page = path.join(__dirname, '..', 'dist', 'index.html');
     const url = pathToFileURL(page).href;
     const smoke = process.argv.includes('--smoke');
@@ -294,6 +306,13 @@ async function boot() {
           );
         if (storage.artifacts.isBusy() && ['prepare', 'start', 'recover'].includes(name))
           throw new Error('正在整理本地产物，请完成后重新准备部署');
+        if (
+          workbench?.isBusy() &&
+          ['save', 'prepare', 'start', 'recover', 'takeover-lock', 'import-config',
+            'migrate-directory', 'restart', 'remove-old-data', 'apply-cleanup',
+            'apply-backups', 'reconcile-backup'].includes(name)
+        )
+          throw new Error('正在核实远程工作台，请等待结果后再操作');
         if (
           backups?.isBusy() &&
           [
@@ -361,6 +380,16 @@ async function boot() {
       if (server.auth === 'password' && !credential) throw new Error('请输入服务器密码');
       return credential;
     };
+    handle('inspect-workbench', async (value, supplied) => {
+      const targetId = id(value);
+      return workbench.inspect(targetId, await backupCredential(targetId, supplied));
+    });
+    handle('resolve-workbench', async (token, confirmation) => {
+      const message = await workbench.resolve(text(token, 100), text(confirmation));
+      emit({ kind: 'database', database: storage.database() });
+      return message;
+    });
+    handle('cancel-workbench-review', (token) => workbench.cancel(text(token, 100)));
     handle('preview-backups', async (value, supplied) => {
       const targetId = id(value);
       return backups.preview(targetId, await backupCredential(targetId, supplied));
@@ -678,20 +707,28 @@ async function boot() {
         });
       try {
         await transport.connect();
-        const lock = target.directory.replace(/\/$/, '') + '/.deploy-center.lock',
-          job = target.directory.replace(/\/$/, '') + '/.deploy-center/' + entry.owner;
         if (!/^[A-Za-z0-9_-]+$/.test(entry.owner)) throw new Error('锁持有者无效，请人工核实');
         await mustExec(
           transport,
-          `set -eu
-lock=${shellQuote(lock)}
-[ "$(cat "$lock/owner")" = ${shellQuote(entry.owner)} ] && [ "$(cat "$lock/created")" = ${shellQuote(String(entry.created))} ] || { printf '锁已变化，拒绝接管' >&2; exit 1; }
-[ $(( $(date +%s) - ${entry.created} )) -ge ${(storage.database().settings.staleLockMinutes || 120) * 60} ] || exit 1
-pid=$(cat ${shellQuote(job + '/pid')} 2>/dev/null || true)
-case "$pid" in ''|*[!0-9]*) :;; *) if kill -0 "$pid" 2>/dev/null; then printf '原任务进程仍在运行，禁止接管' >&2; exit 1; fi;; esac
-mkdir "$lock/takeover" || exit 1
-mv -- "$lock" ${shellQuote(lock + '.stale.' + token)}
-`,
+          'bash -s',
+          workbenchHeader(target, entry.owner) + [
+            'dc_lock; dc_path "$JOB"; exec 9<"$LOCK"; flock -n 9',
+            'dc_lock; [ "$(stat -Lc "%d:%i" -- "$LOCK")" = "$(stat -Lc "%d:%i" /proc/$$/fd/9)" ]',
+            '[ "$(dc_value "$LOCK/created")" = ' + shellQuote(String(entry.created)) + ' ]',
+            '[ $(( $(date +%s) - ' + entry.created + ' )) -ge ' +
+              (storage.database().settings.staleLockMinutes || 120) * 60 + ' ]',
+            'if dc_workspace || dc_file "$LOCK/pid"; then',
+            '  if dc_file "$LOCK/pid"; then JOB="$LOCK"; fi',
+            '  alive=0; dc_alive || alive=$?',
+            '  [ "$alive" = 1 ] || { [ ! -e "$JOB/pid" ] && [ ! -L "$JOB/pid" ]; }',
+            'else',
+            '  legacy="$JOB/$OWNER"; dc_path "$legacy"',
+            '  pid="$(dc_value "$legacy/pid" || true)"',
+            '  case "$pid" in ""|*[!0-9]*) :;; *) [ ! -e "/proc/$pid/stat" ] || exit 1;; esac',
+            'fi',
+            'mkdir "$LOCK/takeover"',
+            'mv -- "$LOCK" ' + shellQuote(workbenchPath(target) + '/.deploy-center.lock.stale.' + token),
+          ].join('\n'),
         );
       } finally {
         entry.credential = undefined;
@@ -1027,10 +1064,10 @@ mv -- "$lock" ${shellQuote(lock + '.stale.' + token)}
           event.preventDefault();
       });
     win.on('close', (event) => {
-      if (migrating || backups.isBusy()) {
+      if (migrating || backups.isBusy() || workbench.isBusy()) {
         event.preventDefault();
         void dialog.showMessageBox(win!, {
-          message: backups.isBusy() ? '远程备份操作正在进行，请等待结果' : '数据迁移正在进行',
+          message: workbench.isBusy() ? '远程工作台正在核实，请等待结果' : backups.isBusy() ? '远程备份操作正在进行，请等待结果' : '数据迁移正在进行',
           detail: '请等待迁移结束，或在设置页取消迁移后再关闭。',
           buttons: ['返回'],
         });

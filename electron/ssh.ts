@@ -109,7 +109,7 @@ class BaseTransport {
     if (!Number.isSafeInteger(offset) || offset < 0 || max > 1048576)
       throw new Error('日志读取范围无效');
     const ch = await this.channel(
-      `if [ -f ${q(file)} ]; then tail -c +${offset + 1} -- ${q(file)} | head -c ${max}; fi`,
+      `if [ ! -L ${q(file)} ] && [ -f ${q(file)} ]; then tail -c +${offset + 1} -- ${q(file)} | head -c ${max}; fi`,
     );
     const buffers: Buffer[] = [];
     ch.error.resume();
