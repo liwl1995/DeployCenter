@@ -1,4 +1,6 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useId, useState, type FormEvent } from 'react';
+import type { DiagnosticResult } from './features';
+import { fmtTime } from './model';
 import { ShieldCheck } from 'lucide-react';
 import { Field, Switch, Demo, PathInput } from './ui';
 import {
@@ -58,6 +60,7 @@ export function ServiceForm({ initial, db, onSave, onClose }: SaveProps<Service>
         </Field>
         <Field label="构建 JDK">
           <select value={v.jdk} onChange={(e) => update('jdk', e.target.value)}>
+            <option value="">请选择</option>
             {db.jdks.map((j) => (
               <option key={j.name}>{j.name}</option>
             ))}
@@ -145,8 +148,51 @@ export function ServerForm({
   onSave,
   onClose,
   encryptionAvailable = true,
-}: SaveProps<Server> & { encryptionAvailable?: boolean }) {
+  onTestResult,
+}: SaveProps<Server> & {
+  encryptionAvailable?: boolean;
+  onTestResult?: (server: Server, result: DiagnosticResult) => void;
+}) {
   const [v, set] = useState(structuredClone(initial));
+  const [candidate, setCandidate] = useState<{ hosts: string[]; warnings: string[] }>({
+    hosts: [],
+    warnings: [],
+  });
+  const [testSecret, setTestSecret] = useState(''),
+    [testing, setTesting] = useState(false),
+    [testResult, setTestResult] = useState<DiagnosticResult>(),
+    [testError, setTestError] = useState('');
+  const listId = useId();
+  useEffect(() => {
+    if (!desktop || v.auth !== 'alias') return;
+    let alive = true;
+    void desktop
+      .sshAliases(v.sshConfigFile || undefined)
+      .then((value) => {
+        if (alive) setCandidate(value);
+      })
+      .catch(() => {
+        if (alive)
+          setCandidate({ hosts: [], warnings: ['无法读取候选列表，可继续手动输入别名。'] });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [v.auth, v.sshConfigFile]);
+  const test = async () => {
+    setTesting(true);
+    setTestError('');
+    try {
+      const result = await desktop!.testDraft(v, testSecret);
+      setTestResult(result);
+      setTestSecret('');
+      onTestResult?.(v, result);
+    } catch (e) {
+      setTestError(String(e));
+    } finally {
+      setTesting(false);
+    }
+  };
   const update = (key: keyof Server, value: string | number) =>
     set((old) => ({ ...old, [key]: value }));
   return (
@@ -168,13 +214,42 @@ export function ServerForm({
           </select>
         </Field>
         {v.auth === 'alias' ? (
-          <Field
-            label="SSH Config 别名"
-            hint="沿用系统 OpenSSH，包括 ProxyJump、IdentityFile 和 Agent"
-            wide
-          >
-            <input required value={v.alias} onChange={(e) => update('alias', e.target.value)} />
-          </Field>
+          <>
+            <Field
+              label="SSH Config 别名"
+              hint="沿用系统 OpenSSH，包括 ProxyJump、IdentityFile 和 Agent"
+              wide
+            >
+              <input
+                required
+                list={listId}
+                value={v.alias}
+                onChange={(e) => update('alias', e.target.value)}
+              />
+            </Field>
+            <datalist id={listId}>
+              {candidate.hosts.map((host) => (
+                <option key={host} value={host} />
+              ))}
+            </datalist>
+            {candidate.warnings.map((warning) => (
+              <p className="note wide" key={warning}>
+                {warning}
+              </p>
+            ))}
+            {desktop && (
+              <Field
+                label="SSH 配置文件（可选）"
+                hint="留空使用当前用户的默认 SSH Config；实际连接沿用系统 SSH 完整配置。"
+                wide
+              >
+                <input
+                  value={v.sshConfigFile || ''}
+                  onChange={(e) => update('sshConfigFile', e.target.value)}
+                />
+              </Field>
+            )}
+          </>
         ) : (
           <>
             <Field label="IP 地址或域名">
@@ -234,6 +309,43 @@ export function ServerForm({
         <ShieldCheck size={16} /> 密码和密钥走 SSH 库，别名走系统
         OpenSSH。保存的口令不会进入导出文件。
       </p>
+      {desktop && (
+        <details className="mt">
+          <summary>测试当前表单的连接（无需先保存）</summary>
+          <p className="note">
+            只做连接和只读体检，不保存表单或本次口令；首次连接仍需要核对主机指纹。
+          </p>
+          {v.auth !== 'alias' && (
+            <Field
+              label={v.auth === 'password' ? '测试使用的密码' : '测试使用的私钥口令'}
+              hint="已有同身份的本机加密凭据可留空复用，未加密私钥也可留空。"
+            >
+              <input
+                type="password"
+                autoComplete="off"
+                value={testSecret}
+                onChange={(e) => setTestSecret(e.target.value)}
+              />
+            </Field>
+          )}
+          <button type="button" className="button" disabled={testing} onClick={() => void test()}>
+            {testing ? '测试中…' : '测试当前表单连接'}
+          </button>
+          {testError && (
+            <p role="alert" className="warning">
+              {testError}
+            </p>
+          )}
+          {testResult && (
+            <>
+              <p className="note">
+                {testResult.ok ? '测试通过' : '测试未通过'} · {fmtTime(testResult.time)}
+              </p>
+              <pre className="terminal">{testResult.output}</pre>
+            </>
+          )}
+        </details>
+      )}
       <Submit onClose={onClose} />
     </form>
   );
@@ -259,6 +371,18 @@ export function BackupFields({
               <input
                 value={value.directory}
                 onChange={(e) => onChange({ ...value, directory: e.target.value })}
+              />
+            </Field>
+            <Field
+              label="建议保留备份数量"
+              hint="0 为不建议清理；仅预选较旧备份，远程删除仍须预览并确认"
+            >
+              <input
+                type="number"
+                min="0"
+                max="10000"
+                value={value.keepLast ?? 0}
+                onChange={(e) => onChange({ ...value, keepLast: Number(e.target.value) })}
               />
             </Field>
             <Field label="备份命名模板" hint="支持 {name}、{yyyyMMdd-HHmmss}、{task}">
@@ -339,6 +463,22 @@ export function TargetForm({ initial, db, onSave, onClose }: SaveProps<Target>) 
       setError('启动等待应为 0–3600 秒，最长等待窗口应为 1–3600 秒。');
       return;
     }
+    if (
+      v.observation &&
+      (!Number.isInteger(v.observation.duration) ||
+        v.observation.duration < 10 ||
+        v.observation.duration > 3600)
+    ) {
+      setError('观察持续时间应为 10–3600 秒。');
+      return;
+    }
+    if (
+      (v.appLogPath && (!v.appLogPath.startsWith('/') || /[\r\n\0]/.test(v.appLogPath))) ||
+      (v.mode === 'jar' && v.observation?.enabled && !v.appLogPath)
+    ) {
+      setError('请填写有效的应用日志绝对路径后再启用观察。');
+      return;
+    }
     if (v.backup.enabled && !v.backup.template.trim()) {
       setTab('备份与安全');
       setError('请填写备份文件名模板。');
@@ -397,7 +537,7 @@ export function TargetForm({ initial, db, onSave, onClose }: SaveProps<Target>) 
         <div className="wide">
           <Switch
             label="正式环境"
-            description="每次部署和回滚都必须输入 DEPLOY，永不自动勾选"
+            description="每次部署和回滚都必须核对并输入本次正式环境名称，永不自动勾选"
             checked={v.production}
             onChange={(x) => update('production', x)}
           />
@@ -634,6 +774,45 @@ export function TargetForm({ initial, db, onSave, onClose }: SaveProps<Target>) 
         <p className="warning" role="alert">
           {error}
         </p>
+      )}
+      {desktop && (
+        <details className="mt">
+          <summary>部署后日志观察</summary>
+          {v.mode === 'jar' && (
+            <Field
+              label="应用日志绝对路径"
+              hint="只读取此文件，不执行启动脚本。健康检查失败时也可用它查看最近日志。"
+            >
+              <input
+                value={v.appLogPath || ''}
+                onChange={(e) => update('appLogPath', e.target.value)}
+                placeholder="/var/log/service/application.log"
+              />
+            </Field>
+          )}
+          <Switch
+            label="健康未验证时自动观察日志"
+            checked={v.observation?.enabled || false}
+            onChange={(enabled) =>
+              update('observation', { enabled, duration: v.observation?.duration || 60 })
+            }
+            description="部署完成后跟随应用或容器日志，不影响部署结果。本次部署中可以临时覆盖。"
+          />
+          <Field label="默认观察时间（秒）" hint="10–3600 秒；到时或关闭日志窗口即停止连接。">
+            <input
+              type="number"
+              min="10"
+              max="3600"
+              value={v.observation?.duration ?? 60}
+              onChange={(e) =>
+                update('observation', {
+                  enabled: v.observation?.enabled || false,
+                  duration: Number(e.target.value),
+                })
+              }
+            />
+          </Field>
+        </details>
       )}
       <Submit onClose={onClose} />
     </form>

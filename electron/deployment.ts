@@ -3,6 +3,7 @@ import { shellQuote as q, seconds, type RunTarget, type Step, type Task } from '
 import { acceptBuild } from '../src/validation';
 import { jarPath } from './files';
 import { nativeCapabilities } from './native-capabilities';
+import { knownCommit, targetLabels } from '../src/presentation';
 import type { EngineDependencies } from './capabilities';
 import { localHealth } from './health';
 import { mustExec, type Transport } from './ssh';
@@ -32,7 +33,7 @@ export class Deployment {
     private input: WorkerInput,
     private send: (message: WorkerMessage) => void,
     private trust: (request: TrustRequest, key: string) => Promise<boolean>,
-    private deps: EngineDependencies = nativeCapabilities(input.credentials),
+    private deps: EngineDependencies = nativeCapabilities(input.credentials, input.artifactSources),
   ) {
     this.task = structuredClone(input.task);
   }
@@ -49,7 +50,28 @@ export class Deployment {
     }
     const safe = this.redact(pending.slice(0, cut));
     this.pendingLogs.set(id, pending.slice(cut));
-    this.send({ kind: 'log', taskId: this.task.id, targetId: r?.target.id, text: safe });
+    const step =
+      (r ? r.steps : this.task.buildSteps).find((s) => s.status === 'running') ||
+      (r ? r.steps[r.phase] : this.task.buildSteps[this.task.buildPhase]);
+    const command =
+      r?.remote && ['running', 'launching'].includes(r.remote.phase)
+        ? 'bash ' + q(r.remote.jobDir + '/runner.sh')
+        : r?.steps[r.phase]?.key === 'mount'
+          ? 'docker inspect -- ' + q(r.target.container)
+          : !r && this.task.buildPhase === 1 && this.task.build === 'rebuild'
+            ? this.task.buildContext.command
+            : undefined;
+    this.send({
+      kind: 'log',
+      taskId: this.task.id,
+      targetId: r?.target.id,
+      text: safe,
+      context: {
+        time: this.deps.clock.now(),
+        step: step ? this.redact(step.label) : undefined,
+        command: command ? this.redact(command) : undefined,
+      },
+    });
     const list = r ? r.logs : this.task.buildLogs;
     list.push(...safe.replace(/\r/g, '').split('\n').filter(Boolean));
     if (list.length > 1500) list.splice(0, list.length - 1500);
@@ -125,7 +147,7 @@ export class Deployment {
   }
   async run() {
     try {
-      await this.deps.files.mkdir(path.join(this.input.dataDir, 'tmp'));
+      await this.deps.files.mkdir(path.join(this.input.dataDir, 'tmp', this.task.id));
       if (this.task.dryRun) await this.dryRun();
       else if (this.input.kind === 'recover') await this.recover();
       else {
@@ -204,7 +226,7 @@ export class Deployment {
       await this.deps.commands.resolveBuild(
         t.service,
         this.input.jdks,
-        path.join(this.input.dataDir, 'tmp'),
+        path.join(this.input.dataDir, 'tmp', this.task.id),
         { signal: this.controller.signal },
       );
     else {
@@ -254,7 +276,7 @@ export class Deployment {
   }
   private async build() {
     const t = this.task,
-      temp = path.join(this.input.dataDir, 'tmp');
+      temp = path.join(this.input.dataDir, 'tmp', this.task.id);
     this.start(t.buildSteps[0]);
     const git = await this.deps.commands.gitInfo(t.service.root);
     if (t.operation !== 'rollback') t.service.git = git;
@@ -314,19 +336,36 @@ export class Deployment {
     t.buildPhase = 2;
     this.start(t.buildSteps[2]);
     if (t.operation !== 'rollback') {
+      const confirmedArtifact = t.artifact;
       t.artifact = await this.deps.files.snapshot(
         artifactPath,
         t.id,
         this.input.dataDir,
         this.controller.signal,
       );
+      if (
+        t.build === 'existing' &&
+        confirmedArtifact.sha256 &&
+        t.artifact.sha256 !== confirmedArtifact.sha256
+      )
+        throw new Error('确认后 JAR 内容已变化，请重新检查并确认部署');
+      if (t.retryOf)
+        t.artifact = {
+          ...t.artifact,
+          name: confirmedArtifact.name,
+          modified: confirmedArtifact.modified,
+          originalPath: confirmedArtifact.originalPath,
+        };
       t.deployedVersion =
         t.build === 'rebuild' && !git.dirty && !git.commit.includes('待计算')
           ? git.commit
           : t.artifact.sha256!.slice(0, 12);
+      if (t.build === 'rebuild')
+        t.deployedCommit = !git.dirty ? knownCommit(git.commit, t.artifact.sha256) : undefined;
       this.log('JAR 完整性校验通过，SHA-256：' + t.artifact.sha256 + '\n');
     } else {
       t.deployedVersion = t.service.git.commit;
+      t.deployedCommit = knownCommit(t.service.git.commit, t.artifact.sha256);
       this.log('历史备份的实际文件大小和哈希将在远端校验。\n');
     }
     this.finish(t.buildSteps[2]);
@@ -478,6 +517,7 @@ export class Deployment {
       if (!Number.isFinite(time)) throw new Error('远端任务事件无效');
       if (kind === 'BACKUP') {
         r.backupCreated = true;
+        r.backupCreatedAt = time;
         r.backupPath = r.plannedBackupPath;
         r.backupSize = Number(key);
         r.backupHash = /^[a-f0-9]{64}$/i.test(status) ? status : undefined;
@@ -585,7 +625,11 @@ export class Deployment {
             ? '存在备份，但未成功自动恢复。请查看日志或发起历史回滚。'
             : '无本次有效备份，请查看日志和排查命令，必要时选择更早的历史备份。';
         if (['success', 'unverified'].includes(r.status)) r.phase = r.steps.length;
-        this.log(`目标结果：${r.status}。\n`, r, true);
+        this.log(
+          `目标结果：${this.task.dryRun && r.status === 'success' ? '检查通过' : targetLabels[r.status]}。\n`,
+          r,
+          true,
+        );
         return;
       }
       if (!['RUNNING', 'LAUNCHING', 'PREPARED', 'AWAITING_LOCAL'].includes(state))

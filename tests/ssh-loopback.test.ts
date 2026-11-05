@@ -114,7 +114,7 @@ describe('回环地址上的临时 SSH2 测试服务器（真实 SSH/SFTP 协议
         t.close();
       }
     }));
-  it('保存的主机指纹不一致直接阻止，不提供忽略或替换入口', async () =>
+  it('指纹变化等待确认，拒绝时不发送认证信息', async () =>
     fixture(async (port, _files, counts) => {
       let prompts = 0;
       const t = createTransport(config(port), {
@@ -122,13 +122,46 @@ describe('回环地址上的临时 SSH2 测试服务器（真实 SSH/SFTP 协议
         pins: { ['127.0.0.1:' + port]: { key: 'wrong-host-key', fingerprint: 'wrong' } },
         trust: async () => {
           prompts++;
-          return true;
+          return false;
         },
       });
       try {
-        await expect(t.connect()).rejects.toThrow('主机指纹不一致');
-        expect(prompts).toBe(0);
+        await expect(t.connect()).rejects.toThrow();
+        expect(prompts).toBe(1);
         expect(counts.auth).toBe(0);
+      } finally {
+        t.close();
+      }
+    }));
+  it('变更指纹握手暂停直到明确接受，之后才认证并更新本次连接的指纹', async () =>
+    fixture(async (port, _files, counts) => {
+      let answer!: (yes: boolean) => void;
+      let prompted!: () => void;
+      const prompt = new Promise<void>((resolve) => {
+        prompted = resolve;
+      });
+      const pins = { ['127.0.0.1:' + port]: { key: 'old-key', fingerprint: 'old' } };
+      const t = createTransport(config(port), {
+        credential: 'fixture-only',
+        pins,
+        trust: async (request) => {
+          expect(request.changed).toBe(true);
+          prompted();
+          return new Promise<boolean>((resolve) => {
+            answer = resolve;
+          });
+        },
+      });
+      try {
+        const connected = t.connect();
+        await prompt;
+        expect(counts.auth).toBe(0);
+        expect(pins['127.0.0.1:' + port].key).toBe('old-key');
+        answer(true);
+        await connected;
+        expect(counts.auth).toBeGreaterThan(0);
+        expect(pins['127.0.0.1:' + port].key).not.toBe('old-key');
+        expect((await t.exec('fixture output')).code).toBe(0);
       } finally {
         t.close();
       }

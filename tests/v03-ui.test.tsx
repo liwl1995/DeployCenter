@@ -187,7 +187,7 @@ describe('v0.3 组件回归', () => {
     fireEvent.click(screen.getByRole('button', { name: '查看旧产物提醒' }));
     const modal = showConfirmation();
     expect(modal.textContent).toContain('80.3 MB');
-    expect(modal.textContent).toContain('2026/11/1');
+    expect(modal.textContent).toContain('2026-11-01');
     expect(modal.textContent).toContain('JAR 早于当前 Git 提交');
     expect(modal.textContent).toContain('E:\\projects\\CordysCRM');
     expect(within(modal).queryByRole('heading', { name: '构建配置' })).toBeNull();

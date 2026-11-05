@@ -18,10 +18,17 @@ export type WorkerInput = {
   credentials: Record<string, string>;
   pins: Record<string, Pin>;
   allowWeak: boolean;
+  artifactSources?: import('./files').SnapshotSource[];
 };
 export type WorkerMessage =
   | { kind: 'snapshot'; task: Task }
-  | { kind: 'log'; taskId: string; targetId?: string; text: string }
+  | {
+      kind: 'log';
+      taskId: string;
+      targetId?: string;
+      text: string;
+      context?: import('../src/features').LogContext;
+    }
   | { kind: 'trust'; request: TrustRequest; key: string }
   | { kind: 'done'; task: Task }
   | { kind: 'fatal'; error: string };

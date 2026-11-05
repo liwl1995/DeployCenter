@@ -178,17 +178,19 @@ class LibraryTransport extends BaseTransport implements Transport {
             callback(true);
             return;
           }
-          if (old) {
-            reject(
-              new Error(
-                '主机指纹不一致，可能存在中间人风险。已阻止连接；请通过独立渠道核实并在本机管理原信任记录。',
-              ),
-            );
-            callback(false);
-            return;
-          }
+          // 指纹变化也必须等待主进程确认；回调放行前 ssh2 不会发送认证信息。
           opt
-            .trust({ id: randomUUID(), endpoint, server: s.name, fingerprint, changed: !!old }, raw)
+            .trust(
+              {
+                id: randomUUID(),
+                endpoint,
+                server: s.name,
+                fingerprint,
+                previousFingerprint: old?.fingerprint,
+                changed: !!old,
+              },
+              raw,
+            )
             .then(
               (accepted) => {
                 if (accepted) opt.pins[endpoint] = { key: raw, fingerprint };

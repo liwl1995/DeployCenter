@@ -1,12 +1,13 @@
 import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+test.skip(process.platform !== 'win32', 'Windows 桌面及 .exe 验收仅在 Windows 运行');
 let app: ElectronApplication, dir: string;
 test.beforeEach(async () => {
   const root = path.resolve('.test-data');
   await fs.mkdir(root, { recursive: true });
   dir = await fs.mkdtemp(path.join(root, 'smoke-'));
-  const env = { ...process.env, DEPLOY_CENTER_DATA_DIR: dir };
+  const env = { ...process.env, DEPLOY_CENTER_DATA_DIR: dir, DEPLOY_CENTER_TESTING: '1' };
   delete env.ELECTRON_RUN_AS_NODE;
   app = await electron.launch({
     executablePath:
@@ -19,6 +20,13 @@ test.beforeEach(async () => {
     ],
     env: env as Record<string, string>,
   });
+  if (process.env.DEPLOY_CENTER_TEST_SCALE) {
+    const page = await app.firstWindow();
+    await page.waitForLoadState('domcontentloaded');
+    expect(await page.evaluate(() => window.devicePixelRatio)).toBe(
+      Number(process.env.DEPLOY_CENTER_TEST_SCALE),
+    );
+  }
 });
 test.afterEach(async () => {
   await app?.close();
@@ -49,14 +57,21 @@ test('首次启动无示例服务器；安全选项和 IPC 工作', async () => 
   expect(prefs).toEqual({ sandbox: true, contextIsolation: true, nodeIntegration: false });
   expect((await page.evaluate(() => window.deployCenter!.load())).database.servers).toHaveLength(0);
   await expect(page.getByText('模拟当前目标启动 / 健康检查失败')).toHaveCount(0);
+  await expect(page.getByRole('contentinfo', { name: '应用状态' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible();
 });
 test('通过界面保存第一个服务，重启后从 SQLite 恢复', async () => {
   const page = await app.firstWindow();
+  await page.getByRole('button', { name: '添加第一个服务', exact: true }).click();
   await page.getByLabel('服务名称', { exact: true }).fill('本机验收服务');
   await page.getByLabel('服务标识', { exact: true }).fill('local-smoke');
   await page.getByLabel('项目根目录', { exact: true }).fill(dir);
   await page.getByRole('button', { name: '保存配置', exact: true }).click();
-  await expect(page.getByRole('button', { name: '一键部署', exact: true })).toBeVisible();
+  await expect(
+    page
+      .getByRole('navigation', { name: '主导航' })
+      .getByRole('button', { name: '一键部署', exact: true }),
+  ).toBeVisible();
   await page.getByRole('button', { name: '服务器', exact: true }).click();
   await expect(page.getByText('cordys-19', { exact: false })).toHaveCount(0);
   const loaded = await page.evaluate(() => window.deployCenter!.load());
@@ -65,7 +80,7 @@ test('通过界面保存第一个服务，重启后从 SQLite 恢复', async () 
   expect(loaded.database.settings.demoMode).toBe(false);
   expect(await fs.stat(path.join(dir, 'deploy-center.sqlite'))).toBeTruthy();
   await app.close();
-  const env = { ...process.env, DEPLOY_CENTER_DATA_DIR: dir };
+  const env = { ...process.env, DEPLOY_CENTER_DATA_DIR: dir, DEPLOY_CENTER_TESTING: '1' };
   delete env.ELECTRON_RUN_AS_NODE;
   app = await electron.launch({
     executablePath:
@@ -79,7 +94,11 @@ test('通过界面保存第一个服务，重启后从 SQLite 恢复', async () 
     env: env as Record<string, string>,
   });
   const restored = await app.firstWindow();
-  await expect(restored.getByRole('button', { name: '一键部署', exact: true })).toBeVisible();
+  await expect(
+    restored
+      .getByRole('navigation', { name: '主导航' })
+      .getByRole('button', { name: '一键部署', exact: true }),
+  ).toBeVisible();
   expect(
     (await restored.evaluate(() => window.deployCenter!.load())).database.services[0].name,
   ).toBe('本机验收服务');
@@ -185,6 +204,10 @@ test('utilityProcess 通过 IPC 执行只读试运行，完成首次指纹确认
     const page = await app.firstWindow();
     await page.evaluate((value) => window.deployCenter!.save(value), db);
     await page.reload();
+    await page
+      .getByRole('navigation', { name: '主导航' })
+      .getByRole('button', { name: '一键部署', exact: true })
+      .click();
     await page.getByRole('button', { name: '使用现有 JAR', exact: true }).click();
     await page.getByRole('button', { name: '试运行（远程只读）', exact: true }).click();
     const dialog = page.getByRole('dialog');
@@ -192,7 +215,9 @@ test('utilityProcess 通过 IPC 执行只读试运行，完成首次指纹确认
     await dialog.getByLabel('登录密码 · 回环测试服务器').fill('fixture-only');
     await dialog.getByRole('button', { name: '开始试运行', exact: true }).click();
     await page.getByRole('button', { name: '信任并继续', exact: true }).click();
-    await expect(page.getByText('任务完成', { exact: true })).toBeVisible({ timeout: 30000 });
+    await expect(page.locator('header').getByText('检查通过', { exact: true })).toBeVisible({
+      timeout: 30000,
+    });
     const result = await page.evaluate(() => window.deployCenter!.load());
     expect(result.task?.dryRun).toBe(true);
     expect(result.task?.status).toBe('success');
@@ -200,12 +225,36 @@ test('utilityProcess 通过 IPC 执行只读试运行，完成首次指纹确认
     expect(commands).toEqual(['bash -s']);
     expect(sftpUsed).toBe(false);
     expect(JSON.stringify(result)).not.toContain('fixture-only');
+    const search = await page.evaluate(
+      (query) => window.deployCenter!.searchHistory(query),
+      result.task!.targets[0].target.name,
+    );
+    expect(
+      search.hits.some((hit) => hit.taskId === result.task!.id && hit.section === '环境'),
+    ).toBe(true);
+    const reportFile = path.join(dir, '隔离报告.md');
+    await app.evaluate(({ dialog }, file) => {
+      dialog.showSaveDialog = async () => ({ canceled: false, filePath: file });
+    }, reportFile);
+    expect(
+      await page.evaluate((id) => window.deployCenter!.exportReport(id), result.task!.id),
+    ).toBe(true);
+    const report = await fs.readFile(reportFile, 'utf8');
+    expect(report).toContain('YOTOO 部署报告');
+    expect(report).not.toContain('fixture-only');
+    await page.getByRole('tab', { name: '执行日志', exact: true }).click();
+    await expect(page.getByRole('combobox', { name: '日志目标', exact: true })).toHaveCount(0);
+    await expect(page.locator('.task-layout')).toHaveCount(0);
+    await expect(page.locator('.task-target-strip')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: '执行日志', exact: true })).toBeVisible();
+    await page.getByRole('tab', { name: '执行进度', exact: true }).click();
+    await expect(page.getByRole('combobox', { name: '日志目标', exact: true })).toBeHidden();
     await page.getByRole('button', { name: '返回部署', exact: true }).click();
     await expect(page.getByRole('heading', { name: '准备好，发布下一版本' })).toBeVisible();
     await page.getByRole('button', { name: '部署历史', exact: true }).click();
     await page.getByRole('button', { name: '查看任务', exact: true }).click();
     await page.getByRole('button', { name: '返回部署历史', exact: true }).click();
-    await expect(page.getByRole('heading', { name: '所有任务（含构建失败）' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '执行任务记录' })).toBeVisible();
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
@@ -281,13 +330,20 @@ test('1.1.0 自动读取 JAR/Git、刷新信息、字段提示及部署按钮间
   const page = await app.firstWindow();
   await page.evaluate((value) => window.deployCenter!.save(value), db);
   await page.reload();
+  await page
+    .getByRole('navigation', { name: '主导航' })
+    .getByRole('button', { name: '一键部署', exact: true })
+    .click();
   await page.getByRole('button', { name: '使用现有 JAR', exact: true }).click();
+  await page.locator('.build-details > summary').click();
   await expect(page.locator('.artifact')).toContainText('文件已读取');
   await expect(page.locator('.artifact')).toContainText('metadata.jar');
   await expect(page.locator('.artifact')).toContainText('2000');
   await expect(page.locator('.artifact')).toContainText('JAR 早于当前 Git 提交');
   await expect(page.locator('.branch')).toContainText('metadata-v110');
-  await expect(page.locator('.branch code')).toHaveText(/[0-9a-f]{40}/);
+  await expect(page.locator('.branch code')).toHaveText(/[0-9a-f]{7}/);
+  await expect(page.locator('.branch code')).toHaveAttribute('title', /[0-9a-f]{40}/);
+  await expect(page.getByRole('button', { name: '部署', exact: true })).toBeEnabled();
   const deploy = await page.getByRole('button', { name: '部署', exact: true }).boundingBox();
   const dryRun = await page
     .getByRole('button', { name: '试运行（远程只读）', exact: true })
@@ -320,8 +376,12 @@ test('1.1.0 自动读取 JAR/Git、刷新信息、字段提示及部署按钮间
   expect(rejected).toBe(true);
   await fs.unlink(file);
   await page.getByRole('button', { name: '刷新 JAR / Git 信息' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'JAR 文件不存在' })).toBeVisible();
+  await expect(
+    page.getByRole('status').filter({ hasText: 'JAR 文件不存在' }).first(),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: '部署', exact: true })).toBeDisabled();
   await expect(page.locator('.artifact')).toContainText('文件不存在或无法读取');
+  await page.getByRole('button', { name: '展开仅配置不连接详情', exact: true }).click();
   await page.getByRole('button', { name: '编辑仅配置不连接', exact: true }).click();
   const targetForm = page.getByRole('dialog');
   await targetForm.getByRole('tab', { name: '健康检查' }).click();

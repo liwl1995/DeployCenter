@@ -100,7 +100,20 @@ function FieldHelp({ label, text }: { label: string; text: string }) {
           }
         }}
       >
-        ?
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <rect x="1" y="1" width="14" height="14" rx="3.5" />
+          <path d="M6 6a2.2 2.2 0 0 1 4.3.7c0 1.7-2.3 1.8-2.3 3.2M8 12.7h.01" />
+        </svg>
       </button>
       {open &&
         createPortal(
@@ -155,11 +168,13 @@ export function Switch({
   onChange,
   label,
   description,
+  disabled,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: string;
   description?: string;
+  disabled?: boolean;
 }) {
   return (
     <label className="switch-row">
@@ -170,6 +185,7 @@ export function Switch({
       <input
         type="checkbox"
         role="switch"
+        disabled={disabled}
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
         aria-label={label}
@@ -182,16 +198,20 @@ export function Modal({
   children,
   onClose,
   wide = false,
+  closeDisabled = false,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   wide?: boolean;
+  closeDisabled?: boolean;
 }) {
   const id = useId();
   const ref = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
   close.current = onClose;
+  const cannotClose = useRef(closeDisabled);
+  cannotClose.current = closeDisabled;
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const panel = ref.current!;
@@ -201,15 +221,24 @@ export function Modal({
           'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href]',
         ),
       ].filter((e) => !e.closest('[hidden]'));
-    (
-      panel.querySelector<HTMLElement>('[data-autofocus]') ||
-      panel.querySelector<HTMLElement>('input,select,textarea') ||
-      controls()[0]
-    )?.focus();
+    if ([...document.querySelectorAll('[role="dialog"]')].at(-1) === panel)
+      (
+        panel.querySelector<HTMLElement>('[data-autofocus]') ||
+        panel.querySelector<HTMLElement>('input,select,textarea') ||
+        controls()[0]
+      )?.focus();
     const key = (e: KeyboardEvent) => {
+      if ([...document.querySelectorAll('[role="dialog"]')].at(-1) !== panel) return;
+      if (e.ctrlKey && e.key === 'Enter') {
+        const confirm = panel.querySelector<HTMLButtonElement>('button[data-confirm]');
+        if (confirm && !confirm.disabled && !e.isComposing) {
+          e.preventDefault();
+          confirm.click();
+        }
+      }
       if (e.key === 'Escape') {
         e.preventDefault();
-        close.current();
+        if (!cannotClose.current) close.current();
       }
       if (e.key === 'Tab') {
         const all = controls(),
@@ -224,11 +253,11 @@ export function Modal({
         }
       }
     };
-    panel.addEventListener('keydown', key);
+    document.addEventListener('keydown', key);
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
-      panel.removeEventListener('keydown', key);
+      document.removeEventListener('keydown', key);
       document.body.style.overflow = overflow;
       if (previous?.isConnected) previous.focus();
     };
@@ -244,10 +273,14 @@ export function Modal({
       >
         <header>
           <div>
-            <span className="eyebrow">DEPLOY CENTER</span>
             <h2 id={id}>{title}</h2>
           </div>
-          <button className="icon-button" onClick={onClose} aria-label="关闭弹窗">
+          <button
+            className="icon-button"
+            disabled={closeDisabled}
+            onClick={onClose}
+            aria-label="关闭弹窗"
+          >
             <X size={20} />
           </button>
         </header>
@@ -263,6 +296,7 @@ export function Steps({
   failed,
   cancelled,
   finished,
+  onSelect,
 }: {
   labels: string[];
   details?: Step[];
@@ -270,6 +304,7 @@ export function Steps({
   failed?: boolean;
   cancelled?: boolean;
   finished?: boolean;
+  onSelect?: (name: string) => void;
 }) {
   return (
     <ol className="steps">
@@ -307,7 +342,13 @@ export function Steps({
             <span className="step-dot">
               {status === 'success' ? <Check size={13} /> : status === 'failed' ? '!' : i + 1}
             </span>
-            <span>{name}</span>
+            {onSelect ? (
+              <button className="step-jump" onClick={() => onSelect(name)} title="定位此步骤的日志">
+                {name}
+              </button>
+            ) : (
+              <span>{name}</span>
+            )}
             <small>
               {text}
               {details && ' · ' + seconds(detail?.elapsed || 0)}

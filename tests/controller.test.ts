@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Storage } from '../electron/storage';
@@ -69,11 +69,7 @@ describe('主进程任务确认与持久化边界', () => {
       () => {},
     );
     await expect(
-      c.start(
-        'not-issued',
-        {},
-        { productionWord: 'DEPLOY', allowWeak: true, protectCurrent: true },
-      ),
+      c.start('not-issued', {}, { productionWord: '', allowWeak: true, protectCurrent: true }),
     ).rejects.toThrow('确认已过期');
   });
   it('正式与弱校验确认由主进程拦截；状态先存储，再发事件，崩溃不自动继续', async () => {
@@ -118,19 +114,29 @@ describe('主进程任务确认与持久化边界', () => {
     });
     await expect(
       c.start(prepared.token, {}, { productionWord: '', allowWeak: true, protectCurrent: true }),
-    ).rejects.toThrow('DEPLOY');
+    ).rejects.toThrow('环境名称');
     await expect(
       c.start(
         prepared.token,
         {},
-        { productionWord: 'DEPLOY', allowWeak: false, protectCurrent: true },
+        {
+          productionWord: '',
+          productionNames: { t19: db.targets[0].name },
+          allowWeak: false,
+          protectCurrent: true,
+        },
       ),
     ).rejects.toThrow('弱校验');
     expect(workers).toBe(0);
     const started = await c.start(
       prepared.token,
       {},
-      { productionWord: 'DEPLOY', allowWeak: true, protectCurrent: true },
+      {
+        productionWord: '',
+        productionNames: { t19: db.targets[0].name },
+        allowWeak: true,
+        protectCurrent: true,
+      },
     );
     expect(c.active()).toBe(true);
     expect(calls[0].kind).toBe('begin');
@@ -141,7 +147,35 @@ describe('主进程任务确认与持久化边界', () => {
     expect(storage.task(started.id)?.status).toBe('interrupted');
     expect(storage.task(started.id)?.targets[0].status).toBe('unknown');
   });
-  it('只有用户确认首次主机指纹才写信任记录，变更指纹禁止忽略', async () => {
+  it('保存信任失败时保留待确认请求和旧指纹，仍可拒绝', async () => {
+    const storage = await fixture();
+    storage.trust('fixture:22', { key: 'old', fingerprint: 'old' });
+    const c = new Controller(
+      storage,
+      () => ({ send() {}, close() {} }),
+      () => {},
+    );
+    const pending = c.trust.request(
+      {
+        id: 'write-failed',
+        endpoint: 'fixture:22',
+        server: 'fixture',
+        fingerprint: 'new',
+        changed: true,
+      },
+      'new',
+    );
+    const save = vi.spyOn(storage, 'trust').mockImplementation(() => {
+      throw new Error('写入失败');
+    });
+    expect(() => c.trust.answer('write-failed', true, 'TRUST')).toThrow('写入失败');
+    expect(c.trust.current()?.id).toBe('write-failed');
+    expect(storage.pins()['fixture:22'].key).toBe('old');
+    save.mockRestore();
+    c.trust.answer('write-failed', false);
+    expect(await pending).toBe(false);
+  });
+  it('首次确认才保存指纹，变更指纹必须准确输入 TRUST，拒绝保留原记录', async () => {
     const storage = await fixture();
     const c = new Controller(
       storage,
@@ -161,9 +195,14 @@ describe('主进程任务确认与持久化边界', () => {
     expect(await pending).toBe(true);
     expect(storage.pins()[request.endpoint].key).toBe('fixture-key');
     const changed = c.trust.request({ ...request, id: 'two', changed: true }, 'different-key');
-    expect(() => c.trust.answer('two', true, 'TRUST')).toThrow('禁止');
+    for (const word of ['', 'trust', ' TRUST', 'TRUST '])
+      expect(() => c.trust.answer('two', true, word)).toThrow('输入 TRUST');
     c.trust.answer('two', false);
     expect(await changed).toBe(false);
     expect(storage.pins()[request.endpoint].key).toBe('fixture-key');
+    const confirmed = c.trust.request({ ...request, id: 'three', changed: true }, 'new-key');
+    c.trust.answer('three', true, 'TRUST');
+    expect(await confirmed).toBe(true);
+    expect(storage.pins()[request.endpoint].key).toBe('new-key');
   });
 });

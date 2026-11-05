@@ -1,11 +1,13 @@
 import { serverAddress, remoteJar, type Database, type History, type Task } from './model';
 import { toHistory } from './engine';
+import { knownCommit } from './presentation';
 export function canRollback(db: Database, h: History): boolean {
   const current = db.targets.find((t) => t.id === h.target.id),
     server = current && db.servers.find((s) => s.id === current.serverId);
   return (
     h.status !== 'unknown' &&
     h.backupCreated &&
+    !h.backupRemoved &&
     !!h.backupPath &&
     !!current &&
     !!server &&
@@ -62,7 +64,11 @@ export function recordTask(db: Database, task: Task): Database {
               r.status === 'rolledback'
                 ? r.backupHash || t.currentHash
                 : task.artifact.sha256 || t.currentHash,
-            lastDeploy: new Date(task.started).toLocaleString('zh-CN', { hour12: false }),
+            currentCommit:
+              r.status === 'rolledback'
+                ? knownCommit(r.backupVersion, r.backupHash)
+                : task.deployedCommit || knownCommit(task.deployedVersion, task.artifact.sha256),
+            lastDeploy: new Date(task.started).toISOString(),
             healthState:
               r.status === 'unverified' || r.target.health.type === 'none'
                 ? '未配置健康检查'

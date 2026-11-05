@@ -142,57 +142,64 @@ describe('1.1.0 启动就绪窗口', () => {
     expect(calls).toBe(0);
     expect(c.now()).toBe(1000);
   });
-  it('配置校验接受启动等待，拒绝负数与过大窗口，同时接受旧数据', () => {
-    const db = seed();
-    expect(validateDatabase(db)).toBe(db);
-    db.targets[0].health = health({ startDelay: 30, maxWait: 600 });
-    expect(validateDatabase(db)).toBe(db);
-    db.targets[0].health.startDelay = -1;
-    expect(() => validateDatabase(db)).toThrow();
-    db.targets[0].health.startDelay = 0;
-    db.targets[0].health.maxWait = 3601;
-    expect(() => validateDatabase(db)).toThrow();
-  });
-  it('真实 Bash 的同一健康函数支持分钟级慢启动与总超时（隔离假时钟）', async () => {
-    const dir = await temp();
-    const unix = (p: string) =>
-      p.replace(/\\/g, '/').replace(/^([A-Za-z]):/, (_, d: string) => '/' + d.toLowerCase());
-    const functions = runner.slice(
-      runner.indexOf('container_ready() {'),
-      runner.indexOf('\nbackup_old() {'),
-    );
-    const script =
-      `set -e\n${functions}\nMODE=jar; HEALTH_LOCATION=remote; HEALTH_TYPE=http; HEALTH_VALUE=fixture; HEALTH_TIMEOUT=10; HEALTH_RETRIES=1; HEALTH_INTERVAL=5; HEALTH_DELAY=30; HEALTH_WINDOW=300; HEALTH_BY_WINDOW=1\n` +
-      `date(){ cat "$FIXTURE_ROOT/clock"; }\nsleep(){ n=$(cat "$FIXTURE_ROOT/clock"); printf '%s' "$((n + $1))" > "$FIXTURE_ROOT/clock"; }\ncurl(){ n=$(cat "$FIXTURE_ROOT/clock"); if [ "$n" -ge 210 ]; then printf 200; else printf 503; fi; }\nprintf 0 > "$FIXTURE_ROOT/clock"\nhealth_check\n[ "$(cat "$FIXTURE_ROOT/clock")" = 210 ]\nHEALTH_DELAY=0; HEALTH_WINDOW=18; printf 0 > "$FIXTURE_ROOT/clock"\ncurl(){ printf 503; }\nif health_check; then exit 7; fi\n[ "$(cat "$FIXTURE_ROOT/clock")" = 18 ]\nprintf 'window-ok\\n'\n`;
-    const file = path.join(dir, 'health.sh');
-    await fs.writeFile(file, script);
-    const result = await runProcess(
-      process.env.DEPLOY_CENTER_TEST_BASH || 'E:/dev/git/bin/bash.exe',
-      [unix(file)],
-      {
-        timeout: 20000,
-        env: { ...process.env, FIXTURE_ROOT: unix(dir), MSYS2_ARG_CONV_EXCL: '*' },
-      },
-    );
-    expect(result.code, result.stderr).toBe(0);
-    expect(result.stdout).toContain('window-ok');
-    // 复用实际稳定性与健康函数，验证 Docker starting 不会提前使启动失败。
-    const stability = runner.slice(runner.indexOf('stability() {'), runner.indexOf('# 应用健康'));
-    const dockerScenario =
-      `set -e\n${stability}\n${functions}\nMODE=docker; HEALTH_TYPE=http; HEALTH_LOCATION=remote; HEALTH_VALUE=fixture; HEALTH_TIMEOUT=10; HEALTH_RETRIES=1; HEALTH_INTERVAL=5; HEALTH_DELAY=0; HEALTH_WINDOW=60; HEALTH_BY_WINDOW=1; STABILITY_SECONDS=2; COMMAND_TIMEOUT=120; restart_baseline=2; CONTAINER=fixture\n` +
-      `date(){ cat "$FIXTURE_ROOT/clock"; }\nsleep(){ n=$(cat "$FIXTURE_ROOT/clock"); printf '%s' "$((n + $1))" > "$FIXTURE_ROOT/clock"; }\ntimeout(){ shift; "$@"; }\ncurl(){ printf 200; }\ndocker(){ case "$3" in *Running*RestartCount*) n=$(cat "$FIXTURE_ROOT/clock"); if [ "$n" -ge 20 ]; then printf 'true 2 healthy'; else printf 'true 2 starting'; fi;; *Running*) printf true;; *RestartCount*) printf 2;; *Health*) printf starting;; esac; }\nprintf 0 > "$FIXTURE_ROOT/clock"\nstability\n[ "$(cat "$FIXTURE_ROOT/clock")" = 2 ]\nhealth_check\n[ "$(cat "$FIXTURE_ROOT/clock")" = 22 ]\nprintf 'docker-wait-ok\\n'\n`;
-    await fs.writeFile(file, dockerScenario);
-    const dockerResult = await runProcess(
-      process.env.DEPLOY_CENTER_TEST_BASH || 'E:/dev/git/bin/bash.exe',
-      [unix(file)],
-      {
-        timeout: 10000,
-        env: { ...process.env, FIXTURE_ROOT: unix(dir), MSYS2_ARG_CONV_EXCL: '*' },
-      },
-    );
-    expect(dockerResult.code, dockerResult.stderr).toBe(0);
-    expect(dockerResult.stdout).toContain('docker-wait-ok');
-  }, 25000);
+  it.skipIf(process.platform !== 'win32')(
+    '配置校验接受启动等待，拒绝负数与过大窗口，同时接受旧数据（Windows 示例路径）',
+    () => {
+      const db = seed();
+      expect(validateDatabase(db)).toBe(db);
+      db.targets[0].health = health({ startDelay: 30, maxWait: 600 });
+      expect(validateDatabase(db)).toBe(db);
+      db.targets[0].health.startDelay = -1;
+      expect(() => validateDatabase(db)).toThrow();
+      db.targets[0].health.startDelay = 0;
+      db.targets[0].health.maxWait = 3601;
+      expect(() => validateDatabase(db)).toThrow();
+    },
+  );
+  it.skipIf(process.platform !== 'win32' && !process.env.DEPLOY_CENTER_TEST_BASH)(
+    '真实 Bash 的同一健康函数支持分钟级慢启动与总超时（隔离假时钟；非 Windows 需显式 Bash）',
+    async () => {
+      const dir = await temp();
+      const unix = (p: string) =>
+        p.replace(/\\/g, '/').replace(/^([A-Za-z]):/, (_, d: string) => '/' + d.toLowerCase());
+      const functions = runner.slice(
+        runner.indexOf('container_ready() {'),
+        runner.indexOf('\nbackup_old() {'),
+      );
+      const script =
+        `set -e\n${functions}\nMODE=jar; HEALTH_LOCATION=remote; HEALTH_TYPE=http; HEALTH_VALUE=fixture; HEALTH_TIMEOUT=10; HEALTH_RETRIES=1; HEALTH_INTERVAL=5; HEALTH_DELAY=30; HEALTH_WINDOW=300; HEALTH_BY_WINDOW=1\n` +
+        `date(){ cat "$FIXTURE_ROOT/clock"; }\nsleep(){ n=$(cat "$FIXTURE_ROOT/clock"); printf '%s' "$((n + $1))" > "$FIXTURE_ROOT/clock"; }\ncurl(){ n=$(cat "$FIXTURE_ROOT/clock"); if [ "$n" -ge 210 ]; then printf 200; else printf 503; fi; }\nprintf 0 > "$FIXTURE_ROOT/clock"\nhealth_check\n[ "$(cat "$FIXTURE_ROOT/clock")" = 210 ]\nHEALTH_DELAY=0; HEALTH_WINDOW=18; printf 0 > "$FIXTURE_ROOT/clock"\ncurl(){ printf 503; }\nif health_check; then exit 7; fi\n[ "$(cat "$FIXTURE_ROOT/clock")" = 18 ]\nprintf 'window-ok\\n'\n`;
+      const file = path.join(dir, 'health.sh');
+      await fs.writeFile(file, script);
+      const result = await runProcess(
+        process.env.DEPLOY_CENTER_TEST_BASH || 'E:/dev/git/bin/bash.exe',
+        [unix(file)],
+        {
+          timeout: 20000,
+          env: { ...process.env, FIXTURE_ROOT: unix(dir), MSYS2_ARG_CONV_EXCL: '*' },
+        },
+      );
+      expect(result.code, result.stderr).toBe(0);
+      expect(result.stdout).toContain('window-ok');
+      // 复用实际稳定性与健康函数，验证 Docker starting 不会提前使启动失败。
+      const stability = runner.slice(runner.indexOf('stability() {'), runner.indexOf('# 应用健康'));
+      const dockerScenario =
+        `set -e\n${stability}\n${functions}\nMODE=docker; HEALTH_TYPE=http; HEALTH_LOCATION=remote; HEALTH_VALUE=fixture; HEALTH_TIMEOUT=10; HEALTH_RETRIES=1; HEALTH_INTERVAL=5; HEALTH_DELAY=0; HEALTH_WINDOW=60; HEALTH_BY_WINDOW=1; STABILITY_SECONDS=2; COMMAND_TIMEOUT=120; restart_baseline=2; CONTAINER=fixture\n` +
+        `date(){ cat "$FIXTURE_ROOT/clock"; }\nsleep(){ n=$(cat "$FIXTURE_ROOT/clock"); printf '%s' "$((n + $1))" > "$FIXTURE_ROOT/clock"; }\ntimeout(){ shift; "$@"; }\ncurl(){ printf 200; }\ndocker(){ case "$3" in *Running*RestartCount*) n=$(cat "$FIXTURE_ROOT/clock"); if [ "$n" -ge 20 ]; then printf 'true 2 healthy'; else printf 'true 2 starting'; fi;; *Running*) printf true;; *RestartCount*) printf 2;; *Health*) printf starting;; esac; }\nprintf 0 > "$FIXTURE_ROOT/clock"\nstability\n[ "$(cat "$FIXTURE_ROOT/clock")" = 2 ]\nhealth_check\n[ "$(cat "$FIXTURE_ROOT/clock")" = 22 ]\nprintf 'docker-wait-ok\\n'\n`;
+      await fs.writeFile(file, dockerScenario);
+      const dockerResult = await runProcess(
+        process.env.DEPLOY_CENTER_TEST_BASH || 'E:/dev/git/bin/bash.exe',
+        [unix(file)],
+        {
+          timeout: 10000,
+          env: { ...process.env, FIXTURE_ROOT: unix(dir), MSYS2_ARG_CONV_EXCL: '*' },
+        },
+      );
+      expect(dockerResult.code, dockerResult.stderr).toBe(0);
+      expect(dockerResult.stdout).toContain('docker-wait-ok');
+    },
+    25000,
+  );
 });
 describe('1.1.0 本机产物与 Git 摘要', () => {
   it('中文空格目录真实读取产物元数据、分支提交和工作区修改', async () => {

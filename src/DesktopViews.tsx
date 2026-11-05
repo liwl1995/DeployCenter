@@ -1,17 +1,29 @@
+import { fmtTime } from './model';
 import { useEffect, useRef, useState } from 'react';
 import type { Server } from './model';
 import { desktop, type TrustRequest } from './platform';
 import { Badge, Field, Modal } from './ui';
+import { LogAccumulator, type LogLine } from './log-model';
+import { VirtualLogs } from './LogViewer';
 
 export function TrustDialog({ request, onClose }: { request: TrustRequest; onClose: () => void }) {
   const [word, setWord] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
   const decide = async (yes: boolean) => {
+    if (submitting.current || (yes && request.changed && word !== 'TRUST')) return;
+    submitting.current = true;
+    setBusy(true);
+    setError('');
     try {
       await desktop!.trust(request.id, yes, word);
       onClose();
     } catch (e) {
       setError(String(e));
+    } finally {
+      submitting.current = false;
+      setBusy(false);
     }
   };
   return (
@@ -22,15 +34,29 @@ export function TrustDialog({ request, onClose }: { request: TrustRequest; onClo
       <p>
         {request.server} · {request.endpoint}
       </p>
+      {request.changed && request.previousFingerprint && (
+        <div className="notice">
+          <strong>原信任指纹</strong>
+          <p className="code">{request.previousFingerprint}</p>
+        </div>
+      )}
+      <p className="note">本次服务器指纹</p>
       <p className="code">{request.fingerprint}</p>
       <p className={request.changed ? 'warning' : 'note'}>
         {request.changed
           ? '已保存的主机密钥与本次连接不同。请先从独立渠道核实指纹；只有明确更新信任后才会发送认证信息。'
           : '请核对服务器指纹。拒绝后不会继续认证、上传或修改服务。'}
       </p>
-      {false && (
+      {request.changed && (
         <Field label="输入 TRUST 更新信任">
-          <input data-autofocus value={word} onChange={(e) => setWord(e.target.value)} />
+          <input
+            data-autofocus
+            autoComplete="off"
+            spellCheck={false}
+            disabled={busy}
+            value={word}
+            onChange={(e) => setWord(e.target.value)}
+          />
         </Field>
       )}
       {error && (
@@ -41,6 +67,7 @@ export function TrustDialog({ request, onClose }: { request: TrustRequest; onClo
       <footer className="modal-actions">
         <button
           className="button"
+          disabled={busy}
           data-autofocus={!request.changed || undefined}
           onClick={() => void decide(false)}
         >
@@ -48,10 +75,10 @@ export function TrustDialog({ request, onClose }: { request: TrustRequest; onClo
         </button>
         <button
           className="button primary"
-          disabled={request.changed}
+          disabled={busy || (request.changed && word !== 'TRUST')}
           onClick={() => void decide(true)}
         >
-          信任并继续
+          {busy ? '正在处理…' : request.changed ? '确认更新信任并继续' : '信任并继续'}
         </button>
       </footer>
     </Modal>
@@ -123,120 +150,75 @@ export function CredentialPrompt({
     </form>
   );
 }
-export function NativeLogs({
-  taskId,
+export { NativeLogPanel as NativeLogs } from './NativeLogPanel';
+export function ContainerLogs({
   targetId,
-  initial,
+  initialSession,
 }: {
-  taskId: string;
   targetId: string;
-  initial: string[];
+  initialSession?: string;
 }) {
-  const sequence = useRef(initial.length);
-  const [lines, setLines] = useState(() => initial.map((text, id) => ({ text, id })));
-  const ref = useRef<HTMLPreElement>(null),
-    follow = useRef(true);
-  useEffect(() => {
-    let loaded = false,
-      alive = true;
-    const pending: { text: string; targetId?: string; offset?: number }[] = [];
-    const append = (text: string) => {
-      const added = text
-        .replace(/\r/g, '')
-        .split('\n')
-        .filter(Boolean)
-        .map((text) => ({ text, id: sequence.current++ }));
-      setLines((old) => {
-        const next = [...old, ...added];
-        return next.length > 20000 && follow.current && !window.getSelection()?.toString()
-          ? next.slice(-20000)
-          : next;
-      });
-    };
-    const off = desktop!.onEvent((event) => {
-      if (
-        event.kind !== 'log' ||
-        event.taskId !== taskId ||
-        (event.targetId && event.targetId !== targetId)
-      )
-        return;
-      if (loaded) append(event.text);
-      else pending.push(event);
-    });
-    void desktop!
-      .readLogs(taskId, targetId)
-      .then((value) => {
-        if (!alive) return;
-        setLines(
-          [...value.build, ...value.target].map((text) => ({ text, id: sequence.current++ })),
-        );
-        loaded = true;
-        for (const event of pending)
-          if (
-            (event.offset || Infinity) >
-            (event.targetId ? value.targetOffset || 0 : value.buildOffset || 0)
-          )
-            append(event.text);
-      })
-      .catch(() => {
-        loaded = true;
-        for (const event of pending) append(event.text);
-      });
-    return () => {
-      alive = false;
-      off();
-    };
-  }, [taskId, targetId]);
-  useEffect(() => {
-    if (ref.current && follow.current && !window.getSelection()?.toString())
-      ref.current.scrollTop = ref.current.scrollHeight;
-  }, [lines]);
-  return (
-    <pre
-      className="terminal"
-      ref={ref}
-      aria-label="任务日志"
-      onScroll={(e) => {
-        const el = e.currentTarget;
-        follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-      }}
-    >
-      <span className="terminal-caption">真实执行日志 · 完整记录可导出</span>
-      {lines.map((line) => (
-        <span key={line.id}>{line.text}</span>
-      ))}
-    </pre>
-  );
-}
-export function ContainerLogs({ targetId }: { targetId: string }) {
   const [credential, setCredential] = useState(''),
-    [lines, setLines] = useState<string[]>([]),
     [active, setActive] = useState(false),
-    [error, setError] = useState('');
-  const session = useRef(''),
-    pending = useRef(new Map<string, string[]>()),
-    mounted = useRef(true);
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState(''),
+    [lines, setLines] = useState<LogLine[]>([]),
+    [endsAt, setEndsAt] = useState<number>();
+  const session = useRef(initialSession || ''),
+    collector = useRef(new LogAccumulator()),
+    mounted = useRef(true),
+    loaded = useRef(false),
+    pending = useRef<Extract<import('./platform').DesktopEvent, { kind: 'container-log' }>[]>([]);
+  const append = (event: (typeof pending.current)[number]) => {
+    const bytes = new TextEncoder().encode(event.text).length;
+    collector.current.append(
+      event.id,
+      event.text,
+      event.offset === undefined ? undefined : event.offset - bytes,
+      event.context,
+    );
+    setLines([...collector.current.entries]);
+    if (event.active !== undefined) setActive(event.active);
+  };
+  const hydrate = async (id: string) => {
+    const snapshot = await desktop!.readLogSession(id);
+    if (!mounted.current || session.current !== id) return;
+    collector.current = new LogAccumulator();
+    for (const chunk of snapshot.chunks)
+      collector.current.append(
+        id,
+        chunk.text,
+        chunk.offset - new TextEncoder().encode(chunk.text).length,
+        chunk.context,
+      );
+    setActive(snapshot.active);
+    setEndsAt(snapshot.endsAt);
+    loaded.current = true;
+    for (const event of pending.current) if (event.id === id) append(event);
+    pending.current = [];
+    setLines([...collector.current.entries]);
+  };
   useEffect(() => {
     mounted.current = true;
     const off = desktop!.onEvent((event) => {
-      if (event.kind !== 'container-log') return;
-      if (event.id === session.current)
-        setLines((old) =>
-          window.getSelection()?.toString()
-            ? [...old, event.text]
-            : [...old, event.text].slice(-5000),
-        );
-      else if (!session.current)
-        pending.current.set(event.id, [...(pending.current.get(event.id) || []), event.text]);
+      if (event.kind !== 'container-log' || event.id !== session.current) return;
+      if (!loaded.current) pending.current.push(event);
+      else append(event);
     });
+    if (initialSession)
+      void hydrate(initialSession).catch((e) => {
+        if (mounted.current) setError(String(e));
+      });
     return () => {
       mounted.current = false;
       off();
       if (session.current) void desktop!.stopLogs(session.current);
     };
   }, []);
-  async function begin() {
+  const begin = async () => {
+    setBusy(true);
     setError('');
+    loaded.current = false;
     try {
       const id = await desktop!.followLogs(targetId, credential);
       if (!mounted.current) {
@@ -244,51 +226,54 @@ export function ContainerLogs({ targetId }: { targetId: string }) {
         return;
       }
       session.current = id;
-      setLines(pending.current.get(id) || []);
-      pending.current.clear();
-      setActive(true);
       setCredential('');
+      await hydrate(id);
     } catch (e) {
-      setError(String(e));
+      if (mounted.current) setError(String(e));
+    } finally {
+      if (mounted.current) setBusy(false);
     }
-  }
+  };
   return (
     <>
-      <Field label="连接口令（已有保存凭据或 SSH 别名可留空）">
-        <input
-          type="password"
-          value={credential}
-          autoComplete="off"
-          onChange={(e) => setCredential(e.target.value)}
-        />
-      </Field>
+      {!initialSession && (
+        <Field label="连接口令（已有保存凭据或 SSH 别名可留空）">
+          <input
+            type="password"
+            value={credential}
+            autoComplete="off"
+            onChange={(e) => setCredential(e.target.value)}
+          />
+        </Field>
+      )}
       <div className="row wrap">
-        <button className="button primary" disabled={active} onClick={() => void begin()}>
-          跟随容器日志
+        <button className="button primary" disabled={active || busy} onClick={() => void begin()}>
+          {busy ? '连接中…' : '跟随应用日志'}
         </button>
         <button
           className="button"
           disabled={!active}
           onClick={() => {
             void desktop!.stopLogs(session.current);
-            session.current = '';
             setActive(false);
           }}
         >
           停止跟随
         </button>
-        <Badge>{active ? '正在跟随' : '未连接'}</Badge>
+        <Badge>{active ? '正在跟随' : '已停止'}</Badge>
       </div>
+      {endsAt && (
+        <p className="note">
+          将在 {new Date(endsAt).toLocaleTimeString('zh-CN', { hour12: false })}{' '}
+          自动停止；关闭窗口也会停止当前会话。
+        </p>
+      )}
       {error && (
         <p className="warning" role="alert">
           {error}
         </p>
       )}
-      <pre className="terminal mt">
-        {lines.length
-          ? lines.map((line, index) => <span key={index}>{line}</span>)
-          : '点击跟随后读取最近 200 行并持续显示新增日志。'}
-      </pre>
+      <VirtualLogs entries={lines} />
     </>
   );
 }
@@ -313,7 +298,7 @@ export function LockTakeover({
   return (
     <>
       <p>持有者：{owner}</p>
-      <p>创建时间：{new Date(created * 1000).toLocaleString()}</p>
+      <p>创建时间：{fmtTime(new Date(created * 1000).toISOString())}</p>
       <p className="warning">{message}</p>
       {stale && (
         <>

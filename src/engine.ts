@@ -13,6 +13,7 @@ import {
   type Target,
   type Task,
 } from './model';
+import { healthLabels } from './presentation';
 export type Clock = () => number;
 export function targetSteps(t: Target, b: Backup, rollback = false): Step[] {
   const steps: Step[] = [{ key: 'connect', label: '检查连接、目录、权限与可用空间' }];
@@ -67,7 +68,7 @@ export function targetSteps(t: Target, b: Backup, rollback = false): Step[] {
     label:
       t.health.type === 'none'
         ? '未配置健康检查，标记未验证'
-        : `${t.health.type.toUpperCase()} 应用健康检查`,
+        : `${healthLabels[t.health.type]} 应用健康检查`,
     critical: true,
   });
   return steps.map((s) => ({ ...s, elapsed: 0, status: 'pending' }));
@@ -348,6 +349,8 @@ export function toHistory(task: Task): History[] {
       time: task.started,
       elapsed: r.elapsed,
       backupCreated: r.backupCreated,
+      backupCreatedAt: r.backupCreatedAt,
+      backupRemoved: r.backupRemoved,
       backupHash: r.backupHash,
       backupSize: r.backupSize,
       backupVersion: r.backupVersion,
@@ -356,5 +359,7 @@ export function toHistory(task: Task): History[] {
       logs: [...r.logs],
       error: r.error,
       recovery: r.recovery,
+      note: task.note,
+      deployedCommit: task.deployedCommit,
     }));
 }

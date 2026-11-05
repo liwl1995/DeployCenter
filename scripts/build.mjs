@@ -4,7 +4,12 @@ import fs from 'node:fs/promises';
 await viteBuild();
 await fs.mkdir('dist-electron', { recursive: true });
 await build({
-  entryPoints: ['electron/main.ts', 'electron/preload.ts', 'electron/worker.ts'],
+  entryPoints: [
+    'electron/main.ts',
+    'electron/preload.ts',
+    'electron/worker.ts',
+    'electron/history-search.ts',
+  ],
   bundle: true,
   platform: 'node',
   format: 'cjs',

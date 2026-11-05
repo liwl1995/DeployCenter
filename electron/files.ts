@@ -1,7 +1,8 @@
 import fs, { createReadStream, openAsBlob } from 'node:fs';
 import { access, copyFile, mkdir, open, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { snapshotPath, managedPath } from './managed-path';
 import { BlobReader, ZipReader, TextWriter } from '@zip.js/zip.js';
 import type { Artifact, Database, Service } from '../src/model';
 import { runBatch, runProcess, splitArguments, type ProcessOptions } from './process';
@@ -105,25 +106,70 @@ export async function serviceInfo(service: Service, file = jarPath(service)): Pr
   };
 }
 
+export type SnapshotSource = { path: string; hash: string; size: number };
 export async function snapshotJar(
   file: string,
   taskId: string,
   dataDir: string,
   signal?: AbortSignal,
+  sources: SnapshotSource[] = [],
 ): Promise<Artifact> {
   if (!/^DC-[a-zA-Z0-9-]+$/.test(taskId)) throw new Error('任务标识无效');
-  const dir = path.join(dataDir, 'artifacts', taskId);
-  await mkdir(dir, { recursive: true });
-  const dest = path.join(dir, path.basename(file));
-  const before = await stat(file);
-  await copyFile(file, dest, fs.constants.COPYFILE_EXCL);
-  const after = await stat(file);
-  if (before.size !== after.size || before.mtimeMs !== after.mtimeMs)
-    throw new Error('生成产物快照时源 JAR 发生变化，请重试');
-  const result = await inspectJar(dest, signal);
-  result.originalPath = path.resolve(file);
-  result.modified = before.mtime.toISOString();
-  return result;
+  // 即使复用已有快照，也先完整检查这次选定的 JAR；不降低 ZIP、CRC 和哈希要求。
+  const original = await inspectJar(file, signal);
+  const hash = original.sha256!;
+  const dest = path.join(dataDir, 'artifacts', 'sha256', hash + '.jar');
+  for (const candidate of [
+    dest,
+    ...sources.filter((s) => s.hash === hash && s.size === original.size).map((s) => s.path),
+  ]) {
+    snapshotPath(dataDir, candidate);
+    if (!fs.existsSync(candidate)) continue;
+    const stored = await inspectJar(candidate, signal);
+    if (stored.sha256 !== hash || stored.size !== original.size)
+      throw new Error('本机固定产物已损坏，请先清理后重新构建或选择 JAR');
+    return { ...original, path: candidate, snapshotId: hash, snapshotRemoved: false };
+  }
+  snapshotPath(dataDir, dest);
+  await mkdir(path.dirname(dest), { recursive: true });
+  const staging = path.join(dataDir, 'tmp', taskId, 'snapshot-' + randomUUID() + '.uploading');
+  managedPath(dataDir, 'tmp', staging);
+  await mkdir(path.dirname(staging), { recursive: true });
+  try {
+    await copyFile(file, staging, fs.constants.COPYFILE_EXCL);
+    const copiedHash = await fileHash(staging, signal);
+    const after = await stat(file);
+    if (
+      copiedHash !== hash ||
+      after.size !== original.size ||
+      after.mtime.toISOString() !== original.modified
+    )
+      throw new Error('生成产物快照时源 JAR 发生变化，请重试');
+    if (signal?.aborted) throw new Error('操作已取消');
+    // 同卷 link 原子发布且不覆盖已存在内容；未完成的副本始终只在本任务临时目录里。
+    snapshotPath(dataDir, dest);
+    try {
+      await fs.promises.link(staging, dest);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'EEXIST') {
+        snapshotPath(dataDir, dest);
+        if ((await fileHash(dest, signal)) !== hash) throw error;
+      } else if (['ENOTSUP', 'EOPNOTSUPP', 'EPERM'].includes(code || '')) {
+        // 一次只有一个真实部署任务；临时目录与产物目录同卷，rename 不暴露半成品。
+        snapshotPath(dataDir, dest);
+        await fs.promises.rename(staging, dest);
+      } else throw error;
+    }
+    return { ...original, path: dest, snapshotId: hash, snapshotRemoved: false };
+  } finally {
+    try {
+      managedPath(dataDir, 'tmp', staging);
+      await fs.promises.unlink(staging);
+    } catch {
+      /* 下次清理重试。 */
+    }
+  }
 }
 export async function resolveBuild(
   s: Service,
@@ -187,11 +233,12 @@ export async function resolveBuild(
 export async function gitInfo(root: string): Promise<Service['git'] & { dirty: boolean }> {
   const query = (args: string[]) => runProcess('git', ['-C', root, ...args], { timeout: 10000 });
   try {
-    const [branch, commit, time, dirty] = await Promise.all([
+    const [branch, commit, time, dirty, message] = await Promise.all([
       query(['branch', '--show-current']),
       query(['rev-parse', 'HEAD']),
       query(['show', '-s', '--format=%cI', 'HEAD']),
       query(['status', '--porcelain']),
+      query(['show', '-s', '--format=%s', 'HEAD']),
     ]);
     if (commit.code) throw new Error();
     return {
@@ -199,6 +246,7 @@ export async function gitInfo(root: string): Promise<Service['git'] & { dirty: b
       commit: commit.stdout.trim(),
       time: time.stdout.trim(),
       dirty: !!dirty.stdout.trim(),
+      message: message.code === 0 ? message.stdout.trim() : undefined,
     };
   } catch {
     return {
@@ -243,6 +291,11 @@ export async function detectJdks(): Promise<Database['jdks']> {
   );
 }
 export async function checkJdk(dir: string) {
+  await access(path.join(dir, 'bin', process.platform === 'win32' ? 'javac.exe' : 'javac')).catch(
+    () => {
+      throw new Error('必须选择完整 JDK（缺少 javac）：' + dir);
+    },
+  );
   const file = path.join(dir, 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
   const result = await runProcess(file, ['-version'], { timeout: 15000 });
   if (result.code) throw new Error(result.stderr);

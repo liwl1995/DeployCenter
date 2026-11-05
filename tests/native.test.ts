@@ -252,28 +252,35 @@ describe('原生存储、文件和本地进程', () => {
     db.targets[0].directory = '/';
     expect(() => validateDatabase(db)).toThrow();
   });
-  it('中文及空格 .cmd 路径，参数中的百分号和 & 原样传递', async () => {
-    const dir = path.join(await temp(), '中文 & space');
-    await fs.mkdir(dir);
-    const batch = path.join(dir, '构建.cmd');
-    await fs.writeFile(
-      path.join(dir, 'capture.cjs'),
-      'console.log(JSON.stringify({args:process.argv.slice(2),cwd:process.cwd(),jdk:process.env.JAVA_HOME}));',
-    );
-    await fs.writeFile(
-      batch,
-      `@echo off\r\n"${process.execPath}" "%~dp0capture.cjs" %*\r\n`,
-      'utf8',
-    );
-    const args = ['-Dpath=中文 空格', '-Dx=%PATH%', 'x&y'];
-    const result = await runBatch(batch, args, dir, {
-      cwd: dir,
-      env: { ...process.env, JAVA_HOME: 'fixture-jdk' },
-      encoding: 'utf8',
-    });
-    expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout.trim())).toMatchObject({ args, cwd: dir, jdk: 'fixture-jdk' });
-  });
+  it.skipIf(process.platform !== 'win32')(
+    '中文及空格 .cmd 路径，参数中的百分号和 & 原样传递（仅 Windows）',
+    async () => {
+      const dir = path.join(await temp(), '中文 & space');
+      await fs.mkdir(dir);
+      const batch = path.join(dir, '构建.cmd');
+      await fs.writeFile(
+        path.join(dir, 'capture.cjs'),
+        'console.log(JSON.stringify({args:process.argv.slice(2),cwd:process.cwd(),jdk:process.env.JAVA_HOME}));',
+      );
+      await fs.writeFile(
+        batch,
+        `@echo off\r\n"${process.execPath}" "%~dp0capture.cjs" %*\r\n`,
+        'utf8',
+      );
+      const args = ['-Dpath=中文 空格', '-Dx=%PATH%', 'x&y'];
+      const result = await runBatch(batch, args, dir, {
+        cwd: dir,
+        env: { ...process.env, JAVA_HOME: 'fixture-jdk' },
+        encoding: 'utf8',
+      });
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.stdout.trim())).toMatchObject({
+        args,
+        cwd: dir,
+        jdk: 'fixture-jdk',
+      });
+    },
+  );
   it('GBK 输出正确解码，成功标记跨数据块仍识别', async () => {
     const file = path.join(await temp(), 'output.cjs');
     await fs.writeFile(

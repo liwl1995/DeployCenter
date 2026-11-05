@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { createTask, startTask, targetSteps } from '../src/engine';
+import { confirmProduction } from '../src/presentation';
 import { canRollback } from '../src/records';
 import { localJar, type Artifact, type Task } from '../src/model';
 import type { Approval, DesktopEvent, TrustRequest } from '../src/platform';
@@ -34,16 +35,16 @@ export class TrustBroker {
   answer(id: string, accepted: boolean, confirmation = '') {
     const pending = this.requests.get(id);
     if (!pending) return;
-    if (pending.request.changed && accepted)
-      throw new Error('主机指纹不一致，禁止更新信任或忽略校验');
-    void confirmation;
-    clearTimeout(pending.timer);
-    this.requests.delete(id);
+    if (pending.request.changed && accepted && confirmation !== 'TRUST')
+      throw new Error('请核实新指纹并输入 TRUST 才能更新信任');
+    // 写入成功后再结束握手请求，保存失败时仍可重试或拒绝连接。
     if (accepted)
       this.storage.trust(pending.request.endpoint, {
         key: pending.key,
         fingerprint: pending.request.fingerprint,
       });
+    clearTimeout(pending.timer);
+    this.requests.delete(id);
     pending.resolve(accepted);
     this.emit({ kind: 'trust-closed', id });
   }
@@ -67,6 +68,10 @@ export class Controller {
     readonly storage: Storage,
     private factory: WorkerFactory,
     private emit: (event: DesktopEvent) => void,
+    private options: {
+      resolveBuild?: typeof resolveBuild;
+      onFinished?: (task: Task, credentials: Record<string, string>) => void;
+    } = {},
   ) {
     this.trust = new TrustBroker(storage, emit);
   }
@@ -75,9 +80,26 @@ export class Controller {
   }
   async prepare(value: unknown) {
     if (this.storage.recovery) throw new Error('请先确认配置恢复，禁止覆盖原始数据');
+    if (this.storage.hasUnreadableTasks())
+      throw new Error('有无法读取的任务记录，请先检查数据库备份并核实远端状态。');
     if (this.active()) throw new Error('请等待当前任务结束');
     const request = parsePrepare(value),
       db = this.storage.database();
+    if (request.retryOf) {
+      const source = this.storage.task(request.retryOf);
+      const availability = this.storage.artifacts.availability(request.retryOf);
+      if (!availability.available) throw new Error(availability.reason);
+      if (
+        !source ||
+        ['running', 'cancelling', 'interrupted'].includes(source.status) ||
+        request.historyId ||
+        request.build !== 'existing' ||
+        source.service.id !== request.serviceId ||
+        request.jarPath !== source.artifact.path ||
+        request.targetIds.some((id) => !source.targets.some((r) => r.target.id === id))
+      )
+        throw new Error('重试范围与原任务不一致，请重新选择部署目标');
+    }
     const history = request.historyId
       ? db.history.find((h) => h.id === request.historyId)
       : undefined;
@@ -115,7 +137,11 @@ export class Controller {
     } else if (request.build === 'existing')
       artifact = await inspectJar(request.jarPath || localJar(service));
     else {
-      resolved = await resolveBuild(service, db.jdks, path.join(this.storage.dataDir, 'tmp'));
+      resolved = await (this.options.resolveBuild || resolveBuild)(
+        service,
+        db.jdks,
+        path.join(this.storage.dataDir, 'tmp'),
+      );
       const file = localJar(service);
       const info = await stat(file).catch(() => undefined);
       artifact = {
@@ -125,6 +151,17 @@ export class Controller {
         modified: info?.mtime.toISOString() || new Date(0).toISOString(),
         exists: !!info,
         source: 'unknown',
+      };
+    }
+    if (request.retryOf) {
+      const source = this.storage.task(request.retryOf)!;
+      if (!source.artifact.sha256 || artifact.sha256 !== source.artifact.sha256)
+        throw new Error('原固定产物内容已变化，请重新构建或选择现有 JAR');
+      artifact = {
+        ...artifact,
+        name: source.artifact.name,
+        modified: source.artifact.modified,
+        originalPath: source.artifact.originalPath,
       };
     }
     const task = createTask(
@@ -138,6 +175,17 @@ export class Controller {
     );
     task.failurePolicy = request.failurePolicy;
     task.dryRun = request.dryRun;
+    task.retryOf = request.retryOf;
+    if (request.retryOf) task.deployedCommit = this.storage.task(request.retryOf)?.deployedCommit;
+    task.note = request.note ?? service.git.message ?? '';
+    for (const run of task.targets) {
+      const override = request.observationOverrides?.[run.target.id];
+      if (override) {
+        if (override.enabled && run.target.mode === 'jar' && !run.target.appLogPath)
+          throw new Error('此目标尚未配置应用日志路径，请编辑目标后启用观察');
+        run.target.observation = override;
+      }
+    }
     if (resolved)
       task.buildContext = {
         ...task.buildContext,
@@ -225,12 +273,8 @@ export class Controller {
     if (!pending || pending.until < Date.now()) throw new Error('确认已过期，请重新检查部署概要');
     const approval: Approval = parseApproval(rawApproval);
     const task = structuredClone(pending.task);
-    if (
-      !task.dryRun &&
-      task.targets.some((r) => r.target.production) &&
-      approval.productionWord !== 'DEPLOY'
-    )
-      throw new Error('正式环境必须输入 DEPLOY');
+    if (!task.dryRun && !confirmProduction(task, approval.productionNames || {}))
+      throw new Error('请逐项输入本次正式目标的环境名称，确认部署位置');
     if (
       !task.dryRun &&
       task.targets.some((r) => r.target.hashPolicy === 'size-confirm') &&
@@ -252,7 +296,17 @@ export class Controller {
           },
         );
       }
+    if (task.retryOf) {
+      const availability = this.storage.artifacts.availability(task.retryOf);
+      if (!availability.available) throw new Error(availability.reason);
+    }
     task.protectCurrent = approval.protectCurrent;
+    if (task.operation === 'deploy' && task.build === 'rebuild')
+      await (this.options.resolveBuild || resolveBuild)(
+        task.service,
+        pending.jdks,
+        path.join(this.storage.dataDir, 'tmp'),
+      );
     this.activeCredentials = await this.credentials(task, values);
     this.prepared.delete(token);
     const started = startTask(task);
@@ -312,6 +366,7 @@ export class Controller {
     return task;
   }
   private launch(input: WorkerInput) {
+    input.artifactSources = this.storage.artifacts.sources();
     this.current = input.task;
     this.storage.saveTask(input.task);
     this.emit({ kind: 'task', task: input.task });
@@ -319,9 +374,15 @@ export class Controller {
       const worker = this.worker;
       this.worker = undefined;
       this.current = task;
-      this.activeCredentials = {};
       this.trust.cancel();
       this.storage.complete(task);
+      try {
+        this.options.onFinished?.(task, this.activeCredentials);
+      } catch {
+        /* 系统通知和观察失败不能改变已经提交的部署结果。 */
+      } finally {
+        this.activeCredentials = {};
+      }
       this.emit({ kind: 'task', task });
       this.emit({ kind: 'database', database: this.storage.database() });
       worker?.close();
@@ -333,7 +394,12 @@ export class Controller {
           this.storage.saveTask(message.task);
           this.emit({ kind: 'task', task: message.task });
         } else if (message.kind === 'log') {
-          const offset = this.storage.appendLog(message.taskId, message.text, message.targetId);
+          const offset = this.storage.appendLog(
+            message.taskId,
+            message.text,
+            message.targetId,
+            message.context,
+          );
           this.emit({ ...message, offset });
         } else if (message.kind === 'trust')
           void this.trust

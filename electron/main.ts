@@ -4,6 +4,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  Notification,
   safeStorage,
   shell,
   utilityProcess,
@@ -14,25 +15,72 @@ import fsp from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { LineRedactor } from './log-redactor';
+import { LogSessions, observeTask } from './observation';
 import { Storage } from './storage';
+import { migrationDestination, DataDirectory } from './data-directory';
+import { BackupManager } from './backup-manager';
 import { Controller } from './controller';
 import { detectJdks, inspectJar, checkJdk, resolveBuild, serviceInfo } from './files';
 import { runBatch, runProcess } from './process';
-import { validateDatabase } from './validate';
-import { createTransport, systemSsh, mustExec, type Transport, type Channel } from './ssh';
+import { validateDatabase, parseServer } from './validate';
+import {
+  aliases,
+  diagnose,
+  localDifferences,
+  localPrecheck,
+  sameServer,
+  toolInfo,
+} from './workspace';
+import { MemoryCredentials } from './native-capabilities';
+import { taskNotice, taskProgress, taskWindowTitle } from '../src/presentation';
+import { HistorySearch } from './history-services';
+import { deploymentReport } from '../src/report';
+import { createTransport, systemSsh, mustExec } from './ssh';
 import { shellQuote, safeConfigJson, validDatabase } from '../src/model';
 import type { DesktopEvent } from '../src/platform';
 import type { WorkerMessage } from './contracts';
 
 app.setName('YOTOO 部署中心');
 if (process.platform === 'win32') app.setAppUserModelId('local.deploycenter.desktop');
-const dataDir = path.resolve(
+let dataDir = path.resolve(
   process.env.DEPLOY_CENTER_DATA_DIR ||
     path.join(app.getPath('appData'), app.isPackaged ? 'DeployCenter' : 'DeployCenter-Development'),
 );
-fs.mkdirSync(dataDir, { recursive: true });
-app.setPath('userData', dataDir);
+const settingsDir = process.env.DEPLOY_CENTER_DATA_DIR
+  ? path.resolve(
+      process.env.DEPLOY_CENTER_SETTINGS_DIR ||
+        path.join(path.dirname(dataDir), 'settings-' + path.basename(dataDir)),
+    )
+  : path.join(
+      process.env.LOCALAPPDATA || app.getPath('appData'),
+      app.isPackaged ? 'DeployCenter' : 'DeployCenter-Development',
+      'Settings',
+    );
+const directories = new DataDirectory(settingsDir, dataDir, [
+  process.env.SystemRoot || 'C:\\Windows',
+  process.env.ProgramFiles || 'C:\\Program Files',
+  process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)',
+  path.dirname(app.getPath('exe')),
+]);
+fs.mkdirSync(settingsDir, { recursive: true });
+// 单实例锁使用稳定的控制目录，不随用户数据迁移改变身份。
+app.setPath('userData', settingsDir);
+let migrating = false,
+  pendingRestart = false,
+  dataNotice: string | undefined;
+const readOnlyDuringMigration = new Set([
+  'load',
+  'data-directory',
+  'migration-state',
+  'cancel-migration',
+  'restart',
+  'read-task',
+  'list-tasks',
+  'read-logs',
+  'open-data-dir',
+  'help',
+  'about',
+]);
 const lock = app.requestSingleInstanceLock();
 if (!lock) {
   app.quit();
@@ -40,14 +88,58 @@ if (!lock) {
   void boot();
 }
 let win: BrowserWindow | undefined, storage: Storage, controller: Controller;
+let backups: BackupManager;
 const approvedJars = new Set<string>();
+const historySearch = new HistorySearch();
 const pendingLocks = new Map<
   string,
   { targetId: string; owner: string; created: number; credential?: string; until: number }
 >();
-const logs = new Map<string, { transport: Transport; channel: Channel }>();
+let observeAfter:
+  | ((task: import('../src/model').Task, credentials: Record<string, string>) => void)
+  | undefined;
 const emit = (event: DesktopEvent) => {
-  if (win && !win.isDestroyed()) win.webContents.send('deploy:event', event);
+  if (win && !win.isDestroyed()) {
+    if (event.kind === 'task') {
+      win.setTitle(taskWindowTitle(event.task));
+      win.setProgressBar(taskProgress(event.task), {
+        mode: event.task.status === 'cancelling' ? 'paused' : 'normal',
+      });
+    }
+    win.webContents.send('deploy:event', event);
+  }
+};
+const sessions = new LogSessions(emit);
+const notified = new Set<string>();
+const finishedTask = (task: import('../src/model').Task, credentials: Record<string, string>) => {
+  if (
+    !win ||
+    win.isDestroyed() ||
+    win.isFocused() ||
+    process.platform !== 'win32' ||
+    process.env.DEPLOY_CENTER_TESTING === '1'
+  )
+    return;
+  const key = task.id + ':' + task.status + ':' + task.endedAt;
+  if (notified.has(key)) return;
+  notified.add(key);
+  win.flashFrame(true);
+  if (storage.database().settings.notifications === false || !Notification.isSupported()) return;
+  const redactor = new MemoryCredentials(credentials);
+  const body = taskNotice(task, (text) => redactor.redact(text));
+  redactor.clear();
+  const notification = new Notification({
+    title: 'YOTOO 部署中心',
+    body,
+    silent: storage.database().settings.notificationSound === false,
+    icon: path.join(__dirname, '..', 'assets', 'icon.ico'),
+  });
+  notification.on('click', () => {
+    win?.show();
+    win?.focus();
+    emit({ kind: 'open-task', taskId: task.id });
+  });
+  notification.show();
 };
 const text = (v: unknown, max = 32760) => z.string().max(max).parse(v);
 const id = (v: unknown) =>
@@ -58,6 +150,49 @@ const id = (v: unknown) =>
 async function boot() {
   await app.whenReady();
   try {
+    while (true) {
+      try {
+        const location = await directories.locate();
+        dataDir = location.directory;
+        dataNotice = location.notice;
+        break;
+      } catch (error) {
+        const choice = await dialog.showMessageBox({
+          type: 'warning',
+          title: '选择数据目录恢复方式',
+          message: '原数据位置无法读取，不会自动创建空配置',
+          detail: String(error),
+          buttons: ['重新指定已有数据目录', '明确改用默认目录', '退出'],
+          defaultId: 2,
+          cancelId: 2,
+        });
+        if (choice.response === 2) {
+          app.quit();
+          return;
+        }
+        if (choice.response === 0) {
+          const selected = await dialog.showOpenDialog({
+            properties: ['openDirectory'],
+            title: '选择包含现有数据库的数据目录',
+          });
+          if (selected.canceled) continue;
+          try {
+            directories.selectExisting(selected.filePaths[0]);
+          } catch (e) {
+            await dialog.showMessageBox({
+              type: 'error',
+              message: '该目录不可用',
+              detail: String(e),
+            });
+          }
+        } else {
+          directories.selectExisting(directories.defaultDir, true);
+          dataDir = directories.defaultDir;
+          dataNotice = '已按明确选择使用默认目录；原自定义目录未删除。';
+          break;
+        }
+      }
+    }
     storage = new Storage(dataDir, {
       async encrypt(value) {
         if (!(await safeStorage.isAsyncEncryptionAvailable()))
@@ -72,7 +207,9 @@ async function boot() {
         }
       },
     });
+    directories.markOwned(dataDir);
     storage.markInterrupted();
+    await storage.maintainStartup();
     await fsp.mkdir(path.join(dataDir, 'tmp'), { recursive: true });
     controller = new Controller(
       storage,
@@ -87,6 +224,28 @@ async function boot() {
         return { send: (value) => child.postMessage(value), close: () => child.kill() };
       },
       emit,
+      {
+        onFinished: (task, credentials) => {
+          try {
+            finishedTask(task, credentials);
+          } finally {
+            observeAfter?.(task, credentials);
+          }
+        },
+      },
+    );
+    backups = new BackupManager(
+      storage,
+      (server, credential) =>
+        createTransport(server, {
+          credential,
+          pins: storage.pins(),
+          trust: (r, k) => controller.trust.request(r, k),
+        }),
+      (record) => {
+        emit({ kind: 'maintenance', record });
+        emit({ kind: 'database', database: storage.database() });
+      },
     );
     const page = path.join(__dirname, '..', 'dist', 'index.html');
     const url = pathToFileURL(page).href;
@@ -94,7 +253,8 @@ async function boot() {
     win = new BrowserWindow({
       width: 1280,
       height: 900,
-      minWidth: 840,
+      minWidth: 1000,
+      autoHideMenuBar: true,
       minHeight: 620,
       show: !smoke,
       backgroundColor: '#f5f7f9',
@@ -106,8 +266,10 @@ async function boot() {
         contextIsolation: true,
         sandbox: true,
         webSecurity: true,
+        devTools: !app.isPackaged,
       },
     });
+    win.on('focus', () => win?.flashFrame(false));
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.webContents.on('will-navigate', (event, dest) => {
       if (dest.split('#')[0] !== url) event.preventDefault();
@@ -124,6 +286,30 @@ async function boot() {
           event.senderFrame.url.split('#')[0] !== url
         )
           throw new Error('拒绝不受信任的界面请求');
+        if ((migrating || pendingRestart) && !readOnlyDuringMigration.has(name))
+          throw new Error(
+            pendingRestart
+              ? '数据迁移已完成，请先重启后再修改配置或部署。'
+              : '正在迁移数据，暂时不能执行其他操作。',
+          );
+        if (storage.artifacts.isBusy() && ['prepare', 'start', 'recover'].includes(name))
+          throw new Error('正在整理本地产物，请完成后重新准备部署');
+        if (
+          backups?.isBusy() &&
+          [
+            'save',
+            'prepare',
+            'start',
+            'recover',
+            'takeover-lock',
+            'import-config',
+            'migrate-directory',
+            'restart',
+            'remove-old-data',
+            'apply-cleanup',
+          ].includes(name)
+        )
+          throw new Error('正在处理远程备份，请等待结果后再操作');
         return fn(...args);
       });
     handle('load', async () => ({
@@ -136,6 +322,10 @@ async function boot() {
       savedCredentials: storage.credentialIds(),
       encryptionAvailable: await safeStorage.isAsyncEncryptionAvailable(),
       pendingTrust: controller.trust.current(),
+      dataNotice,
+      dataUsage: storage.artifacts.usage(),
+      taskIssues: storage.taskIssues,
+      dataLocation: directories.state(),
     }));
     handle('save', (value) => storage.saveConfig(validateDatabase(value)));
     handle('confirm-recovery', () => storage.confirmRecovery());
@@ -149,7 +339,7 @@ async function boot() {
           .services.some(
             (s) => path.resolve(s.root, s.jarDir, s.jarName) === path.resolve(request.jarPath!),
           ) &&
-        !storage.tasks().some((t) => t.artifact.path === request.jarPath)
+        !storage.artifacts.sources().some((s) => s.path === request.jarPath)
       )
         throw new Error('请通过系统对话框选择 JAR，或使用服务配置的产物');
       return controller.prepare(value);
@@ -159,6 +349,83 @@ async function boot() {
     );
     handle('cancel', (value) => controller.cancel(id(value)));
     handle('recover', (value, creds) => controller.recover(id(value), creds));
+    const backupCredential = async (targetId: string, supplied: unknown) => {
+      const target = storage.database().targets.find((t) => t.id === targetId),
+        server = storage.database().servers.find((s) => s.id === target?.serverId);
+      if (!server) throw new Error('目标服务器不存在');
+      const credential = supplied
+        ? text(supplied, 8192)
+        : server.credentialMode === 'windows'
+          ? (await storage.credential(server.id)) || ''
+          : '';
+      if (server.auth === 'password' && !credential) throw new Error('请输入服务器密码');
+      return credential;
+    };
+    handle('preview-backups', async (value, supplied) => {
+      const targetId = id(value);
+      return backups.preview(targetId, await backupCredential(targetId, supplied));
+    });
+    handle('cancel-backup-plan', (token) => backups.cancel(text(token, 100)));
+    handle('backup-audits', (value) =>
+      storage.remoteBackups.audits(value === undefined ? undefined : id(value)),
+    );
+    handle('apply-backups', (token, ids, word) => {
+      if (controller.active()) throw new Error('请等待部署任务结束后再清理远程备份');
+      return backups.apply(
+        text(token, 100),
+        z
+          .array(z.string().regex(/^[a-f0-9]{64}$/))
+          .max(100)
+          .parse(ids),
+        text(word, 200),
+      );
+    });
+    handle('reconcile-backup', async (value, supplied) => {
+      const auditId = id(value),
+        audit = storage.remoteBackups.audits().find((r) => r.id === auditId);
+      if (!audit) throw new Error('清理记录不存在');
+      return backups.reconcile(auditId, await backupCredential(audit.targetId, supplied));
+    });
+    handle('local-differences', () => {
+      if (controller.active()) throw new Error('任务执行中暂不读取本地差异');
+      return localDifferences(storage.database());
+    });
+    handle('search-history', (query) =>
+      historySearch.search(dataDir, z.string().trim().min(1).max(200).parse(query)),
+    );
+    handle('cancel-search', () => historySearch.stop());
+    handle('export-report', async (value) => {
+      const task = storage.task(id(value));
+      if (!task) throw new Error('任务记录不存在');
+      const choice = await dialog.showSaveDialog(win!, {
+        defaultPath: task.id + '-部署报告.md',
+        filters: [{ name: 'Markdown 报告', extensions: ['md'] }],
+      });
+      if (choice.canceled || !choice.filePath) return false;
+      if (!/\.md$/i.test(choice.filePath)) throw new Error('请选择 .md 文件保存 Markdown 报告');
+      const targets: Record<string, string[]> = {},
+        build = storage.readLogs(task.id, task.targets[0]?.target.id || 'none').build;
+      for (const run of task.targets)
+        targets[run.target.id] = storage.readLogs(task.id, run.target.id).target;
+      const secrets: Record<string, string> = {};
+      for (const key of storage.credentialIds())
+        try {
+          secrets[key] = (await storage.credential(key)) || '';
+        } catch {
+          /* 任务原始日志在写入前已脱敏，不把凭据本身加入报告。 */
+        }
+      const redactor = new MemoryCredentials(secrets);
+      try {
+        await fsp.writeFile(
+          choice.filePath,
+          deploymentReport(task, { build, targets }, (text) => redactor.redact(text)),
+          { encoding: 'utf8', mode: 0o600 },
+        );
+      } finally {
+        redactor.clear();
+      }
+      return true;
+    });
     handle('list-tasks', () => storage.summaries());
     handle('read-task', (value) => {
       const task = storage.task(id(value));
@@ -202,11 +469,46 @@ async function boot() {
         file &&
         !approvedJars.has(file) &&
         path.resolve(service.root, service.jarDir, service.jarName) !== file &&
-        !storage.tasks().some((t) => path.resolve(t.artifact.path) === file)
+        !storage.artifacts.sources().some((s) => path.resolve(s.path) === file)
       )
         throw new Error('请选择服务产物或通过系统对话框选择文件');
       return serviceInfo(service, file);
     });
+    handle('approve-dropped-jar', async (value) => {
+      const file = text(value);
+      if (!path.isAbsolute(file))
+        throw new Error('拖入的文件没有可读取的本机路径，请使用选择本地 JAR');
+      const artifact = await inspectJar(file);
+      approvedJars.add(path.resolve(file));
+      return artifact;
+    });
+    handle('precheck', async (value) => {
+      const request = z
+        .object({
+          serviceId: z.string(),
+          targetIds: z.array(z.string()).max(100),
+          build: z.enum(['existing', 'rebuild']),
+          jarPath: z.string().optional(),
+        })
+        .parse(value);
+      const db = storage.database(),
+        service = db.services.find((s) => s.id === request.serviceId);
+      if (!service) throw new Error('服务不存在');
+      if (
+        request.jarPath &&
+        !approvedJars.has(path.resolve(request.jarPath)) &&
+        path.resolve(service.root, service.jarDir, service.jarName) !==
+          path.resolve(request.jarPath) &&
+        !storage.artifacts.sources().some((s) => s.path === path.resolve(request.jarPath!))
+      )
+        throw new Error('请先选择或拖入本地 JAR');
+      return localPrecheck(db, request, storage.credentialIds(), path.join(dataDir, 'tmp'));
+    });
+    handle('tool-info', (value) => {
+      if (controller.active()) throw new Error('请等待当前任务结束后再检测构建工具版本');
+      return toolInfo(storage.database(), id(value), path.join(dataDir, 'tmp'), true);
+    });
+    handle('ssh-aliases', (file) => aliases(file === undefined ? undefined : text(file)));
     handle('detect-jdks', () => detectJdks());
     handle('check-tool', async (kind, value) => {
       if (kind === 'jdk') {
@@ -232,6 +534,46 @@ async function boot() {
       if (!server) throw new Error('服务器不存在');
       return server;
     };
+    const readOnly = async (
+      server: import('../src/model').Server,
+      kind: import('../src/features').DiagnosticKind,
+      supplied: unknown,
+      target?: import('../src/model').Target,
+    ) => {
+      if (controller.active()) throw new Error('部署进行中，请先等待任务结束');
+      const stored = storage.database().servers.find((s) => s.id === server.id);
+      const credential = supplied
+        ? text(supplied, 8192)
+        : stored && sameServer(stored, server) && server.credentialMode === 'windows'
+          ? await storage.credential(server.id)
+          : undefined;
+      if (server.auth === 'password' && !credential) throw new Error('请输入登录密码');
+      const transport = createTransport(server, {
+        credential,
+        pins: storage.pins(),
+        trust: (r, k) => controller.trust.request(r, k),
+      });
+      const redactor = new MemoryCredentials({ active: credential || '' });
+      try {
+        await transport.connect();
+        return await diagnose(transport, kind, target, credential);
+      } catch (e) {
+        throw new Error(redactor.redact(String(e)));
+      } finally {
+        transport.close();
+        redactor.clear();
+      }
+    };
+    handle('test-draft', (value, supplied) => readOnly(parseServer(value), 'server', supplied));
+    handle('server-health', (value, supplied) => readOnly(getServer(value), 'server', supplied));
+    handle('diagnose', (value, rawKind, supplied) => {
+      const kind = z
+        .enum(['directory', 'disk', 'container', 'logs', 'process', 'lock'])
+        .parse(rawKind);
+      const target = storage.database().targets.find((t) => t.id === id(value));
+      if (!target) throw new Error('目标不存在');
+      return readOnly(getServer(target.serverId), kind, supplied, target);
+    });
     handle('save-credential', async (value, secret) => {
       const server = getServer(value);
       const string = text(secret, 8192);
@@ -395,6 +737,8 @@ mv -- "$lock" ${shellQuote(lock + '.stale.' + token)}
         {
           application: 'deploy-center',
           format: 1,
+          dataStorageNote:
+            '配置导出不包含数据目录位置指针、完整产物、日志和凭据。更换数据目录请使用设置中的完整迁移；本文件不能替代数据目录备份。',
           created: new Date().toISOString(),
           database: JSON.parse(safeConfigJson(storage.database())),
         },
@@ -464,7 +808,20 @@ mv -- "$lock" ${shellQuote(lock + '.stale.' + token)}
       emit({ kind: 'database', database: storage.database() });
       return storage.database();
     });
-    handle('read-logs', (task, target) => storage.readLogs(id(task), id(target)));
+    handle('read-logs', (task, target, before) =>
+      storage.readLogs(
+        id(task),
+        id(target),
+        before === undefined
+          ? undefined
+          : z
+              .object({
+                build: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+                target: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+              })
+              .parse(before),
+      ),
+    );
     handle('export-logs', async (taskId, targetId) => {
       const task = id(taskId),
         target = targetId === undefined ? undefined : id(targetId);
@@ -489,9 +846,9 @@ mv -- "$lock" ${shellQuote(lock + '.stale.' + token)}
       }
       return true;
     });
-    handle('follow-logs', async (value, supplied) => {
+    const followLogs = async (value: unknown, supplied?: unknown, duration?: number) => {
       const target = storage.database().targets.find((t) => t.id === id(value));
-      if (!target || target.mode !== 'docker') throw new Error('该目标不是 Docker 部署');
+      if (!target) throw new Error('目标不存在');
       const server = getServer(target.serverId);
       const credential = supplied
         ? text(supplied, 8192)
@@ -503,85 +860,182 @@ mv -- "$lock" ${shellQuote(lock + '.stale.' + token)}
         pins: storage.pins(),
         trust: (request, key) => controller.trust.request(request, key),
       });
-      await transport.connect();
-      const channel = await transport.channel(
-        'docker logs --tail 200 -f -- ' + shellQuote(target.container),
+      let command: string;
+      if (target.mode === 'docker')
+        command = 'docker logs --tail 200 -f -- ' + shellQuote(target.container);
+      else {
+        if (!target.appLogPath?.startsWith('/') || /[\r\n\0]/.test(target.appLogPath))
+          throw new Error('请先在目标配置中填写应用日志的绝对路径');
+        command = 'tail -n 200 -f -- ' + shellQuote(target.appLogPath);
+      }
+      const mask = new MemoryCredentials({ active: credential || '' });
+      try {
+        return await sessions.start(transport, command, target.id, credential, duration);
+      } catch (e) {
+        throw new Error(mask.redact(String(e)));
+      } finally {
+        mask.clear();
+      }
+    };
+    handle('follow-logs', (value, supplied) => followLogs(value, supplied));
+    handle('stop-logs', (value) => sessions.stop(text(value, 100)));
+    handle('read-log-session', (value) => sessions.read(text(value, 100)));
+    observeAfter = (task, credentials) => {
+      void observeTask(
+        task,
+        credentials,
+        async (run, secret, duration) => {
+          const db = storage.database(),
+            target = db.targets.find((t) => t.id === run.target.id),
+            server = target && db.servers.find((s) => s.id === target.serverId);
+          if (
+            !target ||
+            !server ||
+            !sameServer(server, run.server) ||
+            target.directory !== run.target.directory ||
+            target.fileName !== run.target.fileName ||
+            target.mode !== run.target.mode ||
+            target.container !== run.target.container
+          )
+            throw new Error('目标配置已变化，请核对后手动查看日志');
+          return followLogs(target.id, secret, duration);
+        },
+        emit,
       );
-      const sessionId = randomUUID();
-      logs.set(sessionId, { transport, channel });
-      channel.input.end();
-      const redactors = [
-        new LineRedactor({ active: credential || '' }),
-        new LineRedactor({ active: credential || '' }),
-      ];
-      const send = (index: number) => (data: Buffer) => {
-        try {
-          const text = redactors[index].write(data);
-          if (text) emit({ kind: 'container-log', id: sessionId, text });
-        } catch (e) {
-          channel.stop();
-          emit({ kind: 'container-log', id: sessionId, text: String(e) });
-        }
-      };
-      channel.output.on('data', send(0));
-      channel.error.on('data', send(1));
-      void channel.done
-        .catch(() => -1)
-        .then(() => {
-          for (const redactor of redactors) {
-            const text = redactor.end();
-            if (text) emit({ kind: 'container-log', id: sessionId, text });
-          }
-          emit({ kind: 'container-log', id: sessionId, text: '\n[日志连接已结束]\n' });
-          logs.delete(sessionId);
-          transport.close();
-        });
-      return sessionId;
-    });
-    handle('stop-logs', (value) => {
-      const entry = logs.get(text(value, 100));
-      entry?.channel.stop();
-      entry?.transport.close();
-      logs.delete(String(value));
-    });
+    };
     handle('open-data-dir', () => shell.openPath(dataDir));
-    Menu.setApplicationMenu(
-      Menu.buildFromTemplate([
-        {
-          label: '文件',
-          submenu: [
-            { label: '数据目录', click: () => void shell.openPath(dataDir) },
-            { type: 'separator' },
-            { role: 'quit', label: '退出' },
-          ],
-        },
-        { role: 'editMenu', label: '编辑' },
-        { role: 'viewMenu', label: '视图' },
-        {
-          label: '帮助',
-          submenu: [
-            {
-              label: '使用说明',
-              click: () =>
-                void shell.openPath(
-                  app.isPackaged
-                    ? path.join(process.resourcesPath, 'README.md')
-                    : path.join(__dirname, '..', 'README.md'),
-                ),
-            },
-            {
-              label: '关于 YOTOO 部署中心',
-              click: () =>
-                void dialog.showMessageBox(win!, {
-                  message: 'YOTOO 部署中心 ' + app.getVersion(),
-                  detail: 'Windows 本地 Java 服务部署工具\n数据目录：' + dataDir,
-                }),
-            },
-          ],
-        },
-      ]),
+    Menu.setApplicationMenu(null);
+    win.setMenuBarVisibility(false);
+    handle('help', () =>
+      shell.openPath(
+        app.isPackaged
+          ? path.join(process.resourcesPath, 'README.md')
+          : path.join(__dirname, '..', 'README.md'),
+      ),
     );
+    handle('about', () =>
+      dialog.showMessageBox(win!, {
+        title: '关于',
+        message: 'YOTOO 部署中心 ' + app.getVersion(),
+        detail: '本地 Java 服务部署工具\n数据目录：' + dataDir,
+        buttons: ['确定'],
+      }),
+    );
+    handle('data-usage', () => storage.artifacts.usage());
+    handle('snapshot-availability', (value) => storage.artifacts.availability(id(value)));
+    handle('preview-cleanup', (kind, policy) => {
+      if (controller.active()) throw new Error('请等待当前任务结束后再预览清理');
+      return storage.artifacts.preview(
+        z.enum(['policy', 'artifacts', 'temporary', 'legacy-success']).parse(kind),
+        policy as import('../src/model').ArtifactPolicy | undefined,
+      );
+    });
+    handle('apply-cleanup', async (token, confirmed) => {
+      if (controller.active()) throw new Error('任务执行中不能清理');
+      const result = await storage.artifacts.apply(text(token, 100), z.boolean().parse(confirmed));
+      if (result.policy) storage.applyArtifactPolicy(result.policy);
+      emit({ kind: 'database', database: storage.database() });
+      return result;
+    });
+    handle('data-directory', () => directories.info());
+    handle('inspect-directory', (value) => directories.inspect(migrationDestination(text(value))));
+    handle('migration-state', () => directories.progress);
+    let migrationCancelled = false;
+    handle('cancel-migration', () => {
+      migrationCancelled = true;
+      directories.cancel();
+    });
+    handle('migrate-directory', async (value) => {
+      if (migrating || pendingRestart) throw new Error('已有迁移或待重启切换');
+      migrating = true;
+      migrationCancelled = false;
+      try {
+        const destination = migrationDestination(text(value));
+        directories.progress = {
+          state: 'preparing',
+          copied: 0,
+          total: 0,
+          files: 0,
+          totalFiles: 0,
+          message: '正在准备迁移，原目录保留。',
+          target: destination,
+        };
+        emit({ kind: 'migration', progress: directories.progress });
+        await historySearch.stop();
+        await storage.settle();
+        if (migrationCancelled) {
+          directories.progress = {
+            state: 'cancelled',
+            copied: 0,
+            total: 0,
+            files: 0,
+            totalFiles: 0,
+            message: '迁移已取消，继续使用原目录。',
+          };
+          emit({ kind: 'migration', progress: directories.progress });
+          throw new Error('迁移已取消，继续使用原目录。');
+        }
+        if (storage.artifacts.isBusy()) throw new Error('正在清理文件，请稍后迁移');
+        return await directories.migrate(
+          destination,
+          () =>
+            storage.hasUnreadableTasks()
+              ? '有任务元数据无法读取，请先检查数据库备份'
+              : controller.active()
+                ? '任务执行或取消中，不能迁移'
+                : storage.unfinished().length
+                  ? '存在未处理的中断任务，不能迁移'
+                  : storage.recovery
+                    ? '请先处理损坏配置恢复'
+                    : undefined,
+          () => storage.pause(),
+          () => storage.resume(),
+          (progress) => emit({ kind: 'migration', progress }),
+        );
+      } catch (error) {
+        if (!['failed', 'cancelled'].includes(directories.progress.state)) {
+          directories.progress = {
+            ...directories.progress,
+            state: migrationCancelled ? 'cancelled' : 'failed',
+            message: String(error) + '；继续使用原目录。',
+          };
+          emit({ kind: 'migration', progress: directories.progress });
+        }
+        throw error;
+      } finally {
+        migrating = false;
+        pendingRestart = directories.progress.state === 'pending';
+      }
+    });
+    handle('restart', () => {
+      if (migrating || controller.active()) throw new Error('请等待任务或迁移结束');
+      app.relaunch();
+      app.quit();
+    });
+    handle('keep-old-data', () => directories.keepPrevious());
+    handle('remove-old-data', async (value) => {
+      if (controller.active() || storage.unfinished().length)
+        throw new Error('任务未处理完，不能清理旧目录');
+      await directories.removePrevious(text(value));
+    });
+    if (app.isPackaged)
+      win.webContents.on('before-input-event', (event, input) => {
+        if (
+          input.key === 'F12' ||
+          (input.control && input.shift && input.key.toLowerCase() === 'i')
+        )
+          event.preventDefault();
+      });
     win.on('close', (event) => {
+      if (migrating || backups.isBusy()) {
+        event.preventDefault();
+        void dialog.showMessageBox(win!, {
+          message: backups.isBusy() ? '远程备份操作正在进行，请等待结果' : '数据迁移正在进行',
+          detail: '请等待迁移结束，或在设置页取消迁移后再关闭。',
+          buttons: ['返回'],
+        });
+        return;
+      }
       if (controller.active()) {
         event.preventDefault();
         void dialog
@@ -645,9 +1099,8 @@ mv -- "$lock" ${shellQuote(lock + '.stale.' + token)}
 }
 app.on('window-all-closed', () => app.quit());
 app.on('will-quit', () => {
-  for (const entry of logs.values()) {
-    entry.channel.stop();
-    entry.transport.close();
-  }
+  void historySearch.stop();
+  backups?.close();
+  sessions.closeAll();
   storage?.close();
 });

@@ -21,14 +21,17 @@ export class MemoryCredentials implements CredentialProvider {
       .replace(/(Authorization:\s*)[^\r\n]+/gi, '$1[已隐藏]');
   }
 }
-export function nativeCapabilities(values: Record<string, string>): EngineDependencies {
+export function nativeCapabilities(
+  values: Record<string, string>,
+  sources: import('./files').SnapshotSource[] = [],
+): EngineDependencies {
   return {
     clock: { now: Date.now, sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)) },
     commands: { run: runProcess, resolveBuild, gitInfo },
     files: {
       mkdir: (dir) => mkdir(dir, { recursive: true }).then(() => undefined),
       stat: (file) => stat(file).catch(() => undefined),
-      snapshot: snapshotJar,
+      snapshot: (file, id, dir, signal) => snapshotJar(file, id, dir, signal, sources),
     },
     credentials: new MemoryCredentials(values),
     remote: createTransport,

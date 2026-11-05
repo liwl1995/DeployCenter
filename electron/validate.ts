@@ -1,7 +1,9 @@
 import path from 'node:path';
 import { z } from 'zod';
-import { validDatabase, type Database } from '../src/model';
+import { validDatabase, type Database, type Server } from '../src/model';
+import { emptyDatabase } from '../src/defaults';
 import type { Approval, PrepareRequest } from '../src/platform';
+import { artifactPolicy } from './artifact-store';
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,100}$/);
 const backup = z.object({
@@ -9,6 +11,7 @@ const backup = z.object({
   directory: z.string().max(2048),
   template: z.string().min(1).max(220),
   autoRollback: z.boolean(),
+  keepLast: z.number().int().min(0).max(10000).optional(),
 });
 export const prepareSchema = z.object({
   serviceId: id,
@@ -23,9 +26,18 @@ export const prepareSchema = z.object({
   failurePolicy: z.enum(['stop', 'continue']),
   historyId: z.string().max(150).optional(),
   dryRun: z.boolean().optional(),
+  retryOf: id.optional(),
+  note: z.string().max(2000).optional(),
+  observationOverrides: z
+    .record(
+      z.string(),
+      z.object({ enabled: z.boolean(), duration: z.number().int().min(10).max(3600) }),
+    )
+    .optional(),
 });
 export const approvalSchema = z.object({
   productionWord: z.string().max(30),
+  productionNames: z.record(z.string(), z.string().max(200)).optional(),
   allowWeak: z.boolean(),
   protectCurrent: z.boolean(),
 });
@@ -37,6 +49,7 @@ const clean = (s: string, label: string) => {
 };
 export function validateDatabase(v: unknown): Database {
   if (!validDatabase(v)) throw new Error('配置版本、字段或引用关系无效');
+  if (v.settings.artifactPolicy) artifactPolicy(v.settings.artifactPolicy);
   for (const s of v.services) {
     id.parse(s.id);
     if (!s.name.trim()) throw new Error('服务名称不能为空');
@@ -98,6 +111,12 @@ export function validateDatabase(v: unknown): Database {
     if (t.health.startDelay !== undefined)
       z.number().int().min(0).max(3600).parse(t.health.startDelay);
     if (t.health.maxWait !== undefined) z.number().int().min(1).max(3600).parse(t.health.maxWait);
+    if (t.appLogPath) {
+      clean(t.appLogPath, '应用日志路径');
+      if (!t.appLogPath.startsWith('/')) throw new Error('应用日志路径必须是远端绝对路径');
+    }
+    if (t.observation?.enabled && t.mode === 'jar' && !t.appLogPath)
+      throw new Error('启用日志观察前，请填写应用日志绝对路径');
     validateBackup(t.backup);
   }
   if (v.settings.historyDays !== undefined)
@@ -116,4 +135,29 @@ export function validateBackup(value: unknown) {
   )
     throw new Error('备份模板含未知变量或路径分隔符');
   return b;
+}
+
+/** 未保存表单只能临时连接，按同一服务器校验规则检查并移除额外字段。 */
+export function parseServer(value: unknown): Server {
+  const server = z
+    .object({
+      id,
+      name: z.string().min(1).max(200),
+      host: z.string().max(2048),
+      port: z.number().int().min(1).max(65535),
+      user: z.string().max(200),
+      auth: z.enum(['alias', 'password', 'key']),
+      alias: z.string().max(200),
+      keyPath: z.string().max(32760),
+      note: z.string().max(2000),
+      credentialMode: z.enum(['ask', 'windows']),
+      sshConfigFile: z.string().max(32760).optional(),
+    })
+    .safeParse(value);
+  if (!server.success)
+    throw new Error('请填写完整服务器名称、认证方式和有效的连接字段（SSH 端口 1–65535）');
+  const parsed = server.data;
+  validateDatabase({ ...emptyDatabase(), servers: [parsed] });
+  for (const value of [parsed.keyPath, parsed.sshConfigFile || '']) clean(value, 'SSH 文件路径');
+  return parsed;
 }

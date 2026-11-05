@@ -16,6 +16,7 @@ export type Backup = {
   directory: string;
   template: string;
   autoRollback: boolean;
+  keepLast?: number;
 };
 export type Server = {
   id: string;
@@ -44,7 +45,7 @@ export type Service = {
   profiles: string;
   jarDir: string;
   jarName: string;
-  git: { branch: string; commit: string; time: string; dirty?: boolean };
+  git: { branch: string; commit: string; time: string; dirty?: boolean; message?: string };
   buildTimeout?: number;
   logEncoding?: 'auto' | 'utf8' | 'gb18030';
 };
@@ -76,6 +77,9 @@ export type Target = {
   healthState: string;
   commandTimeout?: number;
   stabilitySeconds?: number;
+  currentCommit?: string;
+  observation?: { enabled: boolean; duration: number };
+  appLogPath?: string;
 };
 export type Settings = {
   failurePolicy: 'stop' | 'continue';
@@ -85,7 +89,28 @@ export type Settings = {
   historyDays?: number;
   staleLockMinutes?: number;
   demoMode: boolean;
+  notifications?: boolean;
+  notificationSound?: boolean;
+  compactTargets?: boolean;
+  artifactPolicy?: ArtifactPolicy;
 };
+export type ArtifactPolicy = {
+  mode: 'success' | 'count' | 'size';
+  maxCount: number;
+  maxGB: number;
+  failedDays: number;
+};
+export type Preset = {
+  id: string;
+  name: string;
+  serviceId: string;
+  targetIds: string[];
+  build: Task['build'];
+  overrides: Record<string, Backup>;
+  failurePolicy: Settings['failurePolicy'];
+  pinned: boolean;
+};
+
 export type Artifact = {
   name: string;
   size: number;
@@ -95,6 +120,8 @@ export type Artifact = {
   source: 'sample' | 'file' | 'unknown' | 'remote';
   sha256?: string;
   originalPath?: string;
+  snapshotId?: string;
+  snapshotRemoved?: boolean;
 };
 export type Step = {
   key: string;
@@ -132,6 +159,8 @@ export type TargetSnapshot = Pick<
   | 'container'
   | 'containerJar'
   | 'version'
+  | 'currentHash'
+  | 'currentCommit'
 >;
 export type ServerSnapshot = Pick<
   Server,
@@ -155,6 +184,8 @@ export type RunTarget = {
   plannedBackupPath: string;
   backupPath?: string;
   backupCreated: boolean;
+  backupCreatedAt?: number;
+  backupRemoved?: boolean;
   backupHash?: string;
   backupSize?: number;
   backupVersion?: string;
@@ -202,6 +233,9 @@ export type Task = {
   protectCurrent: boolean;
   deployedVersion?: string;
   dryRun?: boolean;
+  note?: string;
+  deployedCommit?: string;
+  retryOf?: string;
 };
 export type History = {
   id: string;
@@ -217,6 +251,8 @@ export type History = {
   elapsed: number;
   backupPath?: string;
   backupCreated: boolean;
+  backupCreatedAt?: number;
+  backupRemoved?: boolean;
   backupHash?: string;
   backupSize?: number;
   backupVersion?: string;
@@ -224,6 +260,8 @@ export type History = {
   logs: string[];
   error?: string;
   recovery?: string;
+  note?: string;
+  deployedCommit?: string;
 };
 export type Database = {
   schema: 3;
@@ -236,6 +274,7 @@ export type Database = {
   taskHistory: Record<string, TaskRecord>;
   lastService: string;
   lastTargets: string[];
+  presets?: Preset[];
 };
 
 import { seed } from './demo';
@@ -272,8 +311,12 @@ export const statusLabel: Record<TargetStatus, string> = {
   skipped: '已跳过',
   unknown: '待核实 · 远端状态未知',
 };
-export const fmtTime = (value: string) =>
-  new Date(value).toLocaleString('zh-CN', { hour12: false });
+export const fmtTime = (value: string) => {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value || '未记录';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+};
 export const shellQuote = (v: string) => "'" + v.replace(/'/g, "'\\''") + "'";
 export function backupPath(t: Target, b: Backup, taskId: string, date = new Date()) {
   const stamp = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}-${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}${String(date.getSeconds()).padStart(2, '0')}`;
@@ -329,6 +372,8 @@ export function snapshotTarget(t: Target): TargetSnapshot {
     container: t.container,
     containerJar: t.containerJar,
     version: t.version,
+    currentHash: t.currentHash,
+    currentCommit: t.currentCommit,
   };
 }
 export function snapshotServer(s: Server): ServerSnapshot {
@@ -351,7 +396,9 @@ export function validDatabase(data: unknown): data is Database {
     object(v) &&
     strings(v, ['directory', 'template']) &&
     typeof v.enabled === 'boolean' &&
-    typeof v.autoRollback === 'boolean';
+    typeof v.autoRollback === 'boolean' &&
+    (v.keepLast === undefined ||
+      (Number.isInteger(v.keepLast) && v.keepLast >= 0 && v.keepLast <= 10000));
   const service = (v: unknown) =>
     object(v) &&
     strings(v, [
@@ -405,6 +452,13 @@ export function validDatabase(data: unknown): data is Database {
       (k) => typeof v[k] === 'boolean',
     ) &&
     b(v.backup) &&
+    (v.observation === undefined ||
+      (object(v.observation) &&
+        typeof v.observation.enabled === 'boolean' &&
+        Number.isInteger(v.observation.duration) &&
+        v.observation.duration >= 10 &&
+        v.observation.duration <= 3600)) &&
+    (v.appLogPath === undefined || typeof v.appLogPath === 'string') &&
     object(v.health) &&
     ['none', 'http', 'tcp', 'command'].includes(v.health.type) &&
     typeof v.health.value === 'string' &&
@@ -434,6 +488,20 @@ export function validDatabase(data: unknown): data is Database {
     Array.isArray(d.services) &&
     d.services.every(service) &&
     unique(d.services) &&
+    (d.presets === undefined ||
+      (Array.isArray(d.presets) &&
+        unique(d.presets) &&
+        d.presets.every(
+          (p: any) =>
+            strings(p, ['id', 'name', 'serviceId']) &&
+            Array.isArray(p.targetIds) &&
+            p.targetIds.every((id: unknown) => typeof id === 'string') &&
+            ['rebuild', 'existing'].includes(p.build) &&
+            ['stop', 'continue'].includes(p.failurePolicy) &&
+            typeof p.pinned === 'boolean' &&
+            object(p.overrides) &&
+            Object.values(p.overrides).every(b),
+        ))) &&
     Array.isArray(d.servers) &&
     d.servers.every(server) &&
     unique(d.servers) &&
@@ -501,6 +569,21 @@ export function validDatabase(data: unknown): data is Database {
     d.settings.historyLimit >= 1 &&
     d.settings.historyLimit <= 10000 &&
     typeof d.settings.demoMode === 'boolean' &&
+    ['notifications', 'notificationSound', 'compactTargets'].every(
+      (key) => d.settings[key] === undefined || typeof d.settings[key] === 'boolean',
+    ) &&
+    (d.settings.artifactPolicy === undefined ||
+      (object(d.settings.artifactPolicy) &&
+        ['success', 'count', 'size'].includes(d.settings.artifactPolicy.mode) &&
+        Number.isInteger(d.settings.artifactPolicy.maxCount) &&
+        d.settings.artifactPolicy.maxCount >= 1 &&
+        d.settings.artifactPolicy.maxCount <= 10000 &&
+        Number.isFinite(d.settings.artifactPolicy.maxGB) &&
+        d.settings.artifactPolicy.maxGB > 0 &&
+        d.settings.artifactPolicy.maxGB <= 1024 &&
+        Number.isInteger(d.settings.artifactPolicy.failedDays) &&
+        d.settings.artifactPolicy.failedDays >= 1 &&
+        d.settings.artifactPolicy.failedDays <= 3650)) &&
     typeof d.lastService === 'string' &&
     Array.isArray(d.lastTargets) &&
     d.lastTargets.every((id: unknown) => typeof id === 'string')
@@ -531,4 +614,9 @@ function validSteps(steps: unknown[]): boolean {
         ['pending', 'running', 'success', 'failed', 'skipped'].includes(s.status)),
   );
 }
-export const seconds = (value: number) => value.toFixed(1) + ' 秒';
+export const seconds = (value: number) => {
+  const total = Math.max(0, Number.isFinite(value) ? value : 0);
+  if (total < 60) return total.toFixed(1) + ' 秒';
+  if (total < 3600) return `${Math.floor(total / 60)} 分 ${Math.floor(total % 60)} 秒`;
+  return `${Math.floor(total / 3600)} 小时 ${Math.floor((total % 3600) / 60)} 分`;
+};
