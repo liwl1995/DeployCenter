@@ -337,6 +337,95 @@ test('1.2.1 分类层级、详情工作区和提示横幅在实际桌面中可�
   expect(errors).toEqual([]);
 });
 
+test('1.2.4 确认弹窗首屏可操作，展开详情或滚动时底栏保持可见', async () => {
+  const page = await app.firstWindow();
+  await page
+    .getByRole('navigation', { name: '主导航' })
+    .getByRole('button', { name: '一键部署', exact: true })
+    .click();
+  await page.getByRole('button', { name: '使用现有 JAR', exact: true }).click();
+  const launch = page.getByRole('button', { name: '部署', exact: true });
+  for (const [width, height] of [[1280, 800], [1000, 620]]) {
+    await app.evaluate(
+      ({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setContentSize(w, h),
+      [width, height],
+    );
+    await launch.click();
+    const modal = page.getByRole('dialog', { name: '确认部署', exact: true });
+    const body = modal.locator('.modal-content');
+    const footer = modal.locator('.modal-footer');
+    const confirm = footer.getByRole('button', { name: '部署', exact: true });
+    const back = footer.getByRole('button', { name: '返回检查', exact: true });
+    await expect(back).toBeFocused();
+    await expect(confirm).toBeInViewport({ ratio: 1 });
+    await expect(back).toBeInViewport({ ratio: 1 });
+    await expect(body).toContainText('远程文件');
+    const metadata = body.locator('details').filter({ hasText: '产物与 Git 详情' });
+    await expect(metadata).not.toHaveAttribute('open');
+    await expect(metadata.getByText('文件已读取', { exact: true })).toBeHidden();
+    await metadata.locator('summary').click();
+    await expect(metadata.getByText('文件已读取', { exact: true })).toBeVisible();
+    const before = await confirm.boundingBox();
+    await body.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    await body.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    expect(await confirm.boundingBox()).toEqual(before);
+    await expect(confirm).toBeInViewport({ ratio: 1 });
+    await confirm.focus();
+    await page.keyboard.press('Tab');
+    await expect(modal.getByRole('button', { name: '关闭弹窗' })).toBeFocused();
+    await back.click();
+    await expect(modal).toHaveCount(0);
+    await expect(launch).toBeFocused();
+  }
+  expect((await page.evaluate(() => window.deployCenter!.load())).task).toBeUndefined();
+});
+
+test('1.2.4 全部收起恢复紧凑列表，卡片指纹与其他字段上下对齐', async () => {
+  const page = await app.firstWindow();
+  const nav = page.getByRole('navigation', { name: '主导航' });
+  await nav.getByRole('button', { name: '一键部署', exact: true }).click();
+  const compact = page.getByRole('switch', { name: '紧凑目标列表', exact: true });
+  const collapse = page.getByRole('button', { name: '全部收起', exact: true });
+  await expect(compact).toBeChecked();
+  await expect(page.locator('.target-compact')).toHaveCount(4);
+  await compact.uncheck();
+  await expect(page.locator('.target-card')).toHaveCount(4);
+  const positions = await page.locator('.target-card .target-facts').first().evaluate((el) => {
+    const label = el.querySelector('.hash-value > span')!;
+    const code = el.querySelector('.hash-value > code')!;
+    const copy = el.querySelector('.hash-value > button')!;
+    const top = (item: Element) => Math.round(item.getBoundingClientRect().top);
+    return {
+      label: top(label),
+      code: top(code),
+      copy: top(copy),
+      deployed: top(el.children[1]),
+      fingerprint: label.textContent,
+    };
+  });
+  expect(positions.fingerprint).toBe('JAR 指纹');
+  expect(positions.label).toBe(positions.deployed);
+  expect(positions.code).toBeGreaterThan(positions.label);
+  expect(positions.copy).toBeGreaterThan(positions.label);
+  await collapse.click();
+  await expect(compact).toBeChecked();
+  await expect(page.locator('.target-compact')).toHaveCount(4);
+  await page.getByRole('button', { name: '展开环境0详情', exact: true }).click();
+  await expect(page.locator('.target-card')).toHaveCount(1);
+  await collapse.click();
+  await expect(page.locator('.target-card')).toHaveCount(0);
+  await expect
+    .poll(async () => (await page.evaluate(() => window.deployCenter!.load())).database.settings.compactTargets)
+    .toBe(true);
+  await page.reload();
+  await nav.getByRole('button', { name: '一键部署', exact: true }).click();
+  await expect(page.locator('.target-compact')).toHaveCount(4);
+});
+
 test('1.2.2 固定外壳在最小窗口中保持页脚可见、导航可操作、分组标题不被覆盖', async () => {
   test.setTimeout(120000);
   const page = await app.firstWindow(),

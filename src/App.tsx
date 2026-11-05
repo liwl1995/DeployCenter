@@ -117,7 +117,7 @@ type Dialog =
   | { kind: 'server'; value: Server }
   | { kind: 'target'; value: Target }
   | { kind: 'picker' }
-  | { kind: 'confirm'; task: Task; token?: string }
+  | { kind: 'confirm'; task: Task; token?: string; returnFocus?: HTMLElement }
   | { kind: 'cancel' }
   | { kind: 'history'; value: History }
   | { kind: 'delete'; entity: 'service' | 'target' | 'server' | 'jdk'; id: string }
@@ -174,7 +174,16 @@ function LogViewer({ lines, active = true }: { lines: string[]; active?: boolean
     </pre>
   );
 }
-function ArtifactInfo({ value, service }: { value: Artifact; service: ServiceSnapshot }) {
+function OldArtifactWarning({ value, service }: { value: Artifact; service: ServiceSnapshot }) {
+  if (!value.exists || !(new Date(value.modified) < new Date(service.git.time))) return null;
+  return (
+    <p className="warning">
+      <AlertTriangle size={15} />
+      JAR 早于当前 Git 提交，请确认是否需要重新构建。
+    </p>
+  );
+}
+function ArtifactInfo({ value, service }: { value: Artifact; service?: ServiceSnapshot }) {
   return (
     <div className="artifact">
       <div className="row spread">
@@ -202,12 +211,7 @@ function ArtifactInfo({ value, service }: { value: Artifact; service: ServiceSna
           {value.source === 'unknown' ? '待检测' : !value.exists ? '—' : fmtTime(value.modified)}
         </span>
       </div>
-      {value.exists && new Date(value.modified) < new Date(service.git.time) && (
-        <p className="warning">
-          <AlertTriangle size={15} />
-          JAR 早于当前 Git 提交，请确认是否需要重新构建。
-        </p>
-      )}
+      {service && <OldArtifactWarning value={value} service={service} />}
     </div>
   );
 }
@@ -239,6 +243,9 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   );
   const [build, setBuild] = useState<Task['build']>('rebuild');
   const [overrides, setOverrides] = useState<Record<string, Backup>>({});
+  const compactTargets = db.settings.compactTargets ?? !!desktop;
+  const setCompactTargets = (value: boolean) =>
+    setDb((old) => ({ ...old, settings: { ...old.settings, compactTargets: value } }));
   const [expanded, setExpanded] = useState<string[]>(() =>
     readExpandedTargets(boot?.dataDir || 'prototype'),
   );
@@ -580,6 +587,9 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       notify('请先选择有效的现有 JAR 文件');
       return;
     }
+    // 异步准备会暂时禁用发起按钮，先保留关闭确认弹窗后应恢复的焦点。
+    const returnFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
     if (desktop) {
       setBusy(true);
       try {
@@ -600,7 +610,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               ? retrySource.id
               : undefined,
         });
-        setDialog({ kind: 'confirm', ...result });
+        setDialog({ kind: 'confirm', ...result, returnFocus });
       } catch (e) {
         setNativeDialog({ title: '部署准备失败', content: String(e) });
       } finally {
@@ -624,7 +634,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       rollback,
     );
     prepared.failurePolicy = failureOverride ?? db.settings.failurePolicy;
-    setDialog({ kind: 'confirm', task: prepared });
+    setDialog({ kind: 'confirm', task: prepared, returnFocus });
   }
   function canRollback(h: History) {
     return rollbackAllowed(db, h);
@@ -1456,18 +1466,30 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                     }
                   >
                     {!targets.length && <p className="empty">还没有部署目标，请先配置。</p>}
-                    <Switch
-                      label="紧凑目标列表"
-                      checked={db.settings.compactTargets ?? !!desktop}
-                      onChange={(compactTargets) =>
-                        setDb((old) => ({ ...old, settings: { ...old.settings, compactTargets } }))
-                      }
-                    />
+                    <div className="row spread wrap">
+                      <Switch
+                        label="紧凑目标列表"
+                        checked={compactTargets}
+                        onChange={setCompactTargets}
+                      />
+                      {targets.length > 0 && (
+                        <button
+                          className="link"
+                          onClick={() => {
+                            const visibleIds = new Set(targets.map((target) => target.id));
+                            setExpanded((old) => old.filter((id) => !visibleIds.has(id)));
+                            if (!compactTargets) setCompactTargets(true);
+                          }}
+                        >
+                          全部收起
+                        </button>
+                      )}
+                    </div>
                     {targets.map((t) => {
                       const s = db.servers.find((s) => s.id === t.serverId)!;
                       const b = effective(t);
                       const open = expanded.includes(t.id);
-                      if ((db.settings.compactTargets ?? !!desktop) && !open)
+                      if (compactTargets && !open)
                         return (
                           <article
                             className={
@@ -1553,7 +1575,11 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                           </div>
                           <p className="path">{remoteJar(t)}</p>
                           <div className="target-facts">
-                            <VersionFacts target={t} onCopy={(value) => void copy(value)} />
+                            <VersionFacts
+                              target={t}
+                              fingerprintFirst
+                              onCopy={(value) => void copy(value)}
+                            />
                             <span>
                               上次部署<em>{fmtTime(t.lastDeploy)}</em>
                             </span>
@@ -3059,7 +3085,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         </main>
         <footer className="workspace-footer" aria-label="应用状态">
           <span className="footer-version">
-            {desktop ? 'v' + (boot?.version || '1.2.3') : '界面原型 v0.3'}
+            {desktop ? 'v' + (boot?.version || '1.2.4') : '界面原型 v0.3'}
           </span>
           <button
             className="footer-directory"
@@ -3222,37 +3248,26 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         </Modal>
       )}
       {dialog?.kind === 'confirm' && (
-        <Modal
-          title={
-            dialog.task.dryRun
-              ? '确认试运行（远程只读）'
-              : dialog.task.operation === 'rollback'
-                ? '确认回滚'
-                : '确认部署'
-          }
+        <Confirm
+          task={dialog.task}
+          returnFocus={dialog.returnFocus}
           onClose={() => setDialog(null)}
-          wide
-        >
-          <Confirm
-            task={dialog.task}
-            onClose={() => setDialog(null)}
-            saved={saved}
-            onStart={async (t, values, approval) => {
-              if (desktop) {
-                const started = await desktop!.start(dialog.token!, values, approval);
-                setTask(started);
-              } else {
-                credentials.current.set(values);
-                setTask(startTask(t));
-              }
-              setFailureOverride(null);
-              setTaskReturnPage('deploy');
-              setInspected(0);
-              setPage('task');
-              setDialog(null);
-            }}
-          />
-        </Modal>
+          saved={saved}
+          onStart={async (t, values, approval) => {
+            if (desktop) {
+              const started = await desktop!.start(dialog.token!, values, approval);
+              setTask(started);
+            } else {
+              credentials.current.set(values);
+              setTask(startTask(t));
+            }
+            setFailureOverride(null);
+            setTaskReturnPage('deploy');
+            setInspected(0);
+            setPage('task');
+            setDialog(null);
+          }}
+        />
       )}
       {dialog?.kind === 'cancel' && task && (
         <Modal title="取消当前任务？" onClose={() => setDialog(null)}>
@@ -3524,6 +3539,7 @@ function Confirm({
   task: initial,
   onStart,
   onClose,
+  returnFocus,
   saved = [],
 }: {
   saved?: string[];
@@ -3534,6 +3550,7 @@ function Confirm({
     approval: Approval,
   ) => void | Promise<void>;
   onClose: () => void;
+  returnFocus?: HTMLElement;
 }) {
   const [names, setNames] = useState<Record<string, string>>({});
   const [word, setWord] = useState(''),
@@ -3546,201 +3563,28 @@ function Confirm({
   const production = !initial.dryRun && initial.targets.some((r) => r.target.production),
     degraded =
       !initial.dryRun && initial.targets.some((r) => r.target.hashPolicy === 'size-confirm');
-  return (
+  const needsPassword = (s: (typeof servers)[number]) =>
+    s.auth === 'password' &&
+    !(desktop && s.credentialMode === 'windows' && saved.includes(s.id));
+  const firstPassword = servers.find(needsPassword);
+  const title = initial.dryRun
+    ? '确认试运行（远程只读）'
+    : initial.operation === 'rollback'
+      ? '确认回滚'
+      : '确认部署';
+  const actions = (
     <>
-      <div className="confirm-header">
-        <h3>{initial.service.name}</h3>
-        <Badge>
-          {initial.dryRun
-            ? '试运行 · 不构建、不上传、不修改远端'
-            : initial.operation === 'rollback'
-              ? '回滚历史备份，不构建'
-              : initial.build === 'rebuild'
-                ? '重新构建一次'
-                : '使用现有 JAR'}
-        </Badge>
-      </div>
-      {initial.build === 'rebuild' && (
-        <Card title="构建配置">
-          <dl className="detail-list">
-            <dt>构建工具</dt>
-            <dd className="path">{initial.buildContext.tool}</dd>
-            <dt>完整命令</dt>
-            <dd className="path">{initial.buildContext.command}</dd>
-            <dt>工作目录</dt>
-            <dd className="path">{initial.buildContext.workDir}</dd>
-            <dt>JDK</dt>
-            <dd>
-              {initial.buildContext.jdk} · {initial.buildContext.jdkPath}
-            </dd>
-            <dt>预期 JAR</dt>
-            <dd className="path">{initial.buildContext.jarPath}</dd>
-          </dl>
-        </Card>
-      )}
-      {initial.note && <p className="note">本次内容：{initial.note}</p>}
-      <ArtifactInfo value={initial.artifact} service={initial.service} />
-      {initial.build === 'rebuild' && (
-        <p className="note">
-          {desktop
-            ? '现有文件信息仅供参考；构建完成后将重新校验并生成不可变产物快照。'
-            : '上方为当前示例产物；新产物大小、修改时间和哈希将在构建后重新检查。'}
-        </p>
-      )}
-      <p className="branch">
-        <GitBranch size={15} />
-        {initial.service.git.branch}
-        <HashValue
-          label="Git 提交"
-          value={initial.service.git.commit}
-          onCopy={(value) => {
-            void navigator.clipboard.writeText(value);
-          }}
-        />
-      </p>
-      {initial.operation === 'rollback' && (
-        <>
-          <Field label="恢复来源">
-            <p className="code">{initial.sourceBackup}</p>
-          </Field>
-          <Switch
-            label="回滚前保护当前运行版本"
-            checked={protect}
-            onChange={setProtect}
-            description="与恢复来源分开保存，恢复失败时用于保护当前版本"
-          />
-        </>
-      )}
-      <div className="stack">
-        {initial.targets.map((r) => (
-          <div className="confirm-target" key={r.target.id}>
-            <div className="row spread">
-              <h3>{r.target.name}</h3>
-              <Badge kind={r.target.production ? 'warn' : ''}>{modeLabel(r.target.mode)}</Badge>
-            </div>
-            <p className="muted">
-              {r.server.name} · {serverAddress(r.server)}
-            </p>
-            <p className="path">远程文件：{remoteJar(r.target)}</p>
-            {initial.operation === 'deploy' &&
-              initial.artifact.sha256 &&
-              initial.artifact.sha256 === r.target.currentHash && (
-                <p className="warning">
-                  与线上相同：JAR 指纹一致，仍可继续部署以重新启动。
-                  {initial.build === 'rebuild' ? '本次重新构建后会再次校验产物。' : ''}
-                </p>
-              )}
-            {r.target.mode === 'docker' && (
-              <p className="muted">
-                容器：{r.target.container} · {r.target.containerJar}
-              </p>
-            )}
-            <p className="muted">
-              健康检查：
-              {r.target.health.type === 'none'
-                ? '未配置，结果将标记健康未验证'
-                : healthLabels[r.target.health.type] + ' · ' + r.target.health.value}
-            </p>
-            {initial.operation === 'deploy' &&
-              (r.backup.enabled ? (
-                <p className="path">
-                  {r.target.hasOldJar
-                    ? '备份预览：' + r.plannedBackupPath
-                    : '首次部署无旧 JAR，跳过备份'}
-                </p>
-              ) : (
-                <p className="warning">不备份：无法依赖本次备份自动恢复。</p>
-              ))}
-            {r.target.createDirectory && (
-              <p className="warning">已允许创建缺失目录：{r.target.directory}</p>
-            )}
-          </div>
-        ))}
-      </div>
-      <p className="note">
-        失败策略：{initial.failurePolicy === 'stop' ? '停止后续目标' : '继续其他目标'}。
-        {desktop
-          ? initial.dryRun
-            ? '本次仅执行只读检查，不上传或修改远程文件。'
-            : '确认后将执行真实部署。'
-          : '所有执行均为本地模拟。'}
-      </p>
-      {degraded && (
-        <label className="check-row warning">
-          <input
-            type="checkbox"
-            checked={fallback}
-            onChange={(e) => setFallback(e.target.checked)}
-          />
-          确认允许缺少 SHA-256 工具时仅校验字节数（较弱校验）
-        </label>
-      )}
-      {servers.map((s) => (
-        <div className="confirm-target mt" key={s.id}>
-          <h3>{s.name} · 本次认证</h3>
-          {s.credentialMode === 'windows' && (
-            <p className="warning">
-              {desktop
-                ? saved.includes(s.id)
-                  ? '已保存本机 DPAPI 加密凭据；留空复用，输入新值将更新。'
-                  : '输入后使用当前 Windows 用户的 DPAPI 加密保存到本机。'
-                : 'Windows 凭据管理器是正式版能力。原型仍需本次输入，不会保存。'}
-            </p>
-          )}
-          <Field
-            label={
-              (s.auth === 'password' ? '登录密码' : '私钥口令（未加密可留空）') + ' · ' + s.name
-            }
-            hint="仅保留在当前任务内存，任务结束清除，不进入配置、日志或导出"
-          >
-            <input
-              type="password"
-              autoComplete="off"
-              value={credentials[s.id] || ''}
-              onChange={(e) => setCredentials((old) => ({ ...old, [s.id]: e.target.value }))}
-            />
-          </Field>
-        </div>
-      ))}
       {error && (
-        <p role="alert" className="warning">
+        <p role="alert" className="warning confirm-error">
           {error}
         </p>
       )}
-      {production && desktop && (
-        <div className="production-confirm">
-          <strong>正式环境确认</strong>
-          <p>逐个输入环境名称，确认本次会修改的位置；回滚也需要同样核对。</p>
-          {productionNames(initial).map((target) => (
-            <Field key={target.id} label={'输入环境名称：' + target.name}>
-              <input
-                data-autofocus
-                value={names[target.id] || ''}
-                onChange={(e) => setNames((old) => ({ ...old, [target.id]: e.target.value }))}
-                autoComplete="off"
-                placeholder={target.name}
-              />
-            </Field>
-          ))}
-        </div>
-      )}
-      {production && !desktop && (
-        <div className="production-confirm">
-          <label className="field">
-            <strong>正式环境确认</strong>
-            <span>请输入 DEPLOY，确认目标及远程文件。</span>
-            <input
-              data-autofocus
-              value={word}
-              onChange={(e) => setWord(e.target.value)}
-              autoComplete="off"
-              placeholder="DEPLOY"
-            />
-          </label>
-        </div>
-      )}
-      <footer className="modal-actions">
-        <button className="button" onClick={onClose}>
+      <div className="row wrap end">
+        <button
+          className="button"
+          data-autofocus={(!production && !firstPassword && !degraded) || undefined}
+          onClick={onClose}
+        >
           返回检查
         </button>
         <button
@@ -3750,12 +3594,7 @@ function Confirm({
             starting ||
             (production && (desktop ? !confirmProduction(initial, names) : word !== 'DEPLOY')) ||
             (degraded && !fallback) ||
-            servers.some(
-              (s) =>
-                s.auth === 'password' &&
-                !credentials[s.id] &&
-                !(desktop && s.credentialMode === 'windows' && saved.includes(s.id)),
-            )
+            servers.some((s) => needsPassword(s) && !credentials[s.id])
           }
           onClick={async () => {
             setStarting(true);
@@ -3790,8 +3629,223 @@ function Confirm({
           <Rocket size={17} />
           {initial.dryRun ? '开始试运行' : initial.operation === 'rollback' ? '回滚' : '部署'}
         </button>
-      </footer>
+      </div>
     </>
+  );
+  return (
+    <Modal title={title} onClose={onClose} wide footer={actions} returnFocus={returnFocus}>
+      <div className="confirm-header">
+        <h3>{initial.service.name}</h3>
+        <Badge>
+          {initial.dryRun
+            ? '试运行 · 不构建、不上传、不修改远端'
+            : initial.operation === 'rollback'
+              ? '回滚历史备份，不构建'
+              : initial.build === 'rebuild'
+                ? '重新构建一次'
+                : '使用现有 JAR'}
+        </Badge>
+      </div>
+      <p className="confirm-brief">
+        {initial.targets.length} 个目标 · {initial.artifact.name} ·{' '}
+        {initial.failurePolicy === 'stop' ? '失败后停止后续目标' : '失败后继续其他目标'}
+      </p>
+      {initial.note && <p className="note">本次内容：{initial.note}</p>}
+      <OldArtifactWarning value={initial.artifact} service={initial.service} />
+      {initial.operation === 'rollback' && (
+        <>
+          <Field label="恢复来源">
+            <p className="code">{initial.sourceBackup}</p>
+          </Field>
+          <Switch
+            label="回滚前保护当前运行版本"
+            checked={protect}
+            onChange={setProtect}
+            description="与恢复来源分开保存，恢复失败时用于保护当前版本"
+          />
+        </>
+      )}
+      <div className="confirm-targets">
+        {initial.targets.map((r) => (
+          <div className="confirm-target" key={r.target.id}>
+            <div className="row spread">
+              <h3>{r.target.name}</h3>
+              <Badge kind={r.target.production ? 'warn' : ''}>
+                {r.target.production && '正式 · '}
+                {modeLabel(r.target.mode)}
+              </Badge>
+            </div>
+            <p className="muted">
+              {r.server.name} · {serverAddress(r.server)}
+            </p>
+            <p className="path">远程文件：{remoteJar(r.target)}</p>
+            {initial.operation === 'deploy' &&
+              initial.artifact.sha256 &&
+              initial.artifact.sha256 === r.target.currentHash && (
+                <p className="warning">
+                  与线上相同：JAR 指纹一致，仍可继续部署以重新启动。
+                  {initial.build === 'rebuild' ? '本次重新构建后会再次校验产物。' : ''}
+                </p>
+              )}
+            {initial.operation === 'deploy' &&
+              (r.backup.enabled ? (
+                <p className="muted">
+                  {r.target.hasOldJar
+                    ? r.backup.autoRollback
+                      ? '备份并自动回滚'
+                      : '备份，失败后手动恢复'
+                    : '首次部署无旧 JAR，跳过备份'}
+                </p>
+              ) : (
+                <p className="warning">不备份：无法依赖本次备份自动恢复。</p>
+              ))}
+            {r.target.health.type === 'none' && (
+              <p className="muted">未配置健康检查，结果将标记健康未验证</p>
+            )}
+            {(r.target.mode === 'docker' ||
+              r.target.health.type !== 'none' ||
+              (initial.operation === 'deploy' && r.backup.enabled && r.target.hasOldJar)) && (
+              <details className="confirm-target-details">
+                <summary>目标详情</summary>
+                {r.target.mode === 'docker' && (
+                  <p className="muted">
+                    容器：{r.target.container} · {r.target.containerJar}
+                  </p>
+                )}
+                {r.target.health.type !== 'none' && (
+                  <p className="muted">
+                    健康检查：{healthLabels[r.target.health.type]} · {r.target.health.value}
+                  </p>
+                )}
+                {initial.operation === 'deploy' && r.backup.enabled && r.target.hasOldJar && (
+                  <p className="path">备份预览：{r.plannedBackupPath}</p>
+                )}
+              </details>
+            )}
+            {r.target.createDirectory && (
+              <p className="warning">已允许创建缺失目录：{r.target.directory}</p>
+            )}
+          </div>
+        ))}
+      </div>
+      <p className="note">
+        {desktop
+          ? initial.dryRun
+            ? '本次仅执行只读检查，不上传或修改远程文件。'
+            : '确认后将执行真实部署。'
+          : '所有执行均为本地模拟。'}
+      </p>
+      {degraded && (
+        <label className="check-row warning">
+          <input
+            type="checkbox"
+            data-autofocus={(!production && !firstPassword) || undefined}
+            checked={fallback}
+            onChange={(e) => setFallback(e.target.checked)}
+          />
+          确认允许缺少 SHA-256 工具时仅校验字节数（较弱校验）
+        </label>
+      )}
+      {servers.map((s) => (
+        <div className="confirm-target mt" key={s.id}>
+          <h3>{s.name} · 本次认证</h3>
+          {s.credentialMode === 'windows' && (
+            <p className="warning">
+              {desktop
+                ? saved.includes(s.id)
+                  ? '已保存本机 DPAPI 加密凭据；留空复用，输入新值将更新。'
+                  : '输入后使用当前 Windows 用户的 DPAPI 加密保存到本机。'
+                : 'Windows 凭据管理器是正式版能力。原型仍需本次输入，不会保存。'}
+            </p>
+          )}
+          <Field
+            label={
+              (s.auth === 'password' ? '登录密码' : '私钥口令（未加密可留空）') + ' · ' + s.name
+            }
+            hint="仅保留在当前任务内存，任务结束清除，不进入配置、日志或导出"
+          >
+            <input
+              type="password"
+              data-autofocus={(!production && firstPassword?.id === s.id) || undefined}
+              autoComplete="off"
+              value={credentials[s.id] || ''}
+              onChange={(e) => setCredentials((old) => ({ ...old, [s.id]: e.target.value }))}
+            />
+          </Field>
+        </div>
+      ))}
+      {production && desktop && (
+        <div className="production-confirm">
+          <strong>正式环境确认</strong>
+          <p>逐个输入环境名称，确认本次会修改的位置；回滚也需要同样核对。</p>
+          {productionNames(initial).map((target) => (
+            <Field key={target.id} label={'输入环境名称：' + target.name}>
+              <input
+                data-autofocus
+                value={names[target.id] || ''}
+                onChange={(e) => setNames((old) => ({ ...old, [target.id]: e.target.value }))}
+                autoComplete="off"
+                placeholder={target.name}
+              />
+            </Field>
+          ))}
+        </div>
+      )}
+      {production && !desktop && (
+        <div className="production-confirm">
+          <label className="field">
+            <strong>正式环境确认</strong>
+            <span>请输入 DEPLOY，确认目标及远程文件。</span>
+            <input
+              data-autofocus
+              value={word}
+              onChange={(e) => setWord(e.target.value)}
+              autoComplete="off"
+              placeholder="DEPLOY"
+            />
+          </label>
+        </div>
+      )}
+      <Disclosure title={initial.build === 'rebuild' ? '构建、产物与 Git 详情' : '产物与 Git 详情'}>
+        {initial.build === 'rebuild' && (
+          <Card title="构建配置">
+            <dl className="detail-list">
+              <dt>构建工具</dt>
+              <dd className="path">{initial.buildContext.tool}</dd>
+              <dt>完整命令</dt>
+              <dd className="path">{initial.buildContext.command}</dd>
+              <dt>工作目录</dt>
+              <dd className="path">{initial.buildContext.workDir}</dd>
+              <dt>JDK</dt>
+              <dd>
+                {initial.buildContext.jdk} · {initial.buildContext.jdkPath}
+              </dd>
+              <dt>预期 JAR</dt>
+              <dd className="path">{initial.buildContext.jarPath}</dd>
+            </dl>
+          </Card>
+        )}
+        <ArtifactInfo value={initial.artifact} />
+        {initial.build === 'rebuild' && (
+          <p className="note">
+            {desktop
+              ? '现有文件信息仅供参考；构建完成后将重新校验并生成不可变产物快照。'
+              : '上方为当前示例产物；新产物大小、修改时间和哈希将在构建后重新检查。'}
+          </p>
+        )}
+        <p className="branch">
+          <GitBranch size={15} />
+          {initial.service.git.branch}
+          <HashValue
+            label="Git 提交"
+            value={initial.service.git.commit}
+            onCopy={(value) => {
+              void navigator.clipboard.writeText(value);
+            }}
+          />
+        </p>
+      </Disclosure>
+    </Modal>
   );
 }
 function TaskView({

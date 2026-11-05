@@ -196,12 +196,16 @@ export function Switch({
 export function Modal({
   title,
   children,
+  footer,
+  returnFocus,
   onClose,
   wide = false,
   closeDisabled = false,
 }: {
   title: string;
   children: ReactNode;
+  footer?: ReactNode;
+  returnFocus?: HTMLElement;
   onClose: () => void;
   wide?: boolean;
   closeDisabled?: boolean;
@@ -213,20 +217,31 @@ export function Modal({
   const cannotClose = useRef(closeDisabled);
   cannotClose.current = closeDisabled;
   useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
+    const previous = returnFocus ?? (document.activeElement as HTMLElement | null);
     const panel = ref.current!;
     const controls = () =>
       [
         ...panel.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href]',
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], summary',
         ),
-      ].filter((e) => !e.closest('[hidden]'));
-    if ([...document.querySelectorAll('[role="dialog"]')].at(-1) === panel)
+      ].filter((e) => {
+        if (e.closest('[hidden]')) return false;
+        const collapsed = e.closest('details:not([open])');
+        return (
+          !collapsed ||
+          (e.matches('summary') &&
+            e.parentElement === collapsed &&
+            !collapsed.parentElement?.closest('details:not([open])'))
+        );
+      });
+    if ([...document.querySelectorAll('[role="dialog"]')].at(-1) === panel) {
+      const items = controls();
       (
-        panel.querySelector<HTMLElement>('[data-autofocus]') ||
-        panel.querySelector<HTMLElement>('input,select,textarea') ||
-        controls()[0]
+        items.find((e) => e.hasAttribute('data-autofocus')) ||
+        items.find((e) => e.matches('input,select,textarea')) ||
+        items[0]
       )?.focus();
+    }
     const key = (e: KeyboardEvent) => {
       if ([...document.querySelectorAll('[role="dialog"]')].at(-1) !== panel) return;
       if (e.ctrlKey && e.key === 'Enter') {
@@ -285,6 +300,7 @@ export function Modal({
           </button>
         </header>
         <div className="modal-content">{children}</div>
+        {footer && <footer className="modal-footer">{footer}</footer>}
       </div>
     </div>
   );

@@ -574,7 +574,8 @@ main {
   margin: 12px 0 0 27px;
   font-size: 12px;
 }
-.target-facts > span {
+.target-facts > span,
+.target-facts .hash-value > span {
   color: var(--sub);
 }
 .target-facts code,
@@ -585,6 +586,24 @@ main {
   margin-top: 3px;
   color: var(--ink);
   overflow-wrap: anywhere;
+}
+.target-facts .hash-value {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) auto;
+  justify-content: start;
+  align-items: baseline;
+  gap: 3px 6px;
+}
+.target-facts .hash-value > span {
+  grid-column: 1 / -1;
+}
+.target-facts .hash-value code,
+.target-facts .hash-value em {
+  margin-top: 0;
+}
+.target-facts .hash-value .icon-button {
+  padding: 0 4px;
+  min-height: 0;
 }
 .target-bottom {
   margin-top: 13px;
@@ -879,6 +898,11 @@ tr:last-child td {
   min-height: 0;
   overscroll-behavior: contain;
 }
+.modal-footer {
+  flex-shrink: 0;
+  padding: 12px 25px;
+  border-top: 1px solid var(--line);
+}
 .modal-actions {
   display: flex;
   align-items: center;
@@ -936,14 +960,40 @@ tr:last-child td {
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.confirm-brief {
+  color: var(--sub);
+  overflow-wrap: anywhere;
+}
+.confirm-targets {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.confirm-target-details {
+  margin-top: 6px;
+}
+.confirm-target-details > summary {
+  color: var(--accent);
+  cursor: pointer;
+}
+.confirm-error {
+  margin: 0 0 8px;
+  max-height: min(24dvh, 9rem);
+  overflow: auto;
+  overflow-wrap: anywhere;
 }
 .confirm-target {
   border: 1px solid var(--line);
   border-radius: 7px;
-  padding: 14px;
+  padding: 10px 12px;
 }
 .confirm-target p {
   margin-top: 6px;
+}
+.confirm-header ~ .workspace-disclosure {
+  margin-top: 12px;
 }
 .production-confirm {
   background: var(--warm);
@@ -1287,8 +1337,12 @@ tr:last-child td {
   .modal > header {
     padding: 17px;
   }
+  .modal-content,
+  .modal-footer {
+    padding-inline: 17px;
+  }
   .modal-content {
-    padding: 17px;
+    padding-block: 17px;
   }
   .workspace-footer {
     padding: 13px 16px;

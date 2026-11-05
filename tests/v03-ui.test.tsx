@@ -117,6 +117,7 @@ describe('v0.3 组件回归', () => {
     const modal = showConfirmation(),
       inputs = within(modal).getAllByLabelText(/登录密码 · CRM 测试服务器/);
     expect(inputs).toHaveLength(1);
+    expect(document.activeElement).toBe(inputs[0]);
     expect(
       (within(modal).getByRole('button', { name: '部署' }) as HTMLButtonElement).disabled,
     ).toBe(true);
@@ -173,6 +174,10 @@ describe('v0.3 组件回归', () => {
     localStorage.setItem('deploy-center-v2', safeConfigJson(db));
     render(<App />);
     const modal = showConfirmation();
+    const details = within(modal).getByText('构建、产物与 Git 详情', { exact: true });
+    expect(details.closest('details')?.open).toBe(false);
+    fireEvent.click(details);
+    expect(details.closest('details')?.open).toBe(true);
     expect(modal.textContent).toContain('mvnw.cmd');
     expect(modal.textContent).toContain('-Prelease');
     expect(modal.textContent).toContain('E:\\projects\\CordysCRM\\backend');
@@ -186,6 +191,10 @@ describe('v0.3 组件回归', () => {
     expect(screen.getByText(/桌面版将使用系统文件对话框并检查 JAR 有效性/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '查看旧产物提醒' }));
     const modal = showConfirmation();
+    const details = within(modal).getByText('产物与 Git 详情', { exact: true });
+    expect(details.closest('details')?.open).toBe(false);
+    expect(within(modal).getByText(/JAR 早于当前 Git 提交/).closest('details')).toBeNull();
+    fireEvent.click(details);
     expect(modal.textContent).toContain('80.3 MB');
     expect(modal.textContent).toContain('2026-11-01');
     expect(modal.textContent).toContain('JAR 早于当前 Git 提交');

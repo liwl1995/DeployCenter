@@ -87,15 +87,19 @@ export function HashValue({
 export function VersionFacts({
   target,
   onCopy,
+  fingerprintFirst = false,
 }: {
   target: Pick<Target, 'version' | 'currentCommit' | 'currentHash'>;
   onCopy: (value: string) => void;
+  fingerprintFirst?: boolean;
 }) {
   const commit = target.currentCommit || knownCommit(target.version, target.currentHash);
+  const fingerprint = <HashValue label="JAR 指纹" value={target.currentHash} onCopy={onCopy} />;
   return (
     <div className="version-facts">
+      {fingerprintFirst && fingerprint}
       {validHash(commit) && <HashValue label="Git 提交" value={commit} onCopy={onCopy} />}
-      <HashValue label="JAR 指纹" value={target.currentHash} onCopy={onCopy} />
+      {!fingerprintFirst && fingerprint}
     </div>
   );
 }
