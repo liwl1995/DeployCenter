@@ -23,6 +23,7 @@ export function VirtualLogs({
     viewport = useRef<HTMLDivElement>(null),
     frozen = useRef(entries);
   const focusedError = useRef<number>(undefined);
+  const automaticTop = useRef<number | undefined>(undefined);
   const [selected, setSelected] = useState(false),
     [top, setTop] = useState(0),
     [follow, setFollow] = useState(true);
@@ -135,26 +136,31 @@ export function VirtualLogs({
     }
   }, [focusError, entries]);
   useLayoutEffect(() => {
-    // 隐藏页签没有可用的布局尺寸，不能用它更新滚动位置。
-    if (!active || !viewport.current || selected) return;
+    const el = viewport.current;
+    // 隐藏区域和选中的文字需要保留原滚动位置。
+    if (!active || !el || selected) return;
+    const scrollTo = (next: number) => {
+      if (el.scrollTop !== next) el.scrollTop = next;
+      automaticTop.current = el.scrollTop;
+      setTop(el.scrollTop);
+    };
+    const end = () => Math.max(0, rows.length * height - (el.clientHeight || 420));
     if (jump) {
       const index = rows.findIndex((r) => r.id === jump);
       if (index >= 0) {
-        viewport.current.scrollTop = index * height;
-        setTop(index * height);
+        scrollTo(Math.min(index * height, end()));
         setJump(undefined);
       }
     } else if (follow) {
-      const next = Math.max(0, rows.length * height - (viewport.current.clientHeight || 420));
-      viewport.current.scrollTop = next;
-      setTop(next);
+      scrollTo(end());
+      // 横向滚动条随可见长行出现或消失时，实际视口高度也会变化。
+      if (typeof ResizeObserver !== 'undefined') {
+        const observer = new ResizeObserver(() => scrollTo(end()));
+        observer.observe(el);
+        return () => observer.disconnect();
+      }
     } else {
-      const next = Math.min(
-        viewport.current.scrollTop,
-        Math.max(0, rows.length * height - (viewport.current.clientHeight || 420)),
-      );
-      viewport.current.scrollTop = next;
-      setTop(next);
+      setTop(el.scrollTop);
     }
   }, [rows, follow, jump, selected, active]);
   const copy = async () => {
@@ -213,6 +219,8 @@ export function VirtualLogs({
             className="button"
             onClick={() => {
               setQuery('');
+              setHit(-1);
+              setLevel('all');
               setCollapsed(new Set());
               setFollow(true);
             }}
@@ -246,8 +254,14 @@ export function VirtualLogs({
         onScroll={(e) => {
           if (!active) return;
           const el = e.currentTarget;
-          if (!selected) setTop(el.scrollTop);
-          if (el.scrollHeight - el.scrollTop - el.clientHeight > 40) setFollow(false);
+          if (selected) return;
+          const next = el.scrollTop;
+          setTop(next);
+          // 程序跟随和横向滚动都会触发 scroll。只有纵向位置实际离开末尾才暂停跟随。
+          if (next !== automaticTop.current && el.scrollHeight - next - el.clientHeight > 40) {
+            automaticTop.current = undefined;
+            setFollow(false);
+          }
         }}
       >
         <div style={{ height: rows.length * height, position: 'relative', minWidth: '100%' }}>

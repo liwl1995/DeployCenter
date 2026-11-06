@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { NativeLogPanel } from '../src/NativeLogPanel';
 import type { DesktopAPI, DesktopEvent } from '../src/platform';
@@ -70,4 +70,19 @@ it('点击较早步骤会自动补页；第一处错误定位从原日志开头�
   await waitFor(() =>
     expect(document.querySelector('.log-match')?.textContent).toContain('第一处错误'),
   );
+});
+
+it('连续收到日志时合并刷新，保留全部分片并继续跟随', async () => {
+  const { api, emit } = bridge();
+  render(<NativeLogPanel api={api} taskId="DC-page" targetId="target" initial={[]} />);
+  await screen.findByText('[ERROR] 最近错误');
+  act(() => {
+    for (let i = 0; i < 50; i++) {
+      emit({ kind: 'log', taskId: 'DC-page', targetId: 'target', text: '构建输出 ' + i + '\n' });
+    }
+  });
+  expect(screen.queryByText('构建输出 49')).toBeNull();
+  await screen.findByText('构建输出 49');
+  expect(screen.getByText(/共 51 行/)).toBeTruthy();
+  expect((screen.getByLabelText('跟随最新') as HTMLInputElement).checked).toBe(true);
 });

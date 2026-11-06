@@ -722,7 +722,32 @@ test('1.4.1 任务页八种状态在三个窗口尺寸下首屏可用', async ({
       await expect(taskPage.getByRole('group', { name: '部署阶段' }).getByRole('button')).toHaveCount(5);
       await expect(taskPage.getByRole('group', { name: '选择任务目标' })).toHaveCount(multi ? 1 : 0);
       if (multi) await expect(taskPage.getByRole('group', { name: '选择任务目标' }).getByRole('button')).toHaveCount(3);
-      if (fixture === 'running') await expect(taskPage.getByRole('progressbar', { name: '文件上传进度' })).toBeVisible();
+      if (fixture === 'running') {
+        await expect(taskPage.getByRole('progressbar', { name: '文件上传进度' })).toBeVisible();
+        await page.emulateMedia({ reducedMotion: 'no-preference' });
+        for (const selector of ['.task-stage .spin', '.task-step-row .spin']) {
+          const icon = taskPage.locator(selector);
+          await expect.poll(() => icon.evaluate((el) => el.getAnimations()[0]?.playState)).toBe('running');
+        }
+        const viewport = taskPage.getByRole('log', { name: '任务日志' });
+        await expect(viewport).toContainText('远程执行日志');
+        for (const batch of [1, 2]) {
+          await app.evaluate(({ BrowserWindow }, { taskId, targetId, batch }) => {
+            const contents = BrowserWindow.getAllWindows()[0].webContents;
+            for (let i = 0; i < 150; i++) {
+              contents.send('deploy:event', {
+                kind: 'log', taskId, targetId,
+                text: '持续日志 ' + batch + '-' + i + ' ' + (i === 149 ? 'X'.repeat(500) : '') + '\n',
+              });
+            }
+          }, { taskId: task.id, targetId: task.targets[0].target.id, batch });
+          await expect(viewport).toContainText('持续日志 ' + batch + '-149');
+          await expect(taskPage.getByLabel('跟随最新')).toBeChecked();
+          await expect.poll(() => viewport.evaluate((el) =>
+            el.scrollHeight - el.scrollTop - el.clientHeight,
+          )).toBeLessThanOrEqual(2);
+        }
+      }
       if (fixture === 'unverified') {
         await taskPage.getByRole('button', { name: '去配置健康检查' }).click();
         await expect(page.getByRole('tab', { name: '健康检查', selected: true })).toBeVisible();

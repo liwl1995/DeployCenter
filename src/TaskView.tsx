@@ -435,7 +435,7 @@ export function TaskView({
               aria-pressed={stage === index}
               onClick={() => choose(index)}
             >
-              <Icon size={16} aria-hidden="true" />
+              <Icon size={16} className={entry.status === 'running' ? 'spin' : undefined} aria-hidden="true" />
               <span>
                 <strong>{entry.name}</strong>
                 <small>{entry.summary}</small>
@@ -463,7 +463,11 @@ export function TaskView({
                   return (
                     <li key={step.key + index} className={'task-tone-' + status}>
                       <div className="task-step-row">
-                        <Icon size={15} aria-label={statusText[status]} />
+                        <Icon
+                          size={15}
+                          className={status === 'running' ? 'spin' : undefined}
+                          aria-label={statusText[status]}
+                        />
                         <button
                           className="link"
                           title={step.label}

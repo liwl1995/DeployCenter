@@ -41,6 +41,7 @@ export function NativeLogPanel({
     loading.current = false;
     let alive = true,
       loaded = false;
+    let publishTimer: number | undefined;
     cancelled.current = false;
     const collector = new LogAccumulator();
     collector.load('initial', initial);
@@ -50,12 +51,11 @@ export function NativeLogPanel({
       before = { build: 0, target: 0 };
     const publish = () => {
       if (!alive) return;
-      const data = [
-        ...olderBuild,
-        ...collector.entries.filter((l) => l.id.startsWith('build:')),
-        ...olderTarget,
-        ...collector.entries.filter((l) => !l.id.startsWith('build:')),
-      ];
+      const build = [...olderBuild];
+      const target = [...olderTarget];
+      for (const line of collector.entries)
+        (line.id.startsWith('build:') ? build : target).push(line);
+      const data = build.concat(target);
       currentLines.current = data;
       setLines(data);
       hasMore.current = before.build > 0 || before.target > 0;
@@ -71,7 +71,6 @@ export function NativeLogPanel({
           : event.offset - new TextEncoder().encode(event.text).length,
         event.context,
       );
-      publish();
     };
     const off = api.onEvent((event) => {
       if (
@@ -80,8 +79,16 @@ export function NativeLogPanel({
         (event.targetId && event.targetId !== targetId)
       )
         return;
-      if (loaded) append(event);
-      else pending.push(event);
+      if (!loaded) {
+        pending.push(event);
+        return;
+      }
+      append(event);
+      // 构建可能连续产生多条 IPC 消息，合并更新，避免为每个分片重排整份日志。
+      publishTimer ??= window.setTimeout(() => {
+        publishTimer = undefined;
+        publish();
+      }, 32);
     });
     loader.current = async () => {
       if (!loaded || !alive || !hasMore.current) return false;
@@ -110,6 +117,7 @@ export function NativeLogPanel({
         before = { build: value.buildStart || 0, target: value.targetStart || 0 };
         loaded = true;
         for (const event of pending) append(event);
+        pending.length = 0;
         publish();
         setReady(true);
       })
@@ -118,12 +126,15 @@ export function NativeLogPanel({
           loaded = true;
           setError(String(e));
           for (const event of pending) append(event);
+          pending.length = 0;
+          publish();
         }
       });
     return () => {
       alive = false;
       cancelled.current = true;
       loader.current = undefined;
+      window.clearTimeout(publishTimer);
       off();
     };
   }, [api, taskId, targetId]);
