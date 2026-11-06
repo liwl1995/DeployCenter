@@ -1,3 +1,5 @@
+import Sqlite from 'better-sqlite3';
+import { createTask } from '../src/engine';
 import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -130,6 +132,65 @@ test('全部页面在三个宽度和两种主题下无横向溢出，真实边�
   }
   expect(errors).toEqual([]);
 });
+test('批次 2 默认紧凑目标与配置详情在三个窗口尺寸下可见', async () => {
+  const page = await app.firstWindow();
+  const nav = page.getByRole('navigation', { name: '主导航' });
+  const main = page.getByRole('main');
+  const captures = process.env.DEPLOY_CENTER_BATCH2_SCREENSHOTS;
+  if (captures) await fs.mkdir(captures, { recursive: true });
+  for (const [width, height] of [[1000, 620], [1280, 800], [1600, 900]]) {
+    await app.evaluate(
+      ({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setContentSize(w, h),
+      [width, height],
+    );
+    await expect.poll(() => page.evaluate(() => [innerWidth, innerHeight])).toEqual([width, height]);
+    const noOverflow = async () => {
+      expect(await main.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+    };
+    await nav.getByRole('button', { name: '一键部署', exact: true }).click();
+    await expect(page.getByRole('switch', { name: '紧凑目标列表', exact: true })).toBeChecked();
+    const rows = page.locator('.target-compact');
+    await expect(rows).toHaveCount(4);
+    await expect(page.locator('.target-card')).toHaveCount(0);
+    const first = rows.first();
+    await first.scrollIntoViewIfNeeded();
+    await expect(first).toBeInViewport({ ratio: 1 });
+    const firstRow = (await first.boundingBox())!;
+    expect(firstRow.height).toBeLessThanOrEqual(80);
+    const footer = (await page.getByRole('contentinfo', { name: '应用状态' }).boundingBox())!;
+    expect(firstRow.y + firstRow.height).toBeLessThanOrEqual(footer.y + 1);
+    await noOverflow();
+    await page.screenshot({
+      path: path.join(captures ?? test.info().outputDir, 'deploy-' + width + 'x' + height + '.png'),
+    });
+
+    await nav.getByRole('button', { name: '部署目标', exact: true }).click();
+    const filter = page.getByLabel('筛选服务');
+    await expect(filter).toBeInViewport({ ratio: 1 });
+    expect((await filter.boundingBox())!.width).toBeLessThanOrEqual(320);
+    const health = page.getByText('健康检查', { exact: true });
+    const readiness = page.getByText('启动等待 / 就绪窗口', { exact: true });
+    await expect(health).toBeVisible();
+    await expect(readiness).toBeVisible();
+    expect((await health.boundingBox())!.y).toBe((await readiness.boundingBox())!.y);
+    await expect(readiness.locator('..')).toContainText('不适用');
+    await readiness.locator('..').scrollIntoViewIfNeeded();
+    await expect(readiness.locator('..')).toBeInViewport({ ratio: 1 });
+    const values = await page.locator('.configuration-group dd').evaluateAll((items) =>
+      items.filter((item) => item.getClientRects().length).map((item) => {
+        const style = getComputedStyle(item);
+        return [style.fontSize, style.color];
+      }),
+    );
+    expect(new Set(values.map(String)).size).toBe(1);
+    await noOverflow();
+    await page.screenshot({
+      path: path.join(captures ?? test.info().outputDir, 'target-' + width + 'x' + height + '.png'),
+    });
+  }
+});
+
 test('紧凑列表会持久化，输入不抢快捷键，预设载入仍需确认', async () => {
   const page = await app.firstWindow(),
     nav = page.getByRole('navigation', { name: '主导航' });
@@ -604,4 +665,102 @@ test('1.2.2 部署首屏可见主要内容，数据页三块不折叠，迁移�
   expect(stopBox!.y + stopBox!.height).toBeLessThan(modalBox!.y + modalBox!.height);
   await expect(modal.getByText(/预计剩余：4 秒/)).toBeVisible();
   await page.screenshot({ path: path.resolve('.test-data', 'v122-迁移进度展示.png') });
+});
+
+
+test('1.4.1 任务页八种状态在三个窗口尺寸下首屏可用', async ({}, info) => {
+  test.setTimeout(120_000);
+  const page = await app.firstWindow();
+  const config = await page.evaluate(async () => (await window.deployCenter!.load()).database);
+  const db = new Sqlite(path.join(dir, 'deploy-center.sqlite'));
+  const matrix = [
+    ['running', 'running', '', '取消部署'],
+    ['success', 'success', '已部署成功', ''],
+    ['unverified', 'unverified', '已部署，但无法确认应用可用', ''],
+    ['rolledback', 'rolledback', '已自动恢复旧版本', '重试失败目标'],
+    ['rollback-failed', 'failed', '自动回滚失败', '重试失败目标'],
+    ['cancelled', 'cancelled', '任务已取消', ''],
+    ['dry-run', 'success', '试运行通过', '正式部署'],
+    ['mixed', 'failed', '失败', '重试失败目标'],
+  ] as const;
+  try {
+    for (const [fixture, status, banner, primary] of matrix) {
+      const multi = fixture === 'mixed';
+      const task = createTask(config, config.services[0], config.targets.slice(0, multi ? 3 : 1), {}, 'existing');
+      task.status = status === 'running' || status === 'cancelled' ? status :
+        multi ? 'partial' : status === 'failed' || status === 'rolledback' ? 'failed' : 'success';
+      task.dryRun = fixture === 'dry-run';
+      task.buildPhase = 3;
+      task.elapsed = 12.4;
+      task.artifact.sha256 = 'b'.repeat(64);
+      task.deployedCommit = 'a'.repeat(40);
+      task.buildSteps.forEach((step) => { step.status = step.key === 'build' ? 'skipped' : 'success'; });
+      task.targets.forEach((target, index) => {
+        target.status = index === 1 ? 'success' : index === 2 ? 'skipped' : status;
+        target.steps.forEach((step) => {
+          step.status = index === 2 ? 'skipped' : 'success';
+          step.elapsed = 1;
+          if (status === 'running') step.status = step.key === 'upload' ? 'running' : 'pending';
+          if (index === 0 && ['rolledback', 'failed'].includes(status) && step.key === 'start') step.status = 'failed';
+          if (status === 'unverified' && step.key === 'health') step.status = 'skipped';
+        });
+        if (status === 'running') target.upload = { bytes: 20, total: 100, speed: 2, percent: 20 };
+        if (fixture === 'rollback-failed') target.steps.push({ key: 'rollback', label: '恢复旧版本', status: 'failed' });
+        if (status === 'rolledback') target.steps.push({ key: 'rollback', label: '恢复旧版本', status: 'success' });
+      });
+      db.prepare('INSERT INTO tasks (id,json,updated,active) VALUES (?,?,?,0)').run(task.id, JSON.stringify(task), Date.now());
+      await fs.mkdir(path.join(dir, 'logs', task.id), { recursive: true });
+      await fs.writeFile(path.join(dir, 'logs', task.id, 'build.log'), '已准备现有 JAR\n文件校验通过\n');
+      await fs.writeFile(path.join(dir, 'logs', task.id, task.targets[0].target.id + '.log'),
+        '连接已建立\n' + (status === 'failed' || status === 'rolledback' ? '错误：启动服务未通过\n' : '远程执行日志\n'));
+      await page.reload();
+      await page.locator('.footer-task').click();
+      const taskPage = page.locator('.task-page');
+      const footer = page.getByRole('contentinfo', { name: '应用状态' });
+      await expect(taskPage.getByRole('heading', { level: 1 })).not.toContainText(task.id);
+      await expect(taskPage.getByRole('heading', { name: '执行日志' })).toBeVisible();
+      await expect(taskPage.getByRole('group', { name: '部署阶段' }).getByRole('button')).toHaveCount(5);
+      await expect(taskPage.getByRole('group', { name: '选择任务目标' })).toHaveCount(multi ? 1 : 0);
+      if (multi) await expect(taskPage.getByRole('group', { name: '选择任务目标' }).getByRole('button')).toHaveCount(3);
+      if (fixture === 'running') await expect(taskPage.getByRole('progressbar', { name: '文件上传进度' })).toBeVisible();
+      if (fixture === 'unverified') {
+        await taskPage.getByRole('button', { name: '去配置健康检查' }).click();
+        await expect(page.getByRole('tab', { name: '健康检查', selected: true })).toBeVisible();
+        await page.keyboard.press('Escape');
+      }
+      for (const [width, height] of [[1000, 620], [1280, 800], [1600, 900]]) {
+        await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setContentSize(w, h), [width, height]);
+        const main = page.locator('.workspace > main');
+        await main.evaluate((el) => { el.scrollTop = 0; });
+        await expect.poll(() => page.evaluate(() => [innerWidth, innerHeight])).toEqual([width, height]);
+        if (primary) await expect(taskPage.getByRole('button', { name: primary, exact: true })).toBeInViewport({ ratio: 1 });
+        if (banner) {
+          await expect(taskPage.locator('.task-result-banner')).toContainText(banner);
+          await expect(taskPage.locator('.task-result-banner')).toBeInViewport({ ratio: 1 });
+        }
+        expect(await main.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+        expect(await taskPage.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+        await page.screenshot({ path: info.outputPath(fixture + '-' + width + 'x' + height + '.png') });
+        const menu = taskPage.getByRole('button', { name: '更多任务操作' });
+        if (await menu.count()) {
+          await menu.click();
+          const bounds = await page.getByRole('menu', { name: '更多任务操作' }).boundingBox();
+          expect(bounds).toBeTruthy();
+          expect(bounds!.x).toBeGreaterThanOrEqual(0);
+          expect(bounds!.y).toBeGreaterThanOrEqual(0);
+          expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+          expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(height);
+          await page.keyboard.press('Escape');
+        }
+        const footerBefore = await footer.boundingBox();
+        await main.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+        expect(await footer.boundingBox()).toEqual(footerBefore);
+        await expect(taskPage.locator('.task-page-header')).toBeInViewport({ ratio: 1 });
+      }
+      db.prepare('DELETE FROM tasks WHERE id = ?').run(task.id);
+    }
+  } finally {
+    db.close();
+  }
 });

@@ -2,6 +2,7 @@ import { healthTiming } from '../src/health-timing';
 import preflight from './remote-preflight.sh';
 import runner from './remote-runner.sh';
 import workbench from './remote-workbench.sh';
+import requirements from './remote-requirements.sh';
 import { workbenchHeader, workbenchPath, validOwner } from './workbench';
 import { shellQuote as q, remoteJar, type RunTarget, type Task } from '../src/model';
 import { mustExec, type Transport } from './ssh';
@@ -142,7 +143,7 @@ export function header(task: Task, r: RunTarget, allowWeak: boolean, docker?: Do
   );
 }
 export function preflightScript(task: Task, r: RunTarget, allowWeak: boolean, docker?: DockerInfo) {
-  return header(task, r, allowWeak, docker) + workbench + preflight;
+  return header(task, r, allowWeak, docker) + 'set -Eeuo pipefail\n' + requirements + workbench + preflight;
 }
 export function runnerScript(task: Task, r: RunTarget, allowWeak: boolean, docker?: DockerInfo) {
   return header(task, r, allowWeak, docker) + workbench + runner;
@@ -171,8 +172,9 @@ export async function writeRemoteFile(transport: Transport, file: string, text: 
 export function dryRunScript(task: Task, r: RunTarget) {
   return (
     header(task, { ...r, remote: r.remote || remotePaths(task, r) }, false) +
-    `set -eu
-if [ -d "$DIR" ]; then check="$DIR"; printf '目录存在\\n'; else [ "$CREATE_DIR" = 1 ] || { printf '目录不存在，目标未允许创建\\n' >&2; exit 1; }; check="$DIR"; while [ ! -e "$check" ]; do check="$(dirname "$check")"; done; printf '目录缺失：正式部署将按配置创建，本次不创建\\n'; fi
+    'set -Eeuo pipefail\n' +
+    requirements +
+    `if [ -d "$DIR" ]; then check="$DIR"; printf '目录存在\\n'; else [ "$CREATE_DIR" = 1 ] || { printf '目录不存在，目标未允许创建\\n' >&2; exit 1; }; check="$DIR"; while [ ! -e "$check" ]; do check="$(dirname "$check")"; done; printf '目录缺失：正式部署将按配置创建，本次不创建\\n'; fi
 [ -d "$check" ] && [ -w "$check" ] || { printf '目录或父目录不可写\\n' >&2; exit 1; }
 [ ! -L "$JAR" ] || { printf '目标是符号链接\\n' >&2; exit 1; }
 available="$(df -Pk -- "$check" | awk 'END {print $4}')"; needed=$(( (NEW_SIZE * 2 + 10485760 + 1023) / 1024 )); [ "$available" -ge "$needed" ] || { printf '磁盘空间不足\\n' >&2; exit 1; }; printf '权限、空间检查通过\\n'

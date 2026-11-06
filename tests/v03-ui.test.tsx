@@ -68,7 +68,7 @@ describe('v0.3 组件回归', () => {
     render(<App />);
     start();
     await advance(6);
-    expect(screen.getByLabelText('模拟上传进度').textContent).toMatch(/33%.*MB\/s/);
+    expect(screen.getByRole('progressbar', { name: '文件上传进度' }).closest('.task-upload')?.textContent).toMatch(/33%.*MB\/s/);
     expect(screen.getAllByText(/0.8 秒|0.9 秒/).length).toBeGreaterThan(0);
     await advance(14);
     fireEvent.click(screen.getByRole('button', { name: '部署历史' }));
@@ -159,6 +159,7 @@ describe('v0.3 组件回归', () => {
     fireEvent.click(screen.getByRole('button', { name: '一键部署' }));
     expect(screen.queryByRole('button', { name: '使用示例产物' })).toBeNull();
     expect(screen.queryByRole('button', { name: '查看旧产物提醒' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '展开测试环境详情' }));
     fireEvent.click(screen.getByRole('button', { name: '编辑测试环境' }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('tab', { name: '备份与安全' }));
     expect(screen.queryByRole('switch', { name: '模拟首次部署（无旧 JAR）' })).toBeNull();

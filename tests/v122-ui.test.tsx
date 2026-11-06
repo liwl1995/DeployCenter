@@ -226,17 +226,19 @@ it('多目标任务在顶部使用状态条并同步日志目标，单目标没�
   };
   const user = userEvent.setup(),
     view = render(<App boot={boot} />);
-  await user.click(screen.getByRole('button', { name: '当前任务' }));
+  expect(screen.queryByRole('navigation', { name: '主导航' })?.textContent).not.toContain('当前任务');
+  await user.click(within(screen.getByRole('contentinfo', { name: '应用状态' })).getByRole('button', { name: /Cordys/ }));
   const strip = screen.getByRole('group', { name: '选择任务目标' });
   expect(strip.querySelectorAll('button')).toHaveLength(2);
-  await user.click(within(strip).getAllByRole('button')[1]);
-  await user.click(screen.getByRole('tab', { name: '执行日志' }));
-  expect(screen.getByRole('group', { name: '选择任务目标' })).toBeTruthy();
-  expect((screen.getByRole('combobox', { name: '日志目标' }) as HTMLSelectElement).value).toBe('1');
-  expect(view.container.querySelector('.task-layout')).toBeNull();
+  const second = within(strip).getAllByRole('button')[1];
+  await user.click(second);
+  expect(second.getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getByRole('heading', { name: '执行日志' })).toBeTruthy();
+  expect(screen.getByRole('group', { name: '部署阶段' })).toBeTruthy();
+  expect(screen.queryByRole('tab', { name: '执行日志' })).toBeNull();
   view.unmount();
   render(<App boot={{ ...boot, task: { ...task, targets: task.targets.slice(0, 1) } }} />);
-  await user.click(screen.getByRole('button', { name: '当前任务' }));
+  await user.click(within(screen.getByRole('contentinfo', { name: '应用状态' })).getByRole('button', { name: /Cordys/ }));
   expect(screen.queryByRole('group', { name: '选择任务目标' })).toBeNull();
 });
 

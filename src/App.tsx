@@ -15,8 +15,6 @@ import {
   ArrowLeft,
   RotateCcw,
   X,
-  Terminal,
-  Copy,
   Download,
   Upload,
   ChevronRight,
@@ -26,7 +24,6 @@ import {
   Pencil,
   Coffee,
   Loader2,
-  CircleCheck,
   FolderOpen,
 } from 'lucide-react';
 import {
@@ -58,8 +55,7 @@ import {
 import { createTask, startTask, tick, cancelTask, requestFailure } from './engine';
 import { recordTask, pruneHistory, canRollback as rollbackAllowed, historyLogs } from './records';
 import { CredentialSession, credentialServers } from './credentials';
-import { diagnostics } from './validation';
-import { Badge, Card, Field, Switch, Modal, Steps, Demo, download } from './ui';
+import { Badge, Card, Field, Switch, Modal, Demo, download } from './ui';
 import { ServiceForm, ServerForm, TargetForm, BackupFields } from './forms';
 import './style.css';
 import { DataSettings, LegacyArtifactReview } from './DataSettings';
@@ -90,7 +86,8 @@ import { DateRangeFilter } from './DateRangeFilter';
 import { withinDateRange, type DateRange } from './date-range';
 import { taskProgress, readExpandedTargets, saveExpandedTargets } from './layout-state';
 import { EntityWorkspace, WorkspaceTabs, Disclosure } from './WorkspaceLayout';
-import { BuildOnlyTask, DiagnosticPanel, FailureActions } from './TaskExtras';
+import { DiagnosticPanel } from './TaskExtras';
+import { TaskView } from './TaskView';
 import type { DiagnosticKind } from './features';
 import brandIcon from '../assets/icon.svg';
 import { newService, newTargetTemplate, emptyDatabase, prototype } from './defaults';
@@ -107,7 +104,6 @@ import {
 import {
   TrustDialog,
   CredentialPrompt,
-  NativeLogs,
   ContainerLogs,
   LockTakeover,
 } from './DesktopViews';
@@ -116,7 +112,7 @@ type Page = WorkspacePage;
 type Dialog =
   | { kind: 'service'; value: Service }
   | { kind: 'server'; value: Server }
-  | { kind: 'target'; value: Target }
+  | { kind: 'target'; value: Target; initialTab?: '健康检查' }
   | { kind: 'picker' }
   | { kind: 'confirm'; task: Task; token?: string; returnFocus?: HTMLElement }
   | { kind: 'cancel' }
@@ -244,7 +240,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   );
   const [build, setBuild] = useState<Task['build']>('rebuild');
   const [overrides, setOverrides] = useState<Record<string, Backup>>({});
-  const compactTargets = db.settings.compactTargets ?? !!desktop;
+  const compactTargets = db.settings.compactTargets ?? true;
   const setCompactTargets = (value: boolean) =>
     setDb((old) => ({ ...old, settings: { ...old.settings, compactTargets: value } }));
   const [expanded, setExpanded] = useState<string[]>(() =>
@@ -302,7 +298,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   const [backupTarget, setBackupTarget] = useState<Target>();
   const [backupAudit, setBackupAudit] = useState<import('./features').MaintenanceRecord>();
   const [taskRows, setTaskRows] = useState<TaskSummary[]>([]);
-  const [inspected, setInspected] = useState(0);
+  const [inspected, setInspected] = useState(-1);
+  const viewedTarget = Math.max(0, Math.min(inspected < 0 ? task?.active ?? 0 : inspected, (task?.targets.length || 1) - 1));
   const [message, setMessage] = useState('');
   const [storageError, setStorageError] = useState('');
   const [historyFilter, setHistoryFilter] = useState('all');
@@ -578,6 +575,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   }
   async function launch(targetList = chosen, rollback?: History, dryRun = false) {
     if (isActive(task)) {
+      if (page !== 'task') setTaskReturnPage(page);
       setPage('task');
       notify('请先结束当前任务');
       return;
@@ -711,8 +709,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         .snapshotAvailability(task.id)
         .catch((e) => ({ available: false, reason: String(e) }));
       if (!availability.available) {
-        notify(availability.reason);
-        return;
+        return availability;
       }
       snapshotPath = availability.path || snapshotPath;
     }
@@ -839,7 +836,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       (historyEnv === 'all' || h.target.name === historyEnv) &&
       withinDateRange(h.time.slice(0, 10), historyDate),
   );
-  const historyTable = (list: History[]) => (
+  const historyTable = (list: History[], fromOverview = false) => (
     <div className="table-wrap">
       <table>
         <thead>
@@ -898,7 +895,18 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 <small>{h.backupPath ? '有备份' : '无备份'}</small>
               </td>
               <td>
-                <button className="link" onClick={() => setDialog({ kind: 'history', value: h })}>
+                <button className="link" onClick={() => {
+                  if (!desktop || !fromOverview || isActive(task)) {
+                    setDialog({ kind: 'history', value: h });
+                    return;
+                  }
+                  void desktop.readTask(h.taskId).then((next) => {
+                    setTask(next);
+                    setTaskReturnPage('overview');
+                    setInspected(Math.max(0, next.targets.findIndex((entry) => entry.target.id === h.target.id)));
+                    setPage('task');
+                  }).catch(() => setDialog({ kind: 'history', value: h }));
+                }}>
                   详情
                 </button>
               </td>
@@ -971,15 +979,16 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         !document.querySelector('[role="dialog"]')
       ) {
         const dest = (['overview', 'deploy', 'task', 'history'] as const)[Number(event.key) - 1];
-        if (dest !== 'task' || task) {
+        if (dest !== 'task' || isActive(task)) {
           event.preventDefault();
+          if (dest === 'task' && page !== 'task') setTaskReturnPage(page);
           setPage(dest);
         }
       }
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [task]);
+  }, [task, page]);
   const changeBackup = (id: string, b: Backup) => setOverrides((old) => ({ ...old, [id]: b }));
   return (
     <div
@@ -1046,14 +1055,17 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 {n.name}
               </button>
             ))}
-          <button
-            disabled={!task}
-            className={page === 'task' ? 'selected' : ''}
-            onClick={() => setPage('task')}
-          >
-            {isActive(task) ? <Loader2 size={18} className="spin" /> : <CircleCheck size={18} />}
-            当前任务{isActive(task) && <small>执行中</small>}
-          </button>
+          {isActive(task) && (
+            <button className={page === 'task' ? 'selected' : ''}
+              onClick={() => {
+                if (page !== 'task') setTaskReturnPage(page);
+                setInspected(-1);
+                setPage('task');
+              }}>
+              <Loader2 size={18} className="spin" />
+              当前任务<small>{task?.status === 'cancelling' ? '取消中' : '执行中'}</small>
+            </button>
+          )}
           <button
             className={page === 'history' ? 'selected' : ''}
             onClick={() => setPage('history')}
@@ -1101,7 +1113,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               </button>
             </div>
           )}
-          {desktop && observations.some((s) => s.active) && (
+          {desktop && page !== 'task' && observations.some((s) => s.active) && (
             <div className="notice">
               <strong>部署后日志观察</strong>
               <div className="row wrap mt">
@@ -1125,7 +1137,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               </div>
             </div>
           )}
-          {desktop && unfinished.length > 0 && (
+          {desktop && page !== 'task' && unfinished.length > 0 && (
             <div className="warning" role="status">
               <strong>存在未结束的部署任务</strong>
               <p>核实只读取原任务状态或清理未启动的上传，不会继续后续目标或重新替换。</p>
@@ -1239,7 +1251,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                     <ArrowRight size={14} />
                   </button>
                 </div>
-                {historyTable(db.history.slice(0, 3))}
+                {historyTable(db.history.slice(0, 3), true)}
               </section>
             </>
           )}
@@ -1936,15 +1948,17 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                   添加部署目标
                 </button>,
               )}
-              <Field label="筛选服务">
-                <select value={serviceId} onChange={(e) => selectService(e.target.value)}>
-                  {db.services.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+              <div className="target-service-filter">
+                <Field label="筛选服务">
+                  <select value={serviceId} onChange={(e) => selectService(e.target.value)}>
+                    {db.services.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
               <EntityWorkspace
                 key={serviceId}
                 label="部署目标"
@@ -2930,87 +2944,28 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               )}
             </>
           )}
-          {page === 'task' &&
-            task &&
-            !isActive(task) &&
-            task.targets.some((r) => (r.backup.keepLast || 0) > 0) && (
-              <Card title="远程备份保留建议">
-                <p className="note">
-                  以下目标配置了保留数量。读取清单后确认才会清理，不影响本次部署结果。
-                </p>
-                <div className="row wrap">
-                  {task.targets
-                    .filter(
-                      (r) =>
-                        (r.backup.keepLast || 0) > 0 &&
-                        db.targets.some((t) => t.id === r.target.id),
-                    )
-                    .map((r) => (
-                      <button
-                        key={r.target.id}
-                        className="button"
-                        onClick={() =>
-                          setBackupTarget(db.targets.find((t) => t.id === r.target.id))
-                        }
-                      >
-                        {r.target.name} · 查看并清理备份
-                      </button>
-                    ))}
-                </div>
-              </Card>
-            )}
           {page === 'task' && task && (
-            <>
-              {header(
-                task.dryRun
-                  ? '试运行报告（远程只读）'
-                  : task.operation === 'rollback'
-                    ? '恢复历史版本'
-                    : '部署任务',
-                task.id + ' · ' + task.service.name,
-                <div className="task-heading-actions">
-                  <button className="button" onClick={() => setPage(taskReturnPage)}>
-                    <ArrowLeft size={16} />
-                    {taskReturnPage === 'history' ? '返回部署历史' : '返回部署'}
-                  </button>
-                  <Badge
-                    kind={
-                      task.status === 'success' ? 'good' : task.status === 'failed' ? 'warn' : ''
-                    }
-                  >
-                    {desktop
-                      ? taskResult(task)
-                      : task.status === 'cancelling'
-                        ? '取消中 · 等待安全边界'
-                        : task.status === 'running'
-                          ? '执行中'
-                          : task.status === 'success'
-                            ? '任务完成'
-                            : task.status === 'partial'
-                              ? '部分成功'
-                              : task.status === 'cancelled'
-                                ? '任务已取消'
-                                : task.status === 'interrupted'
-                                  ? '执行结果待核实'
-                                  : '部署失败'}
-                  </Badge>
-                </div>,
-              )}
-              {!task.targets.length && desktop ? (
-                <BuildOnlyTask
-                  task={task}
-                  onPrepare={() => {
-                    selectService(task.service.id);
-                    setPage('deploy');
-                  }}
-                  onReport={() => void nativeAction(() => desktop!.exportReport(task.id))}
-                />
-              ) : (
                 <TaskView
                   key={task.id}
                   task={task}
-                  inspected={Math.min(inspected, task.targets.length - 1)}
+                  inspected={viewedTarget}
                   setInspected={setInspected}
+                  backLabel={taskReturnPage === 'history' ? '返回部署历史' : taskReturnPage === 'overview' ? '返回首页' : taskReturnPage === 'deploy' ? '返回部署' : '返回'}
+                  onBack={() => setPage(taskReturnPage)}
+                  onHealth={db.targets.some((target) => target.id === task.targets[viewedTarget]?.target.id) ? () => {
+                    const target = db.targets.find((target) => target.id === task.targets[viewedTarget].target.id)!;
+                    setDialog({ kind: 'target', value: target, initialTab: '健康检查' });
+                  } : undefined}
+                  onRecover={desktop && unfinished.some((entry) => entry.id === task.id) ? () =>
+                    setNativeDialog({ title: '核实中断任务', recover: task }) : undefined}
+                  onObserve={observations.some((entry) => entry.active && entry.targetId === task.targets[viewedTarget]?.target.id) ? () => {
+                    const entry = observations.find((entry) => entry.active && entry.targetId === task.targets[viewedTarget].target.id)!;
+                    setNativeDialog({ title: '部署后观察 · ' + entry.label, logs: entry.targetId, logSession: entry.sessionId });
+                  } : undefined}
+                  onBackups={desktop && (task.targets[viewedTarget]?.backup.keepLast || 0) > 0 &&
+                    db.targets.some((target) => target.id === task.targets[viewedTarget]?.target.id)
+                    ? () => setBackupTarget(db.targets.find((target) => target.id === task.targets[viewedTarget]?.target.id))
+                    : undefined}
                   onCancel={() => setDialog({ kind: 'cancel' })}
                   demoMode={prototype && !desktop && db.settings.demoMode}
                   onFailure={(kind) => {
@@ -3022,7 +2977,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                   onRecheck={desktop ? () => void repeatTask(true) : undefined}
                   onDiagnose={(kind) => {
                     const target = db.targets.find(
-                      (t) => t.id === task.targets[inspected]?.target.id,
+                      (t) => t.id === task.targets[viewedTarget]?.target.id,
                     );
                     const server = target && db.servers.find((s) => s.id === target.serverId);
                     if (target && server)
@@ -3034,31 +2989,17 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                       ? () => void nativeAction(() => desktop!.exportReport(task.id))
                       : undefined
                   }
-                  rollbackReason={(() => {
-                    const h = db.history.find(
-                      (h) =>
-                        h.taskId === task.id && h.target.id === task.targets[inspected]?.target.id,
-                    );
-                    return h && rollbackAllowed(db, h)
-                      ? ''
-                      : task.targets[inspected]?.backupCreated
-                        ? '备份记录不存在或目标配置已变化，请先核实远程备份。'
-                        : '本次未创建远程备份，不能恢复到本次部署之前。';
+                  onRollback={(() => {
+                    const h = db.history.find((h) => h.taskId === task.id && h.target.id === task.targets[viewedTarget]?.target.id);
+                    const target = h && db.targets.find((entry) => entry.id === h.target.id);
+                    return desktop && h && target && rollbackAllowed(db, h) ? () => void launch([target], h) : undefined;
                   })()}
-                  onRollback={() => {
-                    const h = db.history.find(
-                      (h) =>
-                        h.taskId === task.id && h.target.id === task.targets[inspected]?.target.id,
-                    );
-                    const target = h && db.targets.find((t) => t.id === h.target.id);
-                    if (h && target && rollbackAllowed(db, h)) void launch([target], h);
-                  }}
-                  onPrepareAgain={() => {
+                  onPrepareAgain={(onlyFailed) => {
                     if (!task) return;
                     selectService(task.service.id);
                     setSelected(
                       task.targets
-                        .filter((r) => failedStatuses.includes(r.status))
+                        .filter((r) => !onlyFailed || failedStatuses.includes(r.status))
                         .map((r) => r.target.id),
                     );
                     setBuild('rebuild');
@@ -3070,7 +3011,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                     desktop
                       ? setNativeDialog({
                           title: '应用日志',
-                          logs: task.targets[inspected].target.id,
+                          logs: task.targets[viewedTarget].target.id,
                         })
                       : setDialog({
                           kind: 'history',
@@ -3079,11 +3020,11 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                             taskId: task.id,
                             operation: task.operation,
                             service: snapshotService(task.service),
-                            target: snapshotTarget(task.targets[inspected].target),
-                            server: snapshotServer(task.targets[inspected].server),
+                            target: snapshotTarget(task.targets[viewedTarget].target),
+                            server: snapshotServer(task.targets[viewedTarget].server),
                             artifact: task.artifact,
                             build: task.build,
-                            status: task.targets[inspected].status,
+                            status: task.targets[viewedTarget].status,
                             time: task.started,
                             elapsed: task.elapsed,
                             logs: [text],
@@ -3093,13 +3034,11 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                         })
                   }
                 />
-              )}
-            </>
           )}
         </main>
         <footer className="workspace-footer" aria-label="应用状态">
           <span className="footer-version">
-            {desktop ? 'v' + (boot?.version || '1.4.0') : '界面原型 v0.3'}
+            {desktop ? 'v' + (boot?.version || '1.4.1') : '界面原型 v0.3'}
           </span>
           <button
             className="footer-directory"
@@ -3111,8 +3050,11 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           </button>
           <button
             className="footer-task"
-            disabled={!task}
-            onClick={() => setPage('task')}
+            disabled={!task || (!!desktop && !isActive(task) && page !== 'overview')}
+            onClick={() => {
+              if (page !== 'task') setTaskReturnPage(page);
+              setPage('task');
+            }}
             title={task?.service.name}
           >
             {task
@@ -3243,6 +3185,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       {dialog?.kind === 'target' && (
         <Modal title="部署目标配置" onClose={() => setDialog(null)} wide>
           <TargetForm
+            initialTab={dialog.initialTab}
             initial={dialog.value}
             db={db}
             onClose={() => setDialog(null)}
@@ -3276,8 +3219,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               setTask(startTask(t));
             }
             setFailureOverride(null);
-            setTaskReturnPage('deploy');
-            setInspected(0);
+            if (page !== 'task') setTaskReturnPage(page);
+            setInspected(-1);
             setPage('task');
             setDialog(null);
           }}
@@ -3515,6 +3458,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                   }
                 } else {
                   setTask(await desktop!.recover(nativeDialog.recover!.id, values));
+                  if (page !== 'task') setTaskReturnPage(page);
+                  setInspected(-1);
                   setPage('task');
                   setNativeDialog(null);
                 }
@@ -3884,432 +3829,6 @@ function Confirm({
         </p>
       </Disclosure>
     </Modal>
-  );
-}
-function TaskView({
-  task,
-  inspected,
-  setInspected,
-  onCancel,
-  onFailure,
-  demoMode,
-  onRetry,
-  onPrepareAgain,
-  onPromote,
-  onRecheck,
-  onDiagnose,
-  onIdentity,
-  onReport,
-  onRollback,
-  rollbackReason,
-  onCopy,
-  onLog,
-}: {
-  task: Task;
-  inspected: number;
-  setInspected: (v: number) => void;
-  onCancel: () => void;
-  onFailure: (kind?: 'application' | 'containerHash') => void;
-  demoMode: boolean;
-  onRetry: (failed: boolean) => void;
-  onPrepareAgain?: () => void;
-  onPromote?: () => void;
-  onRecheck?: () => void;
-  onDiagnose?: (kind: DiagnosticKind) => void;
-  onIdentity?: () => void;
-  onReport?: () => void;
-  onRollback?: () => void;
-  rollbackReason?: string;
-  onCopy: (s: string) => void;
-  onLog: (s: string) => void;
-}) {
-  const r = task.targets[inspected],
-    active = isActive(task);
-  const [snapshot, setSnapshot] = useState<SnapshotAvailability>({
-    available: !desktop,
-    reason: desktop ? '正在检查本地固定产物…' : '',
-  });
-  useEffect(() => {
-    if (!desktop || active) return;
-    let current = true;
-    void desktop
-      .snapshotAvailability(task.id)
-      .then((value) => {
-        if (current) setSnapshot(value);
-      })
-      .catch((e) => {
-        if (current) setSnapshot({ available: false, reason: String(e) });
-      });
-    return () => {
-      current = false;
-    };
-  }, [task.id, task.status, active]);
-  const [taskTab, setTaskTab] = useState('progress');
-  const [logError, setLogError] = useState<number>();
-  const [logFocus, setLogFocus] = useState<{ name: string; nonce: number }>();
-  const selectStep = (name: string) => {
-    setTaskTab('logs');
-    setLogFocus({ name, nonce: Date.now() });
-  };
-  const allLogs = [...task.buildLogs, ...r.logs];
-  const completed = task.targets.filter(
-    (r) => !['pending', 'running', 'rollingback'].includes(r.status),
-  ).length;
-  const commands = diagnostics(r.server, r.target);
-  return (
-    <>
-      <Card>
-        <div className="row spread wrap">
-          <div>
-            <h2>构建与产物准备</h2>
-            <p className="muted">
-              {task.buildPhase < 3
-                ? [
-                    '检查本地环境',
-                    task.build === 'rebuild' ? '构建 JAR' : '准备指定 JAR',
-                    '校验任务快照',
-                  ][task.buildPhase]
-                : '产物已就绪，同一份 JAR 按顺序部署'}{' '}
-              · {seconds(task.elapsed)}
-            </p>
-          </div>
-          <Badge>
-            {completed} / {task.targets.length} 目标已结束
-          </Badge>
-        </div>
-        <div
-          className="progress"
-          role="progressbar"
-          aria-label="任务总体进度"
-          aria-valuenow={Math.round(
-            ((Math.min(task.buildPhase, 3) +
-              task.targets.reduce((sum, r) => sum + (r.phase / r.steps.length) * 3, 0)) /
-              (3 + task.targets.length * 3)) *
-              100,
-          )}
-          aria-valuemin={0}
-          aria-valuemax={100}
-        >
-          <span
-            style={{
-              width:
-                ((Math.min(task.buildPhase, 3) +
-                  task.targets.reduce((sum, r) => sum + (r.phase / r.steps.length) * 3, 0)) /
-                  (3 + task.targets.length * 3)) *
-                  100 +
-                '%',
-            }}
-          />
-        </div>
-        <Steps
-          labels={task.buildSteps.map((s) => s.label)}
-          details={task.buildSteps}
-          onSelect={desktop ? selectStep : undefined}
-          current={task.buildPhase}
-          finished={task.buildPhase === task.buildSteps.length}
-        />
-      </Card>
-      {task.targets.length > 1 && (
-        <div className="task-target-strip" role="group" aria-label="选择任务目标">
-          {task.targets.map((r, i) => (
-            <button
-              key={r.target.id}
-              className={'task-target ' + (inspected === i ? 'selected' : '')}
-              aria-pressed={inspected === i}
-              onClick={() => setInspected(i)}
-            >
-              <span className="row spread">
-                <strong>{r.target.name}</strong>
-                <span>{seconds(r.elapsed)}</span>
-              </span>
-              <small>{r.server.name}</small>
-              <Badge
-                kind={
-                  r.status === 'success' ? 'good' : failedStatuses.includes(r.status) ? 'warn' : ''
-                }
-              >
-                {statusLabel[r.status]}
-              </Badge>
-              <div className="progress">
-                <span style={{ width: (r.phase / r.steps.length) * 100 + '%' }} />
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-      <div className="task-view-tabs">
-        <WorkspaceTabs
-          label="任务视图"
-          value={taskTab}
-          onChange={setTaskTab}
-          sections={[
-            {
-              id: 'progress',
-              label: '执行进度',
-              content: (
-                <>
-                  <div className="task-content mt">
-                    <Card
-                      title={
-                        <span className="row">
-                          {r.target.name}
-                          <Badge>{modeLabel(r.target.mode)}</Badge>
-                        </span>
-                      }
-                    >
-                      <p className="path">{remoteJar(r.target)}</p>
-                      <Steps
-                        labels={r.steps.map((s) => s.label)}
-                        details={r.steps}
-                        onSelect={desktop ? selectStep : undefined}
-                        current={r.phase}
-                        failed={['failed', 'rollingback', 'rolledback'].includes(r.status)}
-                        cancelled={
-                          ['cancelled', 'skipped', 'pending'].includes(r.status) ||
-                          task.buildPhase < 3
-                        }
-                        finished={['success', 'unverified'].includes(r.status)}
-                      />
-                      {r.upload.bytes > 0 && (
-                        <p className="note" aria-label="模拟上传进度">
-                          {desktop ? '上传：' : '模拟上传：'}
-                          {r.upload.percent}% · {(r.upload.speed / 1024 / 1024).toFixed(1)} MB/s ·{' '}
-                          {niceSize(r.upload.bytes)} / {niceSize(r.upload.total)}
-                        </p>
-                      )}
-                      {r.error && (
-                        <p className="warning" role="alert">
-                          {r.error}
-                          <br />
-                          {r.recovery || '正在按配置尝试自动回滚。'}
-                        </p>
-                      )}
-                      {r.cleanupWarning && (
-                        <p className="warning" role="status">{r.cleanupWarning}</p>
-                      )}
-                      {task.status === 'cancelling' && (
-                        <p className="warning" role="status">
-                          取消中：等待当前目标到达安全边界，不强制中断替换。
-                        </p>
-                      )}
-                    </Card>
-                  </div>
-                  {desktop && !active && task.dryRun && (
-                    <Card title="检查结果" className="mt">
-                      <p>
-                        {task.status === 'success'
-                          ? '只读检查已通过，正式部署前仍会重新检查并要求确认。'
-                          : '检查未通过，请先处理目标或构建配置问题。'}
-                      </p>
-                      <div className="row wrap mt">
-                        {task.status === 'success' && (
-                          <button className="button primary" onClick={onPromote}>
-                            正式部署
-                          </button>
-                        )}
-                        <button className="button" onClick={onRecheck}>
-                          重新检查
-                        </button>
-                      </div>
-                    </Card>
-                  )}
-                  {desktop && !active && !task.dryRun && (
-                    <Disclosure
-                      title="回滚与报告"
-                      description="恢复到本次部署之前，或导出完整部署报告。"
-                    >
-                      <div className="row wrap">
-                        <button
-                          className="button"
-                          disabled={!!rollbackReason}
-                          title={rollbackReason || undefined}
-                          onClick={onRollback}
-                        >
-                          回滚到本次部署之前
-                        </button>
-                        {rollbackReason && <span className="note">{rollbackReason}</span>}
-                        <button className="button" onClick={onReport}>
-                          导出部署报告
-                        </button>
-                      </div>
-                    </Disclosure>
-                  )}
-                  <div className="task-actions">
-                    <div className="row wrap">
-                      {active ? (
-                        <>
-                          <button
-                            className="button"
-                            onClick={onCancel}
-                            disabled={task.status === 'cancelling'}
-                          >
-                            取消任务
-                          </button>
-                          {prototype && demoMode && (
-                            <Demo>
-                              <button
-                                className="link"
-                                onClick={() => onFailure()}
-                                disabled={
-                                  task.status === 'cancelling' || !!task.targets[task.active]?.fail
-                                }
-                              >
-                                模拟当前目标启动 / 健康检查失败
-                              </button>
-                              {task.targets[task.active]?.target.mode === 'docker' && (
-                                <button
-                                  className="link"
-                                  onClick={() => onFailure('containerHash')}
-                                  disabled={
-                                    task.status === 'cancelling' ||
-                                    !!task.targets[task.active]?.hashMismatch
-                                  }
-                                >
-                                  模拟容器内哈希不一致
-                                </button>
-                              )}
-                            </Demo>
-                          )}
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            className="button"
-                            hidden={!!task.dryRun}
-                            disabled={!snapshot.available}
-                            title={snapshot.reason || undefined}
-                            onClick={() => onRetry(false)}
-                          >
-                            <RotateCcw size={15} />
-                            重新部署本次目标
-                          </button>
-                          <button
-                            className="button"
-                            onClick={() => onRetry(true)}
-                            hidden={!!task.dryRun}
-                            disabled={
-                              !snapshot.available ||
-                              !task.targets.some((r) => failedStatuses.includes(r.status))
-                            }
-                            title={snapshot.reason || undefined}
-                          >
-                            只重试失败目标
-                          </button>
-                          {!task.dryRun && !snapshot.available && (
-                            <div className="wide">
-                              <p className="note">{snapshot.reason}</p>
-                              <button className="button" onClick={onPrepareAgain}>
-                                重新构建或选择现有 JAR
-                              </button>
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </div>
-                    <button className="button" onClick={() => onCopy(commands)}>
-                      <Copy size={15} />
-                      复制排查命令
-                    </button>
-                    {r.target.mode === 'docker' && (
-                      <button
-                        className="button"
-                        onClick={() =>
-                          onLog(
-                            `[模拟容器日志] ${r.target.container}\n服务初始化中…\n请在正式版本连接服务器后获取实际输出。`,
-                          )
-                        }
-                      >
-                        <Terminal size={15} />
-                        容器日志
-                      </button>
-                    )}
-                  </div>
-                  {desktop && (r.error || task.buildSteps.some((s) => s.status === 'failed')) && (
-                    <FailureActions
-                      error={r.error || '构建失败'}
-                      directory={r.target.directory}
-                      onDiagnose={(kind) => onDiagnose?.(kind)}
-                      onLogs={() => onLog('')}
-                      onIdentity={() => onIdentity?.()}
-                      onBuild={() => {
-                        setTaskTab('logs');
-                        setLogError(Date.now());
-                      }}
-                    />
-                  )}
-                </>
-              ),
-            },
-            {
-              id: 'logs',
-              label: '执行日志',
-              content: (
-                <Card
-                  title="执行日志"
-                  action={
-                    <div className="row wrap">
-                      {task.targets.length > 1 && (
-                        <select
-                          aria-label="日志目标"
-                          value={inspected}
-                          onChange={(e) => setInspected(Number(e.target.value))}
-                        >
-                          {task.targets.map((run, index) => (
-                            <option key={run.target.id} value={index}>
-                              {run.target.name}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                      <button
-                        className="link"
-                        onClick={() =>
-                          desktop
-                            ? void desktop!.readLogs(task.id, r.target.id).then((value) => {
-                                if (value.truncated) {
-                                  void desktop!.exportLogs(task.id, r.target.id);
-                                } else onCopy([...value.build, ...value.target].join('\n'));
-                              })
-                            : onCopy(allLogs.join('\n'))
-                        }
-                      >
-                        <Copy size={15} />
-                        复制
-                      </button>
-                      <button
-                        className="link"
-                        onClick={() =>
-                          desktop
-                            ? void desktop!.exportLogs(task.id, r.target.id)
-                            : download(task.id + '.log', allLogs.join('\n'))
-                        }
-                      >
-                        <Download size={15} />
-                        导出
-                      </button>
-                    </div>
-                  }
-                >
-                  {desktop ? (
-                    <NativeLogs
-                      active={taskTab === 'logs'}
-                      key={task.id + r.target.id}
-                      taskId={task.id}
-                      targetId={r.target.id}
-                      initial={allLogs}
-                      focusStep={logFocus}
-                      focusError={logError}
-                    />
-                  ) : (
-                    <LogViewer active={taskTab === 'logs'} lines={allLogs} />
-                  )}
-                </Card>
-              ),
-            },
-          ]}
-        />
-      </div>
-    </>
   );
 }
 function HistoryDetail({

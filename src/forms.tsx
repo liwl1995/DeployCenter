@@ -405,7 +405,7 @@ export function BackupFields({
   );
 }
 const targetTabs = ['基本信息', '运行方式', '健康检查', '备份与安全'] as const;
-export function TargetForm({ initial, db, onSave, onClose }: SaveProps<Target>) {
+export function TargetForm({ initial, db, onSave, onClose, initialTab }: SaveProps<Target> & { initialTab?: "健康检查" }) {
   const [v, set] = useState(() => ({
     ...structuredClone(initial),
     health: {
@@ -414,7 +414,7 @@ export function TargetForm({ initial, db, onSave, onClose }: SaveProps<Target>) 
       maxWait: healthTiming(initial.health).window,
     },
   }));
-  const [tab, setTab] = useState<(typeof targetTabs)[number]>(targetTabs[0]);
+  const [tab, setTab] = useState<(typeof targetTabs)[number]>(initialTab ?? targetTabs[0]);
   const [error, setError] = useState('');
   const tabId = useId();
   const logObservation = useRef<HTMLDetailsElement>(null);

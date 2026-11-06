@@ -131,6 +131,7 @@ it('多个正式目标逐项确认，通用 DEPLOY 或只填写一项都不能�
     serviceId: db.services[0].id,
     targetIds: [original.id, 'second-production'],
     build: 'existing',
+    ...(process.platform === 'win32' ? {} : { jarPath: path.join(dir, 'fixture.jar') }),
     overrides: {},
     failurePolicy: 'stop',
   });

@@ -109,6 +109,7 @@ describe('主进程任务确认与持久化边界', () => {
       serviceId: 'crm',
       targetIds: ['t19'],
       build: 'existing',
+      ...(process.platform === 'win32' ? {} : { jarPath: path.join(dir, 'fixture.jar') }),
       overrides: {},
       failurePolicy: 'stop',
     });

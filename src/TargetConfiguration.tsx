@@ -59,14 +59,14 @@ export function TargetConfiguration({ target, server }: { target: Target; server
                 : healthLabels[target.health.type] + ' · ' + target.health.value}
             </dd>
           </div>
-          {target.health.type !== 'none' && (
-            <div>
-              <dt>启动等待 / 就绪窗口</dt>
-              <dd>
-                {timing.delay} 秒 / {timing.window} 秒
-              </dd>
-            </div>
-          )}
+          <div>
+            <dt>启动等待 / 就绪窗口</dt>
+            <dd>
+              {target.health.type === 'none'
+                ? '不适用'
+                : timing.delay + ' 秒 / ' + timing.window + ' 秒'}
+            </dd>
+          </div>
         </dl>
       </section>
       <section className="configuration-group">

@@ -242,13 +242,10 @@ test('utilityProcess 通过 IPC 执行只读试运行，完成首次指纹确认
     const report = await fs.readFile(reportFile, 'utf8');
     expect(report).toContain('YOTOO 部署报告');
     expect(report).not.toContain('fixture-only');
-    await page.getByRole('tab', { name: '执行日志', exact: true }).click();
     await expect(page.getByRole('combobox', { name: '日志目标', exact: true })).toHaveCount(0);
     await expect(page.locator('.task-layout')).toHaveCount(0);
-    await expect(page.locator('.task-target-strip')).toHaveCount(0);
+    await expect(page.getByRole('group', { name: '选择任务目标' })).toHaveCount(0);
     await expect(page.getByRole('heading', { name: '执行日志', exact: true })).toBeVisible();
-    await page.getByRole('tab', { name: '执行进度', exact: true }).click();
-    await expect(page.getByRole('combobox', { name: '日志目标', exact: true })).toBeHidden();
     await page.getByRole('button', { name: '返回部署', exact: true }).click();
     await expect(page.getByRole('heading', { name: '准备好，发布下一版本' })).toBeVisible();
     await page.getByRole('button', { name: '部署历史', exact: true }).click();

@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import type { DesktopAPI } from './platform';
-import type { Server, Target, Task } from './model';
-import { fmtTime, seconds, serverAddress } from './model';
+import type { Server, Target } from './model';
+import { fmtTime, serverAddress } from './model';
 import type { DiagnosticKind, DiagnosticResult } from './features';
-import { Card, Field, Steps, download } from './ui';
-import { NativeLogs } from './DesktopViews';
+import { Field, download } from './ui';
 import { failureAdvice } from './presentation';
 const labels: Record<DiagnosticKind, string> = {
   directory: '目标目录文件',
@@ -180,39 +179,5 @@ export function FailureActions({
         </button>
       )}
     </div>
-  );
-}
-export function BuildOnlyTask({
-  task,
-  onPrepare,
-  onReport,
-}: {
-  task: Task;
-  onPrepare: () => void;
-  onReport: () => void;
-}) {
-  return (
-    <>
-      <Card title="构建与产物准备">
-        <p>构建阶段未通过，尚未执行任何目标。耗时 {seconds(task.elapsed)}。</p>
-        <Steps
-          labels={task.buildSteps.map((s) => s.label)}
-          details={task.buildSteps}
-          current={task.buildPhase}
-          failed={true}
-        />
-        <div className="row wrap mt">
-          <button className="button" onClick={onPrepare}>
-            重新准备部署
-          </button>
-          <button className="button" onClick={onReport}>
-            导出部署报告
-          </button>
-        </div>
-      </Card>
-      <Card className="mt" title="构建日志">
-        <NativeLogs taskId={task.id} targetId="none" initial={task.buildLogs} />
-      </Card>
-    </>
   );
 }

@@ -2198,7 +2198,7 @@ tr:last-child td {
   width: auto;
   max-width: 200px;
 }
-@media (max-width: 1180px) {
+@media (max-width: 960px) {
   .target-compact {
     grid-template-columns: minmax(0, 1fr) 44px 32px;
     gap: 8px 14px;
@@ -2412,6 +2412,10 @@ tr:last-child td {
 .deploy-layout .switch-row {
   padding: 7px 0;
 }
+.deploy-layout .target-compact .switch-row {
+  margin: 0;
+  padding: 0;
+}
 .stack > .workspace-disclosure {
   margin: 0;
 }
@@ -2471,9 +2475,19 @@ tr:last-child td {
   font-size: 12px;
   margin-bottom: 5px;
 }
+.configuration-grid dd,
+.configuration-grid dd small {
+  color: var(--ink);
+  font-size: 13px;
+}
 .configuration-grid dd {
   margin: 0;
   overflow-wrap: anywhere;
+}
+.target-service-filter {
+  width: fit-content;
+  min-width: min(200px, 100%);
+  max-width: min(320px, 100%);
 }
 .configuration-group .workspace-disclosure {
   margin-bottom: 0;
@@ -2608,3 +2622,40 @@ tr:last-child td {
 .deployment-note[open] > summary {
   margin-bottom: 12px;
 }
+
+/* 任务页只有主内容滚动，标题和可用操作保持在内容区顶部。 */
+.task-page { display: grid; gap: 12px; min-width: 0; }
+.task-page-header { position: sticky; top: 0; z-index: 3; background: var(--bg); padding: 10px 0; border-bottom: 1px solid var(--line); }
+.task-title-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; }
+.task-title { min-width: 0; overflow-wrap: anywhere; }
+.task-title h1 { font-size: clamp(20px, 2vw, 28px); }
+.task-header-bottom { margin-top: 8px; }
+.task-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.task-result-banner { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; padding: 12px 14px; border: 1px solid var(--line); border-inline-start: 3px solid var(--task-tone, var(--line)); border-radius: 8px; background: var(--panel); overflow-wrap: anywhere; }
+.task-result-banner strong { color: var(--task-tone, var(--ink)); }
+.task-tone-success, .task-target-success { --task-tone: var(--accent); }
+.task-tone-warning, .task-target-unverified, .task-target-rolledback, .task-target-unknown { --task-tone: var(--warn); }
+.task-tone-failed, .task-target-failed { --task-tone: var(--red); }
+.task-tone-running, .task-target-running, .task-target-rollingback { --task-tone: var(--accent); }
+.task-target-tabs { display: flex; gap: 8px; overflow-x: auto; padding: 4px; min-width: 0; }
+.task-target-tabs .button { flex-shrink: 0; white-space: nowrap; }
+.task-target-tabs [aria-pressed="true"], .task-stage[aria-pressed="true"] { border-color: var(--accent); background: var(--soft); }
+.task-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--task-tone, var(--sub)); }
+.task-stages { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.task-stage { display: flex; align-items: flex-start; gap: 6px; text-align: start; min-width: 0; padding: 10px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.task-stage span { min-width: 0; overflow-wrap: anywhere; }
+.task-stage small { display: block; color: var(--sub); }
+.task-stage svg, .task-step-row svg { flex: none; color: var(--task-tone, var(--sub)); }
+.task-process { display: grid; grid-template-columns: minmax(230px, 1fr) minmax(0, 2fr); gap: 12px; align-items: start; }
+.task-process .card-head { flex-wrap: wrap; }
+.task-process .log-viewport { height: clamp(180px, 34vh, 390px); }
+.task-step-list { list-style: none; padding: 0; margin: 0; }
+.task-step-list li + li { border-top: 1px solid var(--line); }
+.task-step-list li { padding: 8px 0; }
+.task-step-row { display: flex; align-items: center; gap: 8px; }
+.task-step-row button { text-align: start; overflow-wrap: anywhere; }
+.task-step-row small { margin-inline-start: auto; white-space: nowrap; color: var(--sub); }
+.task-upload { margin: 8px 0 0 23px; color: var(--sub); font-size: 12px; }
+.task-upload progress { width: 100%; accent-color: var(--accent); }
+#task-stage-detail { scroll-margin-top: 140px; }
+@media (max-width: 1120px) { .task-process { grid-template-columns: minmax(0, 1fr); } }

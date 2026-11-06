@@ -6,7 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { seed, shellQuote as q, type Target } from '../src/model';
 import { createTask } from '../src/engine';
-import { launchRunner, preflightScript, remotePaths, runnerScript } from '../electron/remote';
+import { dryRunScript, launchRunner, preflightScript, remotePaths, runnerScript } from '../electron/remote';
 import {
   cleanWorkbench,
   verifyWorkbench,
@@ -184,6 +184,29 @@ function makeRun(directory: string, options: Case = {}) {
 }
 
 describe.skipIf(!available)('隔离 Linux Bash 执行远程部署和收尾（Docker 使用本地命令夹具）', () => {
+  it.each([
+    ['readlink', 'readlink -m', 'exit 1'],
+    ['stat', 'stat -c', 'printf incompatible'],
+    ['date', 'date +%s%3N', 'printf 1234567890%%3N'],
+  ])('预检识别存在但不兼容的 %s，拒绝写入远端', async (command, usage, stub) => {
+    await fixture(async (dir) => {
+      const directory = dir + '/尚未创建的部署目录';
+      const { task, r } = makeRun(directory, { first: true });
+      r.target.createDirectory = true;
+      const prefix =
+        'export PATH=' + q(dir) + ':$PATH\n' +
+        setFile(dir + '/' + command, '#!/bin/bash\n' + stub + '\n') +
+        'chmod +x -- ' + q(dir + '/' + command) + '\n';
+      for (const script of [dryRunScript(task, r), preflightScript(task, r, false)]) {
+        const result = await shell(prefix + script);
+        expect(result.code).toBe(1);
+        expect(result.stderr).toContain('服务器的 ' + usage + ' 不支持所需用法，需要 GNU coreutils');
+        expect(result.stderr).toContain('Alpine、BusyBox');
+        await run('test ! -e ' + q(directory));
+      }
+    });
+  });
+
   async function scenario(options: Case = {}) {
     return fixture(async (dir) => {
       const { task, r, target, docker, next, owner } = makeRun(dir, options);

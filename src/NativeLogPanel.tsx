@@ -17,7 +17,7 @@ export function NativeLogPanel({
   taskId: string;
   targetId: string;
   initial: string[];
-  focusStep?: { name: string; nonce: number };
+  focusStep?: ({ name: string } | { names: string[] }) & { nonce: number };
   focusError?: number;
   api?: DesktopAPI;
 }) {
@@ -127,7 +127,7 @@ export function NativeLogPanel({
       off();
     };
   }, [api, taskId, targetId]);
-  const readEarlier = async (locate?: { step?: string; error?: boolean }) => {
+  const readEarlier = async (locate?: { steps?: string[]; error?: boolean }) => {
     if (loading.current) {
       setMessage('正在加载较早日志，请等待或取消后重试定位。');
       return;
@@ -141,7 +141,7 @@ export function NativeLogPanel({
     try {
       const find = () =>
         currentLines.current.find((l) =>
-          locate?.step ? l.step === locate.step : logLevel(l.text) === 'error',
+          locate?.steps ? locate.steps.includes(l.step || '') : logLevel(l.text) === 'error',
         );
       if (locate)
         while (
@@ -160,7 +160,7 @@ export function NativeLogPanel({
           setMessage('已定位到已加载的日志。');
         } else
           setMessage(
-            locate?.step
+            locate?.steps
               ? '此步骤没有可定位日志，旧记录可能缺少步骤信息。'
               : '未找到错误行，请检查完整原始日志。',
           );
@@ -179,7 +179,7 @@ export function NativeLogPanel({
   useEffect(() => {
     if (ready && focusStep && lastStep.current !== focusStep.nonce) {
       lastStep.current = focusStep.nonce;
-      void readEarlier({ step: focusStep.name });
+      void readEarlier({ steps: "names" in focusStep ? focusStep.names : [focusStep.name] });
     }
   }, [focusStep, ready]);
   useEffect(() => {
