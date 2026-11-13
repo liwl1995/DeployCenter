@@ -4,11 +4,27 @@ import type { Database, History } from './model';
 import { fmtTime, seconds } from './model';
 import { operationLabel, targetLabels, taskResult } from './presentation';
 import type { HistorySearchResult } from './features';
-import { Badge, Card, Field } from './ui';
+import { Badge, Card, Field, Modal } from './ui';
 import { DateRangeFilter } from './DateRangeFilter';
 import { withinDateRange, type DateRange } from './date-range';
 import { HashValue } from './DeployDetails';
-import { Disclosure } from './WorkspaceLayout';
+import { Search, SlidersHorizontal, X } from 'lucide-react';
+type HistoryFilters = {
+  kind: string;
+  status: string;
+  service: string;
+  server: string;
+  environment: string;
+  date: DateRange;
+};
+const emptyFilters: HistoryFilters = {
+  kind: 'all',
+  status: 'all',
+  service: 'all',
+  server: 'all',
+  environment: 'all',
+  date: { from: '', to: '' },
+};
 export function TaskHistory({
   rows,
   db,
@@ -28,13 +44,12 @@ export function TaskHistory({
   onCopy: (text: string) => void;
   onMaintenance?: (record: import('./features').MaintenanceRecord) => void;
 }) {
-  const [kind, setKind] = useState('all'),
-    [status, setStatus] = useState('all'),
-    [service, setService] = useState('all'),
-    [server, setServer] = useState('all'),
-    [environment, setEnvironment] = useState('all'),
-    [date, setDate] = useState<DateRange>({ from: '', to: '' }),
-    [query, setQuery] = useState('');
+  const [filters, setFilters] = useState<HistoryFilters>(emptyFilters);
+  const [draft, setDraft] = useState<HistoryFilters>();
+  const [query, setQuery] = useState('');
+  const { kind, status, service, server, environment, date } = filters;
+  const changeDraft = <K extends keyof HistoryFilters>(key: K, value: HistoryFilters[K]) =>
+    setDraft((old) => (old ? { ...old, [key]: value } : old));
   const [expanded, setExpanded] = useState(new Set<string>()),
     [search, setSearch] = useState<HistorySearchResult>(),
     [searching, setSearching] = useState(false),
@@ -112,109 +127,191 @@ export function TaskHistory({
       if (h) onHistory(h);
     }
   };
+  const chips: { key: keyof HistoryFilters; label: string }[] = [];
+  if (kind !== 'all')
+    chips.push({
+      key: 'kind',
+      label:
+        '类型：' +
+        ({
+          deploy: '部署',
+          rollback: '回滚',
+          'dry-run': '试运行',
+          'backup-cleanup': '备份清理',
+          unknown: '记录待恢复',
+        }[kind] || kind),
+    });
+  if (status !== 'all')
+    chips.push({
+      key: 'status',
+      label:
+        '结果：' +
+        ({
+          success: '已完成 / 检查通过',
+          partial: '部分完成',
+          failed: '失败 / 检查未通过',
+          cancelled: '已取消',
+          interrupted: '待核实',
+        }[status] || status),
+    });
+  if (service !== 'all')
+    chips.push({
+      key: 'service',
+      label: '服务：' + (rows.find((row) => row.serviceId === service)?.service || service),
+    });
+  if (server !== 'all')
+    chips.push({
+      key: 'server',
+      label:
+        '服务器：' +
+        (rows.flatMap((row) => row.targets || []).find((target) => target.serverId === server)
+          ?.server || server),
+    });
+  if (environment !== 'all') chips.push({ key: 'environment', label: '环境：' + environment });
+  if (date.from || date.to)
+    chips.push({
+      key: 'date',
+      label: '日期：' + (date.from || '不限') + ' 至 ' + (date.to || '不限'),
+    });
   return (
     <>
-      <div className="history-toolbar">
-        <Field label="任务类型">
-          <select value={kind} onChange={(e) => setKind(e.target.value)}>
-            <option value="all">全部类型</option>
-            <option value="deploy">部署</option>
-            <option value="rollback">回滚</option>
-            <option value="dry-run">试运行</option>
-            <option value="backup-cleanup">备份清理</option>
-            <option value="unknown">记录待恢复</option>
-          </select>
-        </Field>
-        <Field label="任务结果">
-          <select value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="all">全部结果</option>
-            <option value="success">已完成 / 检查通过</option>
-            <option value="partial">部分完成</option>
-            <option value="failed">失败 / 检查未通过</option>
-            <option value="cancelled">已取消</option>
-            <option value="interrupted">待核实</option>
-          </select>
-        </Field>
-        <Field label="部署日期">
-          <DateRangeFilter value={date} onChange={setDate} />
-        </Field>
-        <div className="search-history">
-          <Field label="搜索完整历史" wide>
-            <input
-              placeholder="搜索备注、服务、环境、服务器和完整日志"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              maxLength={200}
-            />
-          </Field>
-        </div>
+      <div className="history-search-bar">
+        <label className="search-box">
+          <Search size={16} aria-hidden="true" />
+          <input
+            aria-label="搜索完整历史"
+            placeholder="搜索备注、服务、环境、服务器和完整日志"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            maxLength={200}
+          />
+        </label>
+        <button
+          className="button"
+          aria-label="筛选部署历史"
+          onClick={() => setDraft({ ...filters, date: { ...filters.date } })}
+        >
+          <SlidersHorizontal size={16} />
+          筛选{chips.length > 0 && ' · ' + chips.length}
+        </button>
       </div>
-      <Disclosure
-        title={
-          '更多筛选' +
-          ([service, server, environment].filter((v) => v !== 'all').length
-            ? ' · 已启用 ' +
-              [service, server, environment].filter((v) => v !== 'all').length +
-              ' 项'
-            : '')
-        }
-        description="按服务、服务器和环境缩小范围"
-      >
-        <div className="filters history-filters history-advanced">
-          <Field label="服务">
-            <select value={service} onChange={(e) => setService(e.target.value)}>
-              <option value="all">全部服务</option>
-              {[...new Map(rows.map((r) => [r.serviceId || r.service, r.service])).entries()].map(
-                ([id, name]) => (
+      {!!chips.length && (
+        <div className="history-filter-chips" aria-label="已应用的筛选">
+          {chips.map((chip) => (
+            <button
+              className="filter-chip"
+              key={chip.key}
+              aria-label={'移除' + chip.label}
+              onClick={() => setFilters((old) => ({ ...old, [chip.key]: emptyFilters[chip.key] }))}
+            >
+              {chip.label}
+              <X size={13} aria-hidden="true" />
+            </button>
+          ))}
+          <button className="link" onClick={() => setFilters(emptyFilters)}>
+            全部清除
+          </button>
+        </div>
+      )}
+      {draft && (
+        <Modal
+          title="筛选部署历史"
+          onClose={() => setDraft(undefined)}
+          footer={
+            <>
+              <button className="button" onClick={() => setDraft(emptyFilters)}>
+                重置
+              </button>
+              <button className="button" onClick={() => setDraft(undefined)}>
+                取消
+              </button>
+              <button
+                className="button primary"
+                data-confirm
+                onClick={() => {
+                  setFilters(draft);
+                  setDraft(undefined);
+                }}
+              >
+                应用
+              </button>
+            </>
+          }
+        >
+          <div className="form-grid history-filter-form">
+            <Field label="任务类型">
+              <select value={draft.kind} onChange={(e) => changeDraft('kind', e.target.value)}>
+                <option value="all">全部类型</option>
+                <option value="deploy">部署</option>
+                <option value="rollback">回滚</option>
+                <option value="dry-run">试运行</option>
+                <option value="backup-cleanup">备份清理</option>
+                <option value="unknown">记录待恢复</option>
+              </select>
+            </Field>
+            <Field label="任务结果">
+              <select value={draft.status} onChange={(e) => changeDraft('status', e.target.value)}>
+                <option value="all">全部结果</option>
+                <option value="success">已完成 / 检查通过</option>
+                <option value="partial">部分完成</option>
+                <option value="failed">失败 / 检查未通过</option>
+                <option value="cancelled">已取消</option>
+                <option value="interrupted">待核实</option>
+              </select>
+            </Field>
+            <Field label="服务">
+              <select
+                value={draft.service}
+                onChange={(e) => changeDraft('service', e.target.value)}
+              >
+                <option value="all">全部服务</option>
+                {[...new Map(rows.map((r) => [r.serviceId || r.service, r.service])).entries()].map(
+                  ([id, name]) => (
+                    <option key={id} value={id}>
+                      {name}
+                    </option>
+                  ),
+                )}
+              </select>
+            </Field>
+            <Field label="服务器">
+              <select value={draft.server} onChange={(e) => changeDraft('server', e.target.value)}>
+                <option value="all">全部服务器</option>
+                {[
+                  ...new Map(
+                    rows.flatMap((r) =>
+                      (r.targets || []).map((t) => [t.serverId, t.server] as const),
+                    ),
+                  ).entries(),
+                ].map(([id, name]) => (
                   <option key={id} value={id}>
                     {name}
                   </option>
-                ),
-              )}
-            </select>
-          </Field>
-          <Field label="服务器">
-            <select value={server} onChange={(e) => setServer(e.target.value)}>
-              <option value="all">全部服务器</option>
-              {[
-                ...new Map(
-                  rows.flatMap((r) =>
-                    (r.targets || []).map((t) => [t.serverId, t.server] as const),
+                ))}
+              </select>
+            </Field>
+            <Field label="环境">
+              <select
+                value={draft.environment}
+                onChange={(e) => changeDraft('environment', e.target.value)}
+              >
+                <option value="all">全部环境</option>
+                {[...new Set(rows.flatMap((r) => (r.targets || []).map((t) => t.name)))].map(
+                  (name) => (
+                    <option key={name}>{name}</option>
                   ),
-                ).entries(),
-              ].map(([id, name]) => (
-                <option key={id} value={id}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="环境">
-            <select value={environment} onChange={(e) => setEnvironment(e.target.value)}>
-              <option value="all">全部环境</option>
-              {[...new Set(rows.flatMap((r) => (r.targets || []).map((t) => t.name)))].map(
-                (name) => (
-                  <option key={name}>{name}</option>
-                ),
-              )}
-            </select>
-          </Field>
-        </div>
-        <button
-          className="button"
-          onClick={() => {
-            setService('all');
-            setServer('all');
-            setEnvironment('all');
-            setDate({ from: '', to: '' });
-            setQuery('');
-            setKind('all');
-            setStatus('all');
-          }}
-        >
-          重置全部筛选
-        </button>
-      </Disclosure>
+                )}
+              </select>
+            </Field>
+            <Field label="部署日期" wide>
+              <DateRangeFilter
+                value={draft.date}
+                onChange={(value) => changeDraft('date', value)}
+              />
+            </Field>
+          </div>
+        </Modal>
+      )}
       {searching && (
         <p className="note" role="status">
           正在后台搜索完整日志，界面可继续操作…
@@ -231,7 +328,7 @@ export function TaskHistory({
           {error}
         </p>
       )}
-      <Card title="执行任务记录">
+      <Card title="执行任务记录" className="history-records">
         <div className="history-task-list">
           {matching.map((row) => (
             <article key={row.id} className="history-task">

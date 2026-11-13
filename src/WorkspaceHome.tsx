@@ -1,12 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { Database, Preset } from './model';
-import { fmtTime } from './model';
-import type { DesktopAPI, TaskSummary } from './platform';
+import type { TaskSummary } from './platform';
 import { Card, Field, Modal, Badge } from './ui';
-import { VersionFacts } from './DeployDetails';
 import { MoreMenu } from './EntityActions';
 import { Disclosure } from './WorkspaceLayout';
-import { taskResult } from './presentation';
 import { guideSteps, presetReason, type WorkspacePage } from './workspace-model';
 export function FirstGuide({
   db,
@@ -47,123 +44,6 @@ export function FirstGuide({
         </div>
       </Card>
     </Disclosure>
-  );
-}
-export function Overview({
-  db,
-  tasks,
-  api,
-  onDeploy,
-  onPage,
-  onCopy,
-  onImport,
-  presetShelf,
-  onTargets,
-}: {
-  onTargets?: (serviceId: string) => void;
-  db: Database;
-  tasks: TaskSummary[];
-  api?: DesktopAPI;
-  onDeploy: (service: string, target: string) => void;
-  onPage: (page: WorkspacePage) => void;
-  onCopy: (text: string) => void;
-  onImport: () => void;
-  presetShelf?: React.ReactNode;
-}) {
-  const [differences, setDifferences] = useState<Record<string, string>>({}),
-    [refresh, setRefresh] = useState(0),
-    [checking, setChecking] = useState(false);
-  const key = JSON.stringify([
-    db.services,
-    db.targets.map((t) => [t.id, t.currentHash, t.currentCommit, t.lastDeploy]),
-  ]);
-  useEffect(() => {
-    let alive = true;
-    setDifferences({});
-    if (!api) return;
-    setChecking(true);
-    void api
-      .localDifferences()
-      .then((v) => {
-        if (alive) setDifferences(v);
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (alive) setChecking(false);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [api, key, refresh]);
-  return (
-    <div className="stack">
-      <FirstGuide db={db} tasks={tasks} onPage={onPage} onImport={onImport} />
-      {!!db.presets?.some((p) => p.pinned) && presetShelf}
-      <Card
-        title="服务与环境"
-        action={
-          <button className="link" disabled={checking} onClick={() => setRefresh((n) => n + 1)}>
-            {checking ? '正在读取本地差异…' : '刷新本地差异'}
-          </button>
-        }
-      >
-        <p className="note">线上信息来自最近任务记录，未实时连接服务器。健康状态为上次结果。</p>
-        <div className="overview-grid">
-          {db.services.map((s) => {
-            const targets = db.targets.filter((t) => t.serviceId === s.id);
-            return targets.length ? (
-              targets.map((t) => {
-                const recent = tasks.find(
-                  (r) =>
-                    r.serviceId === s.id &&
-                    !r.dryRun &&
-                    !r.maintenance &&
-                    r.targets?.some((x) => x.id === t.id),
-                );
-                return (
-                  <article className="overview-target" key={t.id}>
-                    <div className="row spread wrap">
-                      <h3>
-                        {s.name} · {t.name}
-                      </h3>
-                      <Badge kind={t.production ? 'warn' : ''}>
-                        {t.production ? '正式环境' : '非正式环境'}
-                      </Badge>
-                    </div>
-                    <VersionFacts target={t} onCopy={onCopy} />
-                    <dl className="detail-list">
-                      <dt>上次部署</dt>
-                      <dd>{fmtTime(t.lastDeploy)}</dd>
-                      <dt>最近结果</dt>
-                      <dd>{recent ? taskResult(recent) : '尚未部署'}</dd>
-                      <dt>健康状态</dt>
-                      <dd>{t.healthState}</dd>
-                      <dt>本地差异</dt>
-                      <dd>{differences[t.id] || (checking ? '正在比较…' : '无法判断')}</dd>
-                    </dl>
-                    <button className="button" onClick={() => onDeploy(s.id, t.id)}>
-                      部署到{t.name}
-                    </button>
-                  </article>
-                );
-              })
-            ) : (
-              <article className="overview-target" key={s.id}>
-                <h3>{s.name}</h3>
-                <p className="muted">尚未配置部署目标。</p>
-                <button
-                  className="button"
-                  onClick={() => (onTargets ? onTargets(s.id) : onPage('targets'))}
-                >
-                  配置部署目标
-                </button>
-              </article>
-            );
-          })}
-        </div>
-        {!db.services.length && <p className="empty">尚未配置服务，按照上面的清单开始。</p>}
-      </Card>
-    </div>
   );
 }
 export function PresetShelf({
@@ -328,8 +208,8 @@ export function ShortcutHelp() {
         <table>
           <tbody>
             <tr>
-              <td>Alt + 1 / 2 / 3 / 4</td>
-              <td>首页总览 / 一键部署 / 当前任务 / 部署历史</td>
+              <td>Alt + 1 / 2 / 3</td>
+              <td>一键部署 / 当前任务 / 部署历史</td>
             </tr>
             <tr>
               <td>Ctrl + Enter</td>

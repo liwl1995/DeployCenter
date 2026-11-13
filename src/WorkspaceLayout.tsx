@@ -1,107 +1,134 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Search, ChevronRight } from 'lucide-react';
+import { useEffect, useLayoutEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { Search, ChevronRight, ArrowLeft } from 'lucide-react';
 
-/** 保留详情的操作入口，将长配置清单变成可搜索的主从工作区。 */
+/** 卡片入口和单项详情共用状态，返回时恢复列表位置与键盘焦点。 */
 export function EntityWorkspace<T extends { id: string }>({
   label,
   items,
   title,
   subtitle,
+  searchText,
+  summary,
+  actions,
+  filters,
   children,
 }: {
   label: string;
   items: T[];
   title: (item: T) => string;
   subtitle: (item: T) => string;
+  searchText?: (item: T) => string;
+  summary?: (item: T) => ReactNode;
+  actions?: ReactNode;
+  filters?: ReactNode;
   children: (item: T) => ReactNode;
 }) {
   const [query, setQuery] = useState('');
-  const [selected, setSelected] = useState(items[0]?.id);
+  const [selected, setSelected] = useState<string>();
   const previous = useRef(new Set(items.map((item) => item.id)));
+  const root = useRef<HTMLDivElement>(null);
+  const origin = useRef<string | undefined>(undefined);
+  const position = useRef(0);
+  const returning = useRef(false);
   const searchId = useId();
+  const current = items.find((item) => item.id === selected);
   useEffect(() => {
     const added = items.find((item) => !previous.current.has(item.id));
     previous.current = new Set(items.map((item) => item.id));
     if (added) {
       setSelected(added.id);
       setQuery('');
+    } else if (selected && !items.some((item) => item.id === selected)) {
+      returning.current = true;
+      setSelected(undefined);
     }
-  }, [items]);
+  }, [items, selected]);
+  useLayoutEffect(() => {
+    const main = root.current?.closest('main');
+    if (current) {
+      if (main) main.scrollTop = 0;
+      root.current?.querySelector<HTMLElement>('.entity-detail')?.focus({ preventScroll: true });
+    } else if (returning.current) {
+      returning.current = false;
+      const cards = [
+        ...(root.current?.querySelectorAll<HTMLButtonElement>('[data-entity-id]') || []),
+      ];
+      const button = cards.find((card) => card.dataset.entityId === origin.current) || cards[0];
+      (button || root.current?.querySelector<HTMLInputElement>('.search-box input'))?.focus({
+        preventScroll: true,
+      });
+      if (main) main.scrollTop = position.current;
+    }
+  }, [current?.id, selected]);
   const visible = items.filter((item) =>
-    (title(item) + ' ' + subtitle(item))
+    (title(item) + ' ' + subtitle(item) + ' ' + (searchText?.(item) || ''))
       .toLocaleLowerCase()
       .includes(query.toLocaleLowerCase().trim()),
   );
-  const current = visible.find((item) => item.id === selected) || visible[0];
+  const enter = (id: string) => {
+    position.current = root.current?.closest('main')?.scrollTop || 0;
+    origin.current = id;
+    setSelected(id);
+  };
   return (
-    <div className="entity-workspace">
-      <aside className="entity-list" aria-label={label + '列表'}>
-        <div className="entity-list-head">
-          <strong>
-            {label} <span className="muted">{items.length}</span>
-          </strong>
-          <label htmlFor={searchId} className="search-box">
-            <Search size={16} aria-hidden="true" />
-            <input
-              id={searchId}
-              aria-label={'搜索' + label}
-              placeholder={'搜索' + label}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-          </label>
-        </div>
-        <div className="entity-options">
-          {visible.map((item, index) => (
-            <button
-              key={item.id}
-              className="entity-option"
-              aria-pressed={current?.id === item.id}
-              onClick={() => setSelected(item.id)}
-              onKeyDown={(e) => {
-                const next =
-                  e.key === 'ArrowDown'
-                    ? index + 1
-                    : e.key === 'ArrowUp'
-                      ? index - 1
-                      : e.key === 'Home'
-                        ? 0
-                        : e.key === 'End'
-                          ? visible.length - 1
-                          : -1;
-                if (next < 0 || next >= visible.length) return;
-                e.preventDefault();
-                setSelected(visible[next].id);
-                const buttons =
-                  e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(
-                    '.entity-option',
-                  );
-                buttons?.[next].focus();
-              }}
-            >
-              <span>
-                <strong>{title(item)}</strong>
-                <small>{subtitle(item)}</small>
-              </span>
-              <ChevronRight size={16} aria-hidden="true" />
-            </button>
-          ))}
+    <div className="entity-workspace entity-cards-workspace" ref={root}>
+      {current ? (
+        <>
+          <button
+            className="button entity-back"
+            onClick={() => {
+              returning.current = true;
+              setSelected(undefined);
+            }}
+          >
+            <ArrowLeft size={16} />
+            返回列表
+          </button>
+          <div className="entity-detail" aria-label={label + '详情'} tabIndex={-1}>
+            {children(current)}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="entity-toolbar">
+            <label htmlFor={searchId} className="search-box">
+              <Search size={16} aria-hidden="true" />
+              <input
+                id={searchId}
+                aria-label={'搜索' + label}
+                placeholder={'搜索' + label}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </label>
+            {filters}
+            {actions}
+          </div>
+          <div className="entity-card-grid" aria-label={label + '列表'}>
+            {visible.map((item) => (
+              <button
+                key={item.id}
+                className="entity-card"
+                data-entity-id={item.id}
+                aria-label={'查看' + label + title(item) + '详情'}
+                onClick={() => enter(item.id)}
+              >
+                <span className="entity-card-title">
+                  <strong>{title(item)}</strong>
+                  <ChevronRight size={16} />
+                </span>
+                {subtitle(item) && <span className="entity-card-subtitle">{subtitle(item)}</span>}
+                <span className="entity-card-summary">{summary?.(item)}</span>
+              </button>
+            ))}
+          </div>
           {!visible.length && (
             <p className="empty">
-              {items.length ? '没有匹配项，请调整搜索内容。' : '暂无配置，点击右上角添加。'}
+              {items.length ? '没有匹配项，请调整搜索内容。' : '暂无配置，点击上方添加。'}
             </p>
           )}
-        </div>
-      </aside>
-      <div className="entity-detail" aria-label={label + '详情'}>
-        {current ? (
-          children(current)
-        ) : (
-          <div className="workspace-placeholder">
-            {items.length ? '搜索不到匹配的配置。' : '添加配置后，在这里查看详情和执行操作。'}
-          </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 }

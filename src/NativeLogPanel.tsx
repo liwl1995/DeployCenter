@@ -6,6 +6,7 @@ import { VirtualLogs } from './LogViewer';
 /** 原始日志按范围分批读取，实时追加与较早页面分开，避免重复或覆盖用户正在复制的行。 */
 export function NativeLogPanel({
   active = true,
+  compact = false,
   taskId,
   targetId,
   initial,
@@ -14,6 +15,7 @@ export function NativeLogPanel({
   api = desktop!,
 }: {
   active?: boolean;
+  compact?: boolean;
   taskId: string;
   targetId: string;
   initial: string[];
@@ -168,7 +170,7 @@ export function NativeLogPanel({
         const line = locate ? find() : currentLines.current[0];
         if (line) {
           setFocusLine({ id: line.id, nonce: Date.now() });
-          setMessage('已定位到已加载的日志。');
+          setMessage(compact ? '' : '已定位到已加载的日志。');
         } else
           setMessage(
             locate?.steps
@@ -190,7 +192,7 @@ export function NativeLogPanel({
   useEffect(() => {
     if (ready && focusStep && lastStep.current !== focusStep.nonce) {
       lastStep.current = focusStep.nonce;
-      void readEarlier({ steps: "names" in focusStep ? focusStep.names : [focusStep.name] });
+      void readEarlier({ steps: 'names' in focusStep ? focusStep.names : [focusStep.name] });
     }
   }, [focusStep, ready]);
   useEffect(() => {
@@ -199,30 +201,35 @@ export function NativeLogPanel({
       void readEarlier({ error: true });
     }
   }, [focusError, ready]);
+  useEffect(() => {
+    if (compact && !focusStep && !focusError && !busy) setMessage('');
+  }, [compact, focusStep, focusError, busy]);
   return (
     <>
-      {more && (
+      {more && !compact && (
         <p className="note">还有更早日志未加载，点击步骤会分批定位；也可导出完整原始日志。</p>
       )}
-      <div className="row wrap">
-        {more && (
-          <button className="button" disabled={busy} onClick={() => void readEarlier()}>
-            加载更早日志
-          </button>
-        )}
-        {busy && (
-          <button
-            className="button"
-            onClick={() => {
-              cancelled.current = true;
-              setBusy(false);
-              setMessage('已取消定位，当前读取完成后停止；已加载日志保留。');
-            }}
-          >
-            取消加载
-          </button>
-        )}
-      </div>
+      {(more || busy) && (
+        <div className="row wrap log-load-actions">
+          {more && (
+            <button className="button" disabled={busy} onClick={() => void readEarlier()}>
+              加载更早日志
+            </button>
+          )}
+          {busy && (
+            <button
+              className="button"
+              onClick={() => {
+                cancelled.current = true;
+                setBusy(false);
+                setMessage('已取消定位，当前读取完成后停止；已加载日志保留。');
+              }}
+            >
+              取消加载
+            </button>
+          )}
+        </div>
+      )}
       {message && (
         <p role="status" className="note">
           {message}
@@ -235,6 +242,7 @@ export function NativeLogPanel({
       )}
       <VirtualLogs
         active={active}
+        compact={compact}
         entries={lines}
         focusLine={focusLine}
         onExport={() => void api.exportLogs(taskId, targetId).catch((e) => setError(String(e)))}

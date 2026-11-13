@@ -3,7 +3,7 @@ import { cleanup, render, screen, within, waitFor } from '@testing-library/react
 import userEvent from '@testing-library/user-event';
 import { seed, type Preset } from '../src/model';
 import { emptyDatabase } from '../src/defaults';
-import { FirstGuide, Overview, PresetShelf } from '../src/WorkspaceHome';
+import { FirstGuide, PresetShelf } from '../src/WorkspaceHome';
 import { preparePreset, localComparison, guideSteps } from '../src/workspace-model';
 import { RemoteBackups } from '../src/RemoteBackups';
 import { Modal } from '../src/ui';
@@ -51,35 +51,7 @@ it('引导包含五步和配置跳转，全部完成后隐藏，空数据库不�
   );
   expect(screen.queryByText('开始使用')).toBeNull();
 });
-it('首页按服务与环境展示来源，未知信息不猜测，部署快捷入口带准确目标', async () => {
-  const user = userEvent.setup(),
-    db = seed(),
-    onDeploy = vi.fn(),
-    target = db.targets[0];
-  target.currentCommit = 'a'.repeat(40);
-  target.currentHash = 'b'.repeat(64);
-  const api = {
-    localDifferences: vi.fn().mockResolvedValue({ [target.id]: '本地比线上新 3 个提交' }),
-  } as unknown as DesktopAPI;
-  render(
-    <Overview
-      db={db}
-      tasks={[]}
-      api={api}
-      onDeploy={onDeploy}
-      onPage={() => {}}
-      onCopy={() => {}}
-      onImport={() => {}}
-    />,
-  );
-  expect(await screen.findByText('本地比线上新 3 个提交')).toBeTruthy();
-  expect(screen.getByText('aaaaaaa').title).toBe('a'.repeat(40));
-  expect(screen.getAllByText('无法判断').length).toBeGreaterThan(0);
-  const title = screen.getByRole('heading', { name: db.services[0].name + ' · ' + target.name });
-  await user.click(
-    within(title.closest('article')!).getByRole('button', { name: '部署到' + target.name }),
-  );
-  expect(onDeploy).toHaveBeenCalledWith(target.serviceId, target.id);
+it('本机版本比较保留明确的未知状态', () => {
   expect(localComparison({ ahead: 3, behind: 0 })).toContain('新 3 个提交');
   expect(localComparison({ ahead: 2, behind: 1 })).toContain('分叉');
   expect(localComparison({})).toBe('无法判断');

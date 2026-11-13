@@ -1,7 +1,6 @@
 import type { Database, Preset, Task } from './model';
 import type { DesktopAPI } from './platform';
 export const workspacePages = [
-  { page: 'overview', name: '首页总览', group: '操作' },
   { page: 'deploy', name: '一键部署', group: '操作' },
   { page: 'task', name: '当前任务', group: '操作' },
   { page: 'history', name: '部署历史', group: '操作' },

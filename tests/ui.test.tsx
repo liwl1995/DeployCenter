@@ -69,6 +69,7 @@ describe('组件交互', () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
     await user.click(screen.getByRole('button', { name: '服务器' }));
+    await user.click(screen.getByRole('button', { name: '查看服务器<img src=x onerror=alert(1)>详情' }));
     expect(screen.getByRole('heading', { name: '<img src=x onerror=alert(1)>' })).toBeTruthy();
     expect(container.querySelector('img[src="x"], [onerror]')).toBeNull();
   });

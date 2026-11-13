@@ -36,9 +36,9 @@ test.afterEach(async () => {
 });
 test('首次启动无示例服务器；安全选项和 IPC 工作', async () => {
   const page = await app.firstWindow();
-  await expect(page.getByRole('heading', { name: 'YOTOO 部署中心', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '一键部署', exact: true })).toBeVisible();
   await expect(
-    page.getByText('添加第一个服务，或导入已有配置。不会自动连接任何服务器。'),
+    page.getByText('添加服务并配置部署目标，或导入已有配置。'),
   ).toBeVisible();
   expect(
     await page.evaluate(() => ({
@@ -62,7 +62,8 @@ test('首次启动无示例服务器；安全选项和 IPC 工作', async () => 
 });
 test('通过界面保存第一个服务，重启后从 SQLite 恢复', async () => {
   const page = await app.firstWindow();
-  await page.getByRole('button', { name: '添加第一个服务', exact: true }).click();
+  await page.getByRole('navigation').getByRole('button', { name: '服务管理', exact: true }).click();
+  await page.getByRole('button', { name: '添加服务', exact: true }).click();
   await page.getByLabel('服务名称', { exact: true }).fill('本机验收服务');
   await page.getByLabel('服务标识', { exact: true }).fill('local-smoke');
   await page.getByLabel('项目根目录', { exact: true }).fill(dir);
@@ -215,7 +216,7 @@ test('utilityProcess 通过 IPC 执行只读试运行，完成首次指纹确认
     await dialog.getByLabel('登录密码 · 回环测试服务器').fill('fixture-only');
     await dialog.getByRole('button', { name: '开始试运行', exact: true }).click();
     await page.getByRole('button', { name: '信任并继续', exact: true }).click();
-    await expect(page.locator('header').getByText('检查通过', { exact: true })).toBeVisible({
+    await expect(page.locator('header').getByText('试运行通过', { exact: true })).toBeVisible({
       timeout: 30000,
     });
     const result = await page.evaluate(() => window.deployCenter!.load());

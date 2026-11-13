@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TaskHistory } from '../src/TaskHistory';
 import { DiagnosticPanel, FailureActions } from '../src/TaskExtras';
@@ -65,7 +65,9 @@ it('单个任务一行，试运行明确标注检查通过，构建失败无目�
   expect(screen.getByText(/构建失败，所选目标未开始/)).toBeTruthy();
   await user.click(screen.getAllByRole('button', { name: '查看任务' })[1]);
   expect(open).toHaveBeenCalledWith('DC-build-fail', undefined);
+  await user.click(screen.getByRole('button', { name: '筛选部署历史' }));
   await user.selectOptions(screen.getByLabelText('任务类型'), 'dry-run');
+  await user.click(screen.getByRole('button', { name: '应用' }));
   expect(screen.getAllByRole('button', { name: '查看任务' })).toHaveLength(1);
   await user.click(screen.getByRole('button', { name: '展开目标' }));
   expect(screen.getByRole('button', { name: '查看目标详情' })).toBeTruthy();
@@ -87,10 +89,12 @@ it('自定义日期面板没有原生 date 输入，全文命中显示位置并�
     />,
   );
   expect(container.querySelector('input[type="date"]')).toBeNull();
+  await user.click(screen.getByRole('button', { name: '筛选部署历史' }));
   await user.click(screen.getByRole('button', { name: '自定义' }));
   await user.click(screen.getByRole('button', { name: '开始日期' }));
   expect(screen.getByRole('group', { name: '选择部署日期' })).toBeTruthy();
   await user.click(screen.getByRole('button', { name: '清除日期筛选' }));
+  await user.click(within(screen.getByRole('dialog', { name: '自定义日期范围' })).getByRole('button', { name: '取消' }));
   await user.click(screen.getByRole('button', { name: '取消' }));
   await user.type(screen.getByLabelText('搜索完整历史'), '唯一日志命中');
   await waitFor(() => expect(screen.getByText('构建日志 · 第 42 行')).toBeTruthy());
@@ -134,4 +138,30 @@ it('失败建议给出具体操作；诊断只在明确点击后执行，结果�
   await user.click(screen.getByRole('button', { name: '执行只读诊断' }));
   expect(await screen.findByText('available fixture')).toBeTruthy();
   expect(screen.getByText('执行命令：df -Pk -- /fixture')).toBeTruthy();
+});
+
+it('筛选先编辑草稿，取消和重置不提前改变记录，应用后可逐项清除', async () => {
+  const user = userEvent.setup();
+  const { db, rows: list } = rows();
+  render(<TaskHistory api={api()} rows={list} db={db} busy={false}
+    onOpen={() => {}} onHistory={() => {}} onCopy={() => {}} />);
+  expect(screen.queryByLabelText('任务类型')).toBeNull();
+  await user.click(screen.getByRole('button', { name: '筛选部署历史' }));
+  await user.selectOptions(screen.getByLabelText('任务类型'), 'dry-run');
+  await user.click(screen.getByRole('button', { name: '取消' }));
+  expect(screen.getAllByRole('button', { name: '查看任务' })).toHaveLength(2);
+  await user.click(screen.getByRole('button', { name: '筛选部署历史' }));
+  expect((screen.getByLabelText('任务类型') as HTMLSelectElement).value).toBe('all');
+  await user.selectOptions(screen.getByLabelText('任务类型'), 'dry-run');
+  await user.selectOptions(screen.getByLabelText('任务结果'), 'success');
+  await user.click(screen.getByRole('button', { name: '应用' }));
+  expect(screen.getAllByRole('button', { name: '查看任务' })).toHaveLength(1);
+  await user.click(screen.getByRole('button', { name: '移除类型：试运行' }));
+  expect(screen.getByRole('button', { name: '移除结果：已完成 / 检查通过' })).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: '筛选部署历史' }));
+  await user.click(screen.getByRole('button', { name: '重置' }));
+  await user.click(screen.getByRole('button', { name: '取消' }));
+  expect(screen.getAllByRole('button', { name: '查看任务' })).toHaveLength(1);
+  await user.click(screen.getByRole('button', { name: '全部清除' }));
+  expect(screen.getAllByRole('button', { name: '查看任务' })).toHaveLength(2);
 });

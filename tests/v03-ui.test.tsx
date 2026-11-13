@@ -68,6 +68,7 @@ describe('v0.3 组件回归', () => {
     render(<App />);
     start();
     await advance(6);
+    fireEvent.click(within(screen.getByRole('group', { name: '部署阶段' })).getByRole('button', { name: /上传与校验/ }));
     expect(screen.getByRole('progressbar', { name: '文件上传进度' }).closest('.task-upload')?.textContent).toMatch(/33%.*MB\/s/);
     expect(screen.getAllByText(/0.8 秒|0.9 秒/).length).toBeGreaterThan(0);
     await advance(14);
@@ -145,6 +146,7 @@ describe('v0.3 组件回归', () => {
     expect(within(modal).getByLabelText(/私钥口令/)).toBeTruthy();
     fireEvent.click(within(modal).getByRole('button', { name: '返回检查' }));
     fireEvent.click(screen.getByRole('button', { name: '服务器' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看服务器CRM 测试服务器详情' }));
     fireEvent.click(screen.getByRole('button', { name: '编辑服务器CRM 测试服务器' }));
     expect(within(screen.getByRole('dialog')).getByLabelText('凭据保存方式')).toBeTruthy();
   });

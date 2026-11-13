@@ -37,7 +37,7 @@ export function DateFilter({
       className="date-control"
       ref={root}
       onKeyDown={(e) => {
-        if (e.key === 'Escape') {
+        if (e.key === 'Escape' && open) {
           e.stopPropagation();
           close();
         }

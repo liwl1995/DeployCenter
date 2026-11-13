@@ -193,7 +193,7 @@ test('迁移后实际解密Windows保存凭据并认证回环SSH；导出不含�
     await app.close();
     app = await launch();
     page = await app.firstWindow();
-    await page.getByRole('heading', { name: '首页总览', exact: true }).waitFor();
+    await page.getByRole('heading', { name: '准备好，发布下一版本', exact: true }).waitFor();
     const connection = page.evaluate((id) => window.deployCenter!.testConnection(id), serverId);
     await page.getByRole('button', { name: '信任并继续', exact: true }).click();
     expect(await connection).toContain('SSH 连接成功');

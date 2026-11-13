@@ -16,7 +16,7 @@ const items = [
   { id: 'a', name: '校园告警', host: '测试服务器' },
   { id: 'b', name: 'CRM', host: '生产服务器' },
 ];
-it('配置工作区支持搜索、键盘选择、无匹配及删除后的回退', async () => {
+it('配置默认显示卡片，进入详情后返回恢复搜索与焦点，删除后回到列表', async () => {
   const user = userEvent.setup();
   const view = (values = items) => (
     <EntityWorkspace label="服务" items={values} title={(s) => s.name} subtitle={(s) => s.host}>
@@ -24,16 +24,22 @@ it('配置工作区支持搜索、键盘选择、无匹配及删除后的回退'
     </EntityWorkspace>
   );
   const rendered = render(view());
-  expect(screen.getByRole('heading', { name: '校园告警详情' })).toBeTruthy();
-  await user.click(screen.getByRole('button', { name: /校园告警/ }));
-  await user.keyboard('{ArrowDown}');
+  expect(screen.queryByRole('heading', { name: '校园告警详情' })).toBeNull();
+  await user.type(screen.getByRole('textbox', { name: '搜索服务' }), 'CRM');
+  const card = screen.getByRole('button', { name: '查看服务CRM详情' });
+  card.focus();
+  await user.keyboard('{Enter}');
   expect(screen.getByRole('heading', { name: 'CRM详情' })).toBeTruthy();
-  expect(document.activeElement?.textContent).toContain('CRM');
-  await user.type(screen.getByRole('textbox', { name: '搜索服务' }), '不存在');
-  expect(screen.getByText('没有匹配项，请调整搜索内容。')).toBeTruthy();
-  await user.clear(screen.getByRole('textbox', { name: '搜索服务' }));
+  expect(screen.queryByRole('textbox')).toBeNull();
+  await user.click(screen.getByRole('button', { name: '返回列表' }));
+  expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('CRM');
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: '查看服务CRM详情' }));
+  await user.click(screen.getByRole('button', { name: '查看服务CRM详情' }));
   rendered.rerender(view([items[0]]));
-  expect(screen.getByRole('heading', { name: '校园告警详情' })).toBeTruthy();
+  expect(screen.queryByRole('heading', { name: 'CRM详情' })).toBeNull();
+  expect(screen.getByText('没有匹配项，请调整搜索内容。')).toBeTruthy();
+  await user.clear(screen.getByRole('textbox'));
+  expect(screen.getByRole('button', { name: '查看服务校园告警详情' })).toBeTruthy();
 });
 it('添加配置后自动选择新项，空列表提供添加指引', async () => {
   const view = (values: typeof items) => (
@@ -42,7 +48,7 @@ it('添加配置后自动选择新项，空列表提供添加指引', async () =
     </EntityWorkspace>
   );
   const rendered = render(view([]));
-  expect(screen.getByText('暂无配置，点击右上角添加。')).toBeTruthy();
+  expect(screen.getByText('暂无配置，点击上方添加。')).toBeTruthy();
   rendered.rerender(view([items[0]]));
   rendered.rerender(view(items));
   expect(screen.getByRole('heading', { name: 'CRM详情' })).toBeTruthy();
@@ -158,4 +164,26 @@ it('指纹提交中不重复操作，失败显示错误并允许重试', async (
   expect((await screen.findByRole('alert')).textContent).toContain('保存失败');
   expect(close).not.toHaveBeenCalled();
   expect(screen.getByRole('button', { name: '信任并继续' }).hasAttribute('disabled')).toBe(false);
+});
+
+it('卡片摘要精简后仍可按关联信息搜索，删除最后一个匹配项后聚焦搜索框', async () => {
+  const user = userEvent.setup();
+  const view = (values = items) => (
+    <EntityWorkspace
+      label="部署目标"
+      items={values}
+      title={(item) => item.name}
+      subtitle={() => '非正式环境'}
+      searchText={(item) => item.host}
+    >
+      {(item) => <h2>{item.name}详情</h2>}
+    </EntityWorkspace>
+  );
+  const rendered = render(view());
+  await user.type(screen.getByLabelText('搜索部署目标'), '生产服务器');
+  const card = screen.getByRole('button', { name: '查看部署目标CRM详情' });
+  await user.click(card);
+  rendered.rerender(view([items[0]]));
+  expect(screen.getByText('没有匹配项，请调整搜索内容。')).toBeTruthy();
+  expect(document.activeElement).toBe(screen.getByLabelText('搜索部署目标'));
 });

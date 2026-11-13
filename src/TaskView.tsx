@@ -1,14 +1,14 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft, Check, Circle, CircleAlert, Clock3, Loader2, Minus, X } from 'lucide-react';
 import { desktop } from './platform';
-import { Badge, Card, Demo } from './ui';
+import { Badge, Card, Demo, download } from './ui';
 import { MoreMenu, type MenuAction } from './EntityActions';
 import { Disclosure } from './WorkspaceLayout';
 import { NativeLogPanel } from './NativeLogPanel';
 import { VirtualLogs } from './LogViewer';
 import { diagnostics } from './validation';
 import { remoteJar, seconds, type RunTarget, type Step, type Task } from './model';
-import { failureAdvice, operationLabel, shortHash, taskResult } from './presentation';
+import { failureAdvice, operationLabel, taskResult } from './presentation';
 import type { DiagnosticKind } from './features';
 
 const names: Record<string, string> = {
@@ -192,38 +192,60 @@ export function TaskView({
     };
   });
   const failedStage = stages.findIndex((s) => s.status === 'failed');
-  const runningStage = stages.findIndex((s) => s.status === 'running');
-  const warnedStage = stages.findIndex((s) => s.status === 'warning');
-  const defaultStage = active
-    ? runningStage >= 0
-      ? runningStage
-      : task.buildPhase < 3
-        ? 0
-        : stages.findIndex((s) => s.status === 'pending')
-    : failedStage >= 0
-      ? failedStage
-      : warnedStage >= 0
-        ? warnedStage
-        : run
-          ? 4
-          : 0;
-  const [selection, setSelection] = useState<{ target: number; stage: number; active: boolean }>();
+  const [selection, setSelection] = useState<{
+    target: number;
+    stage: number | null;
+    active: boolean;
+    failure: number;
+  }>();
   const [logFocus, setLogFocus] = useState<{ names: string[]; nonce: number }>();
   const [logError, setLogError] = useState<number>();
   const [retryIssue, setRetryIssue] = useState<{ reason: string; failed: boolean }>();
   const [retrying, setRetrying] = useState(false);
   const stage =
-    selection?.target === inspected && selection.active === active
+    selection?.target === inspected &&
+    selection.active === active &&
+    selection.failure === failedStage
       ? selection.stage
-      : Math.max(0, defaultStage);
+      : failedStage >= 0
+        ? failedStage
+        : null;
+  const stagePanel = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const panel = stagePanel.current;
+    const failure = panel?.querySelector<HTMLElement>('li.task-tone-failed');
+    if (!panel || !failure) return;
+    // 窗口变窄或日志加载后面板可能缩短，仍将失败步骤保留在可视范围内。
+    const locate = () => {
+      panel.scrollTop += failure.getBoundingClientRect().top - panel.getBoundingClientRect().top;
+    };
+    locate();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(locate);
+    observer.observe(panel);
+    return () => observer.disconnect();
+  }, [stage, failedStage]);
   const logs = [...task.buildLogs, ...(run?.logs || [])];
   const targetId = run?.target.id || 'none';
   const choose = (index: number) => {
-    setSelection({ target: inspected, stage: index, active });
-    setLogFocus({ names: stages[index].steps.map((step) => step.label), nonce: Date.now() });
+    setSelection({
+      target: inspected,
+      stage: stage === index ? null : index,
+      active,
+      failure: failedStage,
+    });
+    setLogFocus(
+      stage === index
+        ? undefined
+        : {
+            names: stages[index].steps.map((step) => step.label),
+            nonce: Date.now(),
+          },
+    );
   };
   const locateFailure = () => {
-    if (failedStage >= 0) setSelection({ target: inspected, stage: failedStage, active });
+    if (failedStage >= 0)
+      setSelection({ target: inspected, stage: failedStage, active, failure: failedStage });
     if (failedStage >= 0 && stages[failedStage].steps.some((step) => step.status === 'failed')) {
       setLogFocus({
         names: stages[failedStage].steps
@@ -232,7 +254,6 @@ export function TaskView({
         nonce: Date.now(),
       });
     } else setLogError(Date.now());
-    document.getElementById('task-stage-detail')?.scrollIntoView({ block: 'nearest' });
   };
   const retry = async (failed: boolean) => {
     if (retrying) return;
@@ -299,16 +320,15 @@ export function TaskView({
               : canRetry && task.status === 'failed'
                 ? { label: '重新准备部署', action: () => onPrepareAgain(false) }
                 : undefined;
-  const copyLogs = () =>
-    desktop
-      ? void desktop
-          .readLogs(task.id, targetId)
-          .then((value) =>
-            value.truncated
-              ? void desktop!.exportLogs(task.id, targetId)
-              : onCopy([...value.build, ...value.target].join('\n')),
-          )
-      : onCopy(logs.join('\n'));
+  const [exportError, setExportError] = useState('');
+  more.push({
+    label: '导出完整日志',
+    onClick: () => {
+      if (desktop)
+        void desktop.exportLogs(task.id, targetId).catch((error) => setExportError(String(error)));
+      else download('任务日志.log', logs.join('\n'));
+    },
+  });
   const bannerAction =
     result.tone === 'failed' || run?.status === 'rolledback'
       ? { label: '查看失败位置', action: locateFailure }
@@ -319,57 +339,44 @@ export function TaskView({
   return (
     <section className="task-page">
       <header className="task-page-header">
-        <div className="task-title-row">
-          <div className="task-title">
-            <p className="muted">{active ? '当前任务' : '任务详情'}</p>
-            <h1>
-              {task.service.name} ·{' '}
-              {task.targets.length > 1
-                ? task.targets.length + ' 个环境'
-                : run?.target.name || '本机构建'}{' '}
-              · {operationLabel(task)}
-            </h1>
-          </div>
-          <Badge
-            kind={
-              active
-                ? ''
-                : result.tone === 'success'
-                  ? 'good'
-                  : ['failed', 'warning'].includes(result.tone)
-                    ? 'warn'
-                    : ''
-            }
-          >
-            {task.status === 'cancelling' ? '安全取消中' : taskResult(task)}
-          </Badge>
+        <div className="task-title">
+          <h1>
+            {task.service.name} ·{' '}
+            {task.targets.length > 1
+              ? task.targets.length + ' 个环境'
+              : run?.target.name || '本机构建'}{' '}
+            · {operationLabel(task)}
+          </h1>
         </div>
-        <div className="task-title-row task-header-bottom">
-          <p className="muted task-summary">
-            <Clock3 size={14} />
-            {seconds(task.elapsed)}{' '}
-            <span>
-              Git <code>{shortHash(task.deployedCommit || task.service.git.commit)}</code>
-            </span>{' '}
-            <span>
-              JAR <code>{shortHash(task.artifact.sha256)}</code>
-            </span>
-          </p>
-          <div className="row wrap">
-            <button className="button" onClick={onBack}>
-              <ArrowLeft size={15} />
-              {backLabel}
+        <Badge kind={active ? '' : result.tone === 'success' ? 'good' : 'warn'}>
+          {task.status === 'cancelling'
+            ? '安全取消中'
+            : task.status === 'success' && result.tone === 'success'
+              ? task.dryRun
+                ? '试运行通过'
+                : task.operation === 'rollback'
+                  ? '已回滚成功'
+                  : '已部署成功'
+              : taskResult(task)}
+        </Badge>
+        <span className="task-duration">
+          <Clock3 size={14} />
+          {seconds(task.elapsed)}
+        </span>
+        <div className="task-header-actions">
+          <button className="button" onClick={onBack}>
+            <ArrowLeft size={15} />
+            {backLabel}
+          </button>
+          {primary && (
+            <button className="button primary" disabled={retrying} onClick={primary.action}>
+              {primary.label}
             </button>
-            {primary && (
-              <button className="button primary" disabled={retrying} onClick={primary.action}>
-                {primary.label}
-              </button>
-            )}
-            {!!more.length && <MoreMenu label="更多任务操作" actions={more} />}
-          </div>
+          )}
+          {!!more.length && <MoreMenu label="更多任务操作" actions={more} />}
         </div>
       </header>
-      {!active && (
+      {!active && result.tone !== 'success' && (
         <div className={'task-result-banner task-tone-' + result.tone} role="status">
           <strong>{result.text}</strong>
           {bannerAction && (
@@ -378,6 +385,11 @@ export function TaskView({
             </button>
           )}
         </div>
+      )}
+      {exportError && (
+        <p className="warning" role="alert">
+          {exportError}
+        </p>
       )}
       {run?.cleanupWarning && (
         <p className="warning" role="status">
@@ -433,9 +445,15 @@ export function TaskView({
               className={'task-stage task-tone-' + entry.status}
               key={entry.name}
               aria-pressed={stage === index}
+              aria-expanded={stage === index}
+              aria-controls="task-stage-detail"
               onClick={() => choose(index)}
             >
-              <Icon size={16} className={entry.status === 'running' ? 'spin' : undefined} aria-hidden="true" />
+              <Icon
+                size={16}
+                className={entry.status === 'running' ? 'spin' : undefined}
+                aria-hidden="true"
+              />
               <span>
                 <strong>{entry.name}</strong>
                 <small>{entry.summary}</small>
@@ -444,98 +462,97 @@ export function TaskView({
           );
         })}
       </div>
-      <div className="task-process">
-        <Card title={stages[stage].name + '详情'}>
-          <div id="task-stage-detail">
-            {stages[stage].steps.length ? (
-              <ul className="task-step-list">
-                {stages[stage].steps.map((step, index) => {
-                  const status = step.status || 'pending',
-                    Icon = icons[status];
-                  const label =
-                    step.key === 'upload' && task.operation === 'rollback'
-                      ? '准备历史备份'
-                      : names[step.key] || step.label;
-                  const upload =
-                    step.key === 'upload' && run?.upload && run.upload.total > 0
-                      ? run.upload
-                      : undefined;
-                  return (
-                    <li key={step.key + index} className={'task-tone-' + status}>
-                      <div className="task-step-row">
-                        <Icon
-                          size={15}
-                          className={status === 'running' ? 'spin' : undefined}
-                          aria-label={statusText[status]}
-                        />
-                        <button
-                          className="link"
-                          title={step.label}
-                          onClick={() => setLogFocus({ names: [step.label], nonce: Date.now() })}
-                        >
-                          {label}
-                        </button>
-                        {(status === 'running' || status === 'success') && (
-                          <small>{seconds(step.elapsed || 0)}</small>
-                        )}
-                      </div>
-                      {upload && (
-                        <div className="task-upload">
-                          <progress max={100} value={upload.percent} aria-label="文件上传进度" />
-                          <p>
-                            {Math.round(upload.percent)}% · {(upload.bytes / 1048576).toFixed(1)} /{' '}
-                            {(upload.total / 1048576).toFixed(1)} MB
-                            {status === 'running' && upload.speed > 0 && (
-                              <>
-                                {' '}
-                                · {(upload.speed / 1048576).toFixed(1)} MB/s · 约剩{' '}
-                                {seconds(Math.max(0, upload.total - upload.bytes) / upload.speed)}
-                              </>
-                            )}
-                          </p>
+      {stage !== null && (
+        <div className="task-stage-panel" ref={stagePanel}>
+          <Card title={stages[stage].name + '详情'}>
+            <div id="task-stage-detail">
+              {stages[stage].steps.length ? (
+                <ul className="task-step-list">
+                  {stages[stage].steps.map((step, index) => {
+                    const status = step.status || 'pending',
+                      Icon = icons[status];
+                    const label =
+                      step.key === 'upload' && task.operation === 'rollback'
+                        ? '准备历史备份'
+                        : names[step.key] || step.label;
+                    const upload =
+                      step.key === 'upload' && run?.upload && run.upload.total > 0
+                        ? run.upload
+                        : undefined;
+                    return (
+                      <li key={step.key + index} className={'task-tone-' + status}>
+                        <div className="task-step-row">
+                          <Icon
+                            size={15}
+                            className={status === 'running' ? 'spin' : undefined}
+                            aria-label={statusText[status]}
+                          />
+                          <button
+                            className="link"
+                            title={step.label}
+                            onClick={() => setLogFocus({ names: [step.label], nonce: Date.now() })}
+                          >
+                            {label}
+                          </button>
+                          {(status === 'running' || status === 'success') && (
+                            <small>{seconds(step.elapsed || 0)}</small>
+                          )}
                         </div>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : (
-              <p className="muted">此阶段没有步骤记录。</p>
-            )}
-            {stage === failedStage && run?.error && (
-              <p className="warning">
-                {run.error}
-                {run.recovery && (
-                  <>
-                    <br />
-                    {run.recovery}
-                  </>
-                )}
-              </p>
-            )}
-          </div>
-        </Card>
-        <Card
-          title="执行日志"
-          action={
-            <div className="row wrap">
-              <button className="link" onClick={copyLogs}>
-                {desktop ? '复制完整日志' : '复制日志'}
-              </button>
+                        {upload && (
+                          <div className="task-upload">
+                            <progress max={100} value={upload.percent} aria-label="文件上传进度" />
+                            <p>
+                              {Math.round(upload.percent)}% · {(upload.bytes / 1048576).toFixed(1)}{' '}
+                              / {(upload.total / 1048576).toFixed(1)} MB
+                              {status === 'running' && upload.speed > 0 && (
+                                <>
+                                  {' '}
+                                  · {(upload.speed / 1048576).toFixed(1)} MB/s · 约剩{' '}
+                                  {seconds(Math.max(0, upload.total - upload.bytes) / upload.speed)}
+                                </>
+                              )}
+                            </p>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className="muted">此阶段没有步骤记录。</p>
+              )}
+              {stage === failedStage && run?.error && (
+                <p className="warning">
+                  {run.error}
+                  {run.recovery && (
+                    <>
+                      <br />
+                      {run.recovery}
+                    </>
+                  )}
+                </p>
+              )}
             </div>
-          }
-        >
+          </Card>
+        </div>
+      )}
+      <div className="task-process">
+        <Card className="task-log-card">
           {desktop ? (
             <NativeLogPanel
               key={targetId}
               taskId={task.id}
               targetId={targetId}
               initial={logs}
+              compact
               focusStep={logFocus}
               focusError={logError}
             />
           ) : (
-            <VirtualLogs entries={logs.map((text, index) => ({ id: String(index), text }))} />
+            <VirtualLogs
+              compact
+              entries={logs.map((text, index) => ({ id: String(index), text }))}
+            />
           )}
         </Card>
       </div>

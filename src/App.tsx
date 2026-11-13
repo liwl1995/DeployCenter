@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Rocket,
-  LayoutDashboard,
   Boxes,
   Server as ServerIcon,
   Wrench,
@@ -76,7 +75,7 @@ import { deploymentBlockReason, HashValue, PrecheckPanel, VersionFacts } from '.
 import type { LocalPrecheck } from './features';
 import { RemoteBackups, BackupAudit } from './RemoteBackups';
 import { WorkbenchReviewPanel } from './WorkbenchReview';
-import { Overview, PresetShelf, FirstGuide, ShortcutHelp } from './WorkspaceHome';
+import { PresetShelf, FirstGuide, ShortcutHelp } from './WorkspaceHome';
 import { preparePreset, type WorkspacePage } from './workspace-model';
 import { TaskHistory } from './TaskHistory';
 import { MoreMenu, DeleteEntity } from './EntityActions';
@@ -121,7 +120,6 @@ type Dialog =
   | { kind: 'jdk' }
   | null;
 const nav = [
-  { page: 'overview', name: '首页总览', icon: LayoutDashboard },
   { page: 'deploy', name: '一键部署', icon: Rocket },
   { page: 'services', name: '服务管理', icon: Boxes },
   { page: 'targets', name: '部署目标', icon: SlidersHorizontal },
@@ -224,7 +222,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   const [failureOverride, setFailureOverride] = useState<
     Database['settings']['failurePolicy'] | null
   >(null);
-  const [page, setPage] = useState<Page>(initialPage || (desktop ? 'overview' : 'deploy'));
+  const [page, setPage] = useState<Page>(initialPage || 'deploy');
   useEffect(() => {
     const content = document.querySelector<HTMLElement>('.workspace > main');
     if (content) content.scrollTop = 0;
@@ -640,24 +638,6 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   function canRollback(h: History) {
     return rollbackAllowed(db, h);
   }
-  function repeatLast() {
-    const last = db.history.find(
-      (h) => h.operation === 'deploy' && db.services.some((s) => s.id === h.service.id),
-    );
-    if (!last) {
-      notify('没有可重复的部署记录');
-      return;
-    }
-    selectService(last.service.id);
-    const all = db.history
-      .filter((h) => h.taskId === last.taskId)
-      .map((h) => db.targets.find((t) => t.id === h.target.id))
-      .filter((t): t is Target => !!t && !t.production);
-    setSelected(all.map((t) => t.id));
-    setBuild(last.build);
-    setPage('deploy');
-    notify('已带入上次配置；正式环境需要重新勾选。');
-  }
   async function copy(text: string) {
     try {
       await navigator.clipboard.writeText(text);
@@ -816,6 +796,13 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     setDialog(null);
     notify('部署目标已保存');
   }
+  const serviceDeployment = (id: string) => {
+    const last = taskRows.find((row) => row.serviceId === id && !row.dryRun);
+    const historical = db.history.find((row) => row.service.id === id);
+    return last
+      ? '上次部署：' + fmtTime(last.started) + ' · ' + taskResult(last)
+      : historical ? '上次部署：' + fmtTime(historical.time) : '尚未部署';
+  };
   const header = (title: string, description: string, action?: ReactNode) => (
     <header className="page-header">
       <div>
@@ -836,7 +823,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       (historyEnv === 'all' || h.target.name === historyEnv) &&
       withinDateRange(h.time.slice(0, 10), historyDate),
   );
-  const historyTable = (list: History[], fromOverview = false) => (
+  const historyTable = (list: History[]) => (
     <div className="table-wrap">
       <table>
         <thead>
@@ -895,18 +882,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 <small>{h.backupPath ? '有备份' : '无备份'}</small>
               </td>
               <td>
-                <button className="link" onClick={() => {
-                  if (!desktop || !fromOverview || isActive(task)) {
-                    setDialog({ kind: 'history', value: h });
-                    return;
-                  }
-                  void desktop.readTask(h.taskId).then((next) => {
-                    setTask(next);
-                    setTaskReturnPage('overview');
-                    setInspected(Math.max(0, next.targets.findIndex((entry) => entry.target.id === h.target.id)));
-                    setPage('task');
-                  }).catch(() => setDialog({ kind: 'history', value: h }));
-                }}>
+                <button className="link" onClick={() => setDialog({ kind: 'history', value: h })}>
                   详情
                 </button>
               </td>
@@ -974,11 +950,11 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       if (
         event.altKey &&
         !event.ctrlKey &&
-        /^[1-4]$/.test(event.key) &&
+        /^[1-3]$/.test(event.key) &&
         !(event.target as HTMLElement)?.closest('input,textarea,select,[contenteditable="true"]') &&
         !document.querySelector('[role="dialog"]')
       ) {
-        const dest = (['overview', 'deploy', 'task', 'history'] as const)[Number(event.key) - 1];
+        const dest = (['deploy', 'task', 'history'] as const)[Number(event.key) - 1];
         if (dest !== 'task' || isActive(task)) {
           event.preventDefault();
           if (dest === 'task' && page !== 'task') setTaskReturnPage(page);
@@ -1031,7 +1007,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           href="#"
           onClick={(e) => {
             e.preventDefault();
-            setPage(desktop ? 'overview' : 'deploy');
+            setPage('deploy');
           }}
         >
           <span className="brand-mark">
@@ -1044,7 +1020,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         <nav aria-label="主导航">
           <span className="nav-heading">操作</span>
           {nav
-            .filter((n) => ['overview', 'deploy'].includes(n.page))
+            .filter((n) => n.page === 'deploy')
             .map((n) => (
               <button
                 key={n.page}
@@ -1075,7 +1051,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           </button>
           <span className="nav-heading">配置</span>
           {nav
-            .filter((n) => !['overview', 'deploy', 'history'].includes(n.page))
+            .filter((n) => !['deploy', 'history'].includes(n.page))
             .map((n) => (
               <button
                 key={n.page}
@@ -1189,89 +1165,22 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               {storageError}
             </p>
           )}
-          {page === 'overview' && (
+          {page === 'deploy' && !db.services.length && (
             <>
-              {header(
-                db.services.length ? '首页总览' : 'YOTOO 部署中心',
-                db.services.length
-                  ? '查看各服务的已记录运行版本，从这里开始下一次部署。'
-                  : '添加第一个服务，或导入已有配置。不会自动连接任何服务器。',
-                <button
-                  className="button primary"
-                  onClick={() =>
-                    db.services.length
-                      ? setPage('deploy')
-                      : setDialog({
-                          kind: 'service',
-                          value: {
-                            ...newService(),
-                            id: uid(),
-                            name: '',
-                            code: '',
-                            root: '',
-                            description: '',
-                            jarName: 'service.jar',
-                            jarDir: 'target',
-                          },
-                        })
-                  }
-                >
-                  <Rocket size={17} />
-                  {db.services.length ? '一键部署' : '添加第一个服务'}
-                </button>,
-              )}
-              <Overview
-                onTargets={(sid) => {
-                  selectService(sid);
-                  setPage('targets');
-                }}
+              {header('一键部署', '添加服务并配置部署目标，或导入已有配置。')}
+              <FirstGuide
                 db={db}
                 tasks={taskRows}
-                api={desktop}
                 onPage={setPage}
                 onImport={() => void importNative()}
-                onCopy={(text) => void copy(text)}
-                presetShelf={presetShelf(true)}
-                onDeploy={(sid, tid) => {
-                  selectService(sid);
-                  setSelected([tid]);
-                  setPage('deploy');
-                }}
               />
             </>
-          )}
-          {page === 'overview' && (
-            <>
-              {' '}
-              <section className="recent">
-                <div className="section-head">
-                  <h2>最近部署</h2>
-                  <button className="link" onClick={() => setPage('history')}>
-                    全部记录
-                    <ArrowRight size={14} />
-                  </button>
-                </div>
-                {historyTable(db.history.slice(0, 3), true)}
-              </section>
-            </>
-          )}
-          {page === 'deploy' && !db.services.length && (
-            <FirstGuide
-              db={db}
-              tasks={taskRows}
-              onPage={setPage}
-              onImport={() => void importNative()}
-            />
           )}
           {page === 'deploy' && !!db.services.length && (
             <>
               {header(
                 '准备好，发布下一版本',
                 '选择服务和目标，确认每次发布的边界。',
-                <button className="button" onClick={repeatLast}>
-                  <RotateCcw size={16} />
-                  重复上次部署
-                </button>,
               )}
               <div className="deploy-layout">
                 <div className="stack">
@@ -1824,46 +1733,54 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           )}
           {page === 'services' && (
             <>
-              {header(
-                '服务管理',
-                '项目、构建环境和产物路径独立配置。',
-                <button
-                  className="button primary"
-                  onClick={() =>
-                    setDialog({
-                      kind: 'service',
-                      value: {
-                        ...newService(),
-                        id: uid(),
-                        name: '',
-                        code: '',
-                        root: '',
-                        description: '',
-                        jarName: 'service.jar',
-                        jarDir: 'target',
-                      },
-                    })
-                  }
-                >
-                  <Plus size={17} />
-                  添加服务
-                </button>,
-              )}
+              {header('服务管理', '项目、构建环境和产物路径独立配置。')}
               <EntityWorkspace
+                actions={
+                  <button
+                    className="button primary"
+                    onClick={() =>
+                      setDialog({
+                        kind: 'service',
+                        value: {
+                          ...newService(),
+                          id: uid(),
+                          name: '',
+                          code: '',
+                          root: '',
+                          description: '',
+                          jarName: 'service.jar',
+                          jarDir: 'target',
+                        },
+                      })
+                    }
+                  >
+                    <Plus size={17} />
+                    添加服务
+                  </button>
+                }
+                summary={(s) => (
+                  <>
+                    <span className="path" title={s.root}>
+                      {s.root}
+                    </span>
+                    <span>
+                      {s.jdk || '未选择 JDK'} · {toolLabels[s.tool]}
+                    </span>
+                    <span>{db.targets.filter((t) => t.serviceId === s.id).length} 个目标</span>
+                    <span>{serviceDeployment(s.id)}</span>
+                  </>
+                )}
                 label="服务"
                 items={db.services}
                 title={(s) => s.name}
-                subtitle={(s) =>
-                  s.code + ' · ' + db.targets.filter((t) => t.serviceId === s.id).length + ' 个目标'
-                }
+                subtitle={(s) => s.description || s.code}
+                searchText={(s) => s.code + ' ' + s.root}
               >
                 {(s) => (
                   <Card
                     key={s.id}
                     title={s.name}
-                    action={
-                      <Badge>{db.targets.filter((t) => t.serviceId === s.id).length} 个目标</Badge>
-                    }
+                    action={<Badge>{db.targets.filter((t) => t.serviceId === s.id).length} 个目标</Badge>}
                   >
                     <p className="muted">{s.description}</p>
                     <p className="path">{s.root}</p>
@@ -1881,8 +1798,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                         return last
                           ? '上次部署：' + fmtTime(last.started) + ' · ' + taskResult(last)
                           : db.history.find((h) => h.service.id === s.id)
-                            ? '上次部署：' +
-                              fmtTime(db.history.find((h) => h.service.id === s.id)!.time)
+                            ? '上次部署：' + fmtTime(db.history.find((h) => h.service.id === s.id)!.time)
                             : '尚未部署';
                       })()}
                     </p>
@@ -1899,15 +1815,11 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                             disabled: !!entityRemovalReason('service', s.id),
                             reason: entityRemovalReason('service', s.id),
                             destructive: true,
-                            onClick: () =>
-                              setDialog({ kind: 'delete', entity: 'service', id: s.id }),
+                            onClick: () => setDialog({ kind: 'delete', entity: 'service', id: s.id }),
                           },
                         ]}
                       />
-                      <button
-                        className="button"
-                        onClick={() => setDialog({ kind: 'service', value: s })}
-                      >
+                      <button className="button" onClick={() => setDialog({ kind: 'service', value: s })}>
                         编辑
                       </button>
                       <button
@@ -1936,38 +1848,51 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           )}
           {page === 'targets' && (
             <>
-              {header(
-                '部署目标',
-                '每个服务与服务器的部署关系，都有独立的运行规则。',
-                <button
-                  className="button primary"
-                  disabled={!db.servers.length || !db.services.length}
-                  onClick={() => setDialog({ kind: 'target', value: newTarget() })}
-                >
-                  <Plus size={17} />
-                  添加部署目标
-                </button>,
-              )}
-              <div className="target-service-filter">
-                <Field label="筛选服务">
-                  <select value={serviceId} onChange={(e) => selectService(e.target.value)}>
-                    {db.services.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-              </div>
+              {header('部署目标', '每个服务与服务器的部署关系，都有独立的运行规则。')}
               <EntityWorkspace
+                actions={
+                  <button
+                    className="button primary"
+                    disabled={!db.servers.length || !db.services.length}
+                    onClick={() => setDialog({ kind: 'target', value: newTarget() })}
+                  >
+                    <Plus size={17} />
+                    添加部署目标
+                  </button>
+                }
+                filters={
+                  <div className="target-service-filter">
+                    <Field label="筛选服务">
+                      <select value={serviceId} onChange={(e) => selectService(e.target.value)}>
+                        {db.services.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </div>
+                }
+                summary={(t) => (
+                  <>
+                    <span>{db.services.find((s) => s.id === t.serviceId)?.name}</span>
+                    <span>{db.servers.find((s) => s.id === t.serverId)?.name || '未关联服务器'}</span>
+                    <span>
+                      {modeLabel(t.mode)} · {t.healthState}
+                    </span>
+                  </>
+                )}
                 key={serviceId}
                 label="部署目标"
                 items={targets}
                 title={(t) => t.name}
-                subtitle={(t) =>
-                  (db.servers.find((s) => s.id === t.serverId)?.name || '未关联服务器') +
-                  ' · ' +
-                  modeLabel(t.mode)
+                subtitle={(t) => (t.production ? '正式环境' : '非正式环境')}
+                searchText={(t) =>
+                  [
+                    db.services.find((s) => s.id === t.serviceId)?.name,
+                    db.servers.find((s) => s.id === t.serverId)?.name,
+                    modeLabel(t.mode),
+                  ].join(' ')
                 }
               >
                 {(t) => (
@@ -2034,8 +1959,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                               disabled: !!entityRemovalReason('target', t.id),
                               reason: entityRemovalReason('target', t.id),
                               destructive: true,
-                              onClick: () =>
-                                setDialog({ kind: 'delete', entity: 'target', id: t.id }),
+                              onClick: () => setDialog({ kind: 'delete', entity: 'target', id: t.id }),
                             },
                           ]}
                         />
@@ -2060,34 +1984,52 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           )}
           {page === 'servers' && (
             <>
-              {header(
-                '服务器',
-                '认证信息集中维护，同一台服务器可关联多个服务。',
-                <button
-                  className={'button' + (!db.servers.length ? ' primary' : '')}
-                  onClick={() =>
-                    setDialog({
-                      kind: 'server',
-                      value: {
-                        id: uid(),
-                        name: '',
-                        host: '',
-                        port: 22,
-                        user: '',
-                        auth: 'password',
-                        credentialMode: 'ask',
-                        alias: '',
-                        keyPath: '',
-                        note: '',
-                      },
-                    })
-                  }
-                >
-                  <Plus size={17} />
-                  添加服务器
-                </button>,
-              )}
+              {header('服务器', '认证信息集中维护，同一台服务器可关联多个服务。')}
               <EntityWorkspace
+                actions={
+                  <button
+                    className={'button' + (!db.servers.length ? ' primary' : '')}
+                    onClick={() =>
+                      setDialog({
+                        kind: 'server',
+                        value: {
+                          id: uid(),
+                          name: '',
+                          host: '',
+                          port: 22,
+                          user: '',
+                          auth: 'password',
+                          credentialMode: 'ask',
+                          alias: '',
+                          keyPath: '',
+                          note: '',
+                        },
+                      })
+                    }
+                  >
+                    <Plus size={17} />
+                    添加服务器
+                  </button>
+                }
+                summary={(s) => (
+                  <>
+                    <span>
+                      {s.auth === 'alias'
+                        ? 'SSH Config'
+                        : s.auth === 'password'
+                          ? '密码认证'
+                          : '私钥认证'}
+                    </span>
+                    <span>关联 {db.targets.filter((t) => t.serverId === s.id).length} 个目标</span>
+                    <span>
+                      {serverChecks[s.id]?.identity === serverIdentity(s)
+                        ? (serverChecks[s.id].ok ? '测试通过' : '测试未通过') +
+                          ' · ' +
+                          fmtTime(serverChecks[s.id].time)
+                        : '未测试'}
+                    </span>
+                  </>
+                )}
                 label="服务器"
                 items={db.servers}
                 title={(s) => s.name}
@@ -2109,8 +2051,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                                 : '私钥认证'}
                           </p>
                           <small>
-                            关联 {new Set(related.map((t) => t.serviceId)).size} 个服务 /{' '}
-                            {related.length} 个部署目标
+                            关联 {new Set(related.map((t) => t.serviceId)).size} 个服务 / {related.length}{' '}
+                            个部署目标
                           </small>
                         </div>
                         <Badge>
@@ -2179,8 +2121,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                               disabled: !!entityRemovalReason('server', s.id),
                               reason: entityRemovalReason('server', s.id),
                               destructive: true,
-                              onClick: () =>
-                                setDialog({ kind: 'delete', entity: 'server', id: s.id }),
+                              onClick: () => setDialog({ kind: 'delete', entity: 'server', id: s.id }),
                             },
                           ]}
                         />
@@ -2702,6 +2643,13 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                             </p>
                           </Card>
                           <ShortcutHelp />
+                          <Card title="项目仓库">
+                            <p className="muted">查看项目源码、版本发布和问题反馈。</p>
+                            <a className="repository-link" href="https://github.com/liwl1995/DeployCenter"
+                              target="_blank" rel="noopener noreferrer">
+                              https://github.com/liwl1995/DeployCenter
+                            </a>
+                          </Card>
                           <Card title="帮助">
                             <div className="row wrap">
                               <button className="button" onClick={() => void desktop!.help()}>
@@ -2950,7 +2898,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                   task={task}
                   inspected={viewedTarget}
                   setInspected={setInspected}
-                  backLabel={taskReturnPage === 'history' ? '返回部署历史' : taskReturnPage === 'overview' ? '返回首页' : taskReturnPage === 'deploy' ? '返回部署' : '返回'}
+                  backLabel={taskReturnPage === 'history' ? '返回部署历史' : taskReturnPage === 'deploy' ? '返回部署' : '返回'}
                   onBack={() => setPage(taskReturnPage)}
                   onHealth={db.targets.some((target) => target.id === task.targets[viewedTarget]?.target.id) ? () => {
                     const target = db.targets.find((target) => target.id === task.targets[viewedTarget].target.id)!;
@@ -3050,7 +2998,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           </button>
           <button
             className="footer-task"
-            disabled={!task || (!!desktop && !isActive(task) && page !== 'overview')}
+            disabled={!task}
             onClick={() => {
               if (page !== 'task') setTaskReturnPage(page);
               setPage('task');

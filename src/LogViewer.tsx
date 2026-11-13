@@ -6,6 +6,7 @@ const height = 28;
 type Row = { id: string; kind: 'group' | 'command' | 'line'; step: string; line: LogLine };
 export function VirtualLogs({
   active = true,
+  compact = false,
   entries,
   focusStep,
   focusError,
@@ -14,6 +15,7 @@ export function VirtualLogs({
 }: {
   entries: LogLine[];
   active?: boolean;
+  compact?: boolean;
   focusLine?: { id: string; nonce: number };
   focusStep?: { name: string; nonce: number };
   focusError?: number;
@@ -184,64 +186,101 @@ export function VirtualLogs({
     end = Math.min(rows.length, start + 40);
   return (
     <div className="log-viewer" ref={root}>
-      <div className="log-toolbar">
-        <input
-          aria-label="搜索日志"
-          placeholder="搜索当前日志"
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setHit(-1);
-          }}
-        />
-        <span role="status">
-          {hits.length} 处命中{hit >= 0 && hits.length ? ' · 第 ' + (hit + 1) + ' 处' : ''}
-        </span>
-        <button className="button" disabled={!hits.length} onClick={() => move(-1)}>
-          上一处
-        </button>
-        <button className="button" disabled={!hits.length} onClick={() => move(1)}>
-          下一处
-        </button>
-        <select aria-label="日志级别" value={level} onChange={(e) => setLevel(e.target.value)}>
-          <option value="all">全部级别</option>
-          <option value="warning">警告及错误</option>
-          <option value="error">只看错误</option>
-        </select>
-      </div>
-      <div className="row wrap mt">
-        <label className="check-row">
-          <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
-          跟随最新
-        </label>
-        {!follow && (
-          <button
-            className="button"
-            onClick={() => {
-              setQuery('');
-              setHit(-1);
-              setLevel('all');
-              setCollapsed(new Set());
-              setFollow(true);
-            }}
+      {compact ? (
+        <div className="log-toolbar log-toolbar-compact">
+          <h2 className="log-heading">执行日志</h2>
+          <select
+            aria-label="日志级别"
+            value={level}
+            onChange={(event) => setLevel(event.target.value)}
           >
-            跳到最新
-          </button>
-        )}
-        <button className="button" onClick={() => void copy()}>
-          复制已加载日志
-        </button>
-        {onExport && (
-          <button className="button" onClick={onExport}>
-            导出完整日志
-          </button>
-        )}
-      </div>
-      <p className="note">
-        显示接收时间与接收时的步骤上下文；旧日志缺失的信息标为未记录。共 {entries.length}{' '}
-        行，当前筛选 {filtered.length} 行。{selected && '正在选择文字，暂停刷新和虚拟滚动。'}
-      </p>
-      {message && (
+            <option value="all">全部级别</option>
+            <option value="warning">警告及错误</option>
+            <option value="error">只看错误</option>
+          </select>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={follow}
+              onChange={(event) => {
+                setFollow(event.target.checked);
+                if (event.target.checked) setJump(undefined);
+              }}
+            />
+            跟随最新
+          </label>
+        </div>
+      ) : (
+        <>
+          <div className="log-toolbar">
+            <input
+              aria-label="搜索日志"
+              placeholder="搜索当前日志"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setHit(-1);
+              }}
+            />
+            <span role="status">
+              {hits.length} 处命中{hit >= 0 && hits.length ? ' · 第 ' + (hit + 1) + ' 处' : ''}
+            </span>
+            <button className="button" disabled={!hits.length} onClick={() => move(-1)}>
+              上一处
+            </button>
+            <button className="button" disabled={!hits.length} onClick={() => move(1)}>
+              下一处
+            </button>
+            <select aria-label="日志级别" value={level} onChange={(e) => setLevel(e.target.value)}>
+              <option value="all">全部级别</option>
+              <option value="warning">警告及错误</option>
+              <option value="error">只看错误</option>
+            </select>
+          </div>
+          <div className="row wrap mt">
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={follow}
+                onChange={(e) => setFollow(e.target.checked)}
+              />
+              跟随最新
+            </label>
+            {!follow && (
+              <button
+                className="button"
+                onClick={() => {
+                  setQuery('');
+                  setHit(-1);
+                  setLevel('all');
+                  setCollapsed(new Set());
+                  setFollow(true);
+                }}
+              >
+                跳到最新
+              </button>
+            )}
+            <button className="button" onClick={() => void copy()}>
+              复制已加载日志
+            </button>
+            {onExport && (
+              <button className="button" onClick={onExport}>
+                导出完整日志
+              </button>
+            )}
+          </div>
+          <p className="note">
+            显示接收时间与接收时的步骤上下文；旧日志缺失的信息标为未记录。共 {entries.length}{' '}
+            行，当前筛选 {filtered.length} 行。{selected && '正在选择文字，暂停刷新和虚拟滚动。'}
+          </p>
+        </>
+      )}
+      {compact && selected && (
+        <p className="note" role="status">
+          正在选择文字，暂停刷新。
+        </p>
+      )}
+      {!compact && message && (
         <p className="note" role="status">
           {message}
         </p>

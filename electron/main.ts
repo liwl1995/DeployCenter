@@ -282,7 +282,12 @@ async function boot() {
       },
     });
     win.on('focus', () => win?.flashFrame(false));
-    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    win.webContents.setWindowOpenHandler(({ url: destination }) => {
+      // 仅将配置与帮助里的固定仓库链接交给系统浏览器，外部页面不进入桌面窗口。
+      if (destination === 'https://github.com/liwl1995/DeployCenter')
+        void shell.openExternal(destination).catch(() => {});
+      return { action: 'deny' };
+    });
     win.webContents.on('will-navigate', (event, dest) => {
       if (dest.split('#')[0] !== url) event.preventDefault();
     });
