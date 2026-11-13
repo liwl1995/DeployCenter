@@ -19,6 +19,7 @@ import { z } from 'zod';
 import { LogSessions, observeTask } from './observation';
 import { Storage } from './storage';
 import { AppUpdater } from './app-updater';
+import { createUpdateFetch } from './update-network';
 import { launchInstallerAfterExit } from './update-installer';
 import { migrationDestination, DataDirectory } from './data-directory';
 import { BackupManager } from './backup-manager';
@@ -350,7 +351,7 @@ async function boot() {
     updater = new AppUpdater({
       currentVersion: app.getVersion(),
       directory: path.join(settingsDir, 'Updates'),
-      fetch: (destination, options) => net.fetch(destination, options),
+      fetch: createUpdateFetch((options) => net.request(options)),
       emit: (update) => emit({ kind: 'update', update }),
       installBlocked: () => {
         if (!app.isPackaged || process.platform !== 'win32' || process.arch !== 'x64')

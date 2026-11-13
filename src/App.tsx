@@ -2641,7 +2641,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                       description: '检查软件更新、备份配置或查看使用说明。',
                       content: (
                         <div className="help-settings">
-                          <AppUpdateSettings api={desktop} version={boot?.version || '1.5.3'} active={isActive(task)} />
+                          <AppUpdateSettings api={desktop} version={boot?.version || '1.5.4'} active={isActive(task)} />
                           <Card className="help-settings-section">
                             <div className="help-section-row">
                               <div>
@@ -3050,7 +3050,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         </main>
         <footer className="workspace-footer" aria-label="应用状态">
           <span className="footer-version">
-            {desktop ? 'v' + (boot?.version || '1.5.3') : '界面原型 v0.3'}
+            {desktop ? 'v' + (boot?.version || '1.5.4') : '界面原型 v0.3'}
           </span>
           <button
             className="footer-directory"

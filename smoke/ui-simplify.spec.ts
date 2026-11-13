@@ -3,6 +3,7 @@ import { Storage } from '../electron/storage';
 import { createTask } from '../src/engine';
 import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test';
 import fs from 'node:fs/promises';
+import { createServer } from 'node:http';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { BlobWriter, ZipWriter, TextReader } from '@zip.js/zip.js';
@@ -511,59 +512,92 @@ test('配置与帮助展示仓库并使用系统浏览器打开，其他外链�
 
 test('更新设置三种窗口下无溢出，按需下载、取消和校验，未安装版阻止安装', async () => {
   const page = await app.firstWindow();
-  const installer = Buffer.from('MZ UI update fixture, never executed');
+  const installer = Buffer.concat([
+    Buffer.from('MZ UI update fixture, never executed'),
+    Buffer.alloc(256 * 1024, 0x61),
+  ]);
   const digest = createHash('sha256').update(installer).digest('hex');
-  await app.evaluate(
-    ({ net }, { payload, digest }) => {
-      const name = 'YOTOO-DeployCenter-99.0.0-Windows-x64-Setup.exe';
-      const original = net.fetch;
-      (globalThis as unknown as { originalUpdateFetch: unknown }).originalUpdateFetch = original;
-      net.fetch = (async (destination: string, init: RequestInit = {}) => {
-        if (destination === 'https://api.github.com/repos/liwl1995/DeployCenter/releases/latest')
-          return Response.json({
-            tag_name: 'v99.0.0',
-            html_url: 'https://github.com/liwl1995/DeployCenter/releases/tag/v99.0.0',
-            draft: false,
-            prerelease: false,
-            body: '测试更新说明\n<script>不执行</script>\n这是仅在测试中注入的版本，不会发布或安装。',
-            published_at: '2026-11-13T01:00:00Z',
-            assets: [
-              {
-                name,
-                state: 'uploaded',
-                size: payload.length,
-                digest: 'sha256:' + digest,
-                browser_download_url:
-                  'https://github.com/liwl1995/DeployCenter/releases/download/v99.0.0/' + name,
-              },
-            ],
-          });
-        if (destination.includes('/releases/download/v99.0.0/')) {
-          let timer: ReturnType<typeof setTimeout>;
-          return new Response(
-            new ReadableStream({
-              start(controller) {
-                controller.enqueue(Uint8Array.from(payload.slice(0, 2)));
-                timer = setTimeout(() => {
-                  controller.enqueue(Uint8Array.from(payload.slice(2)));
-                  controller.close();
-                }, 2000);
-                init.signal?.addEventListener('abort', () => {
-                  clearTimeout(timer);
-                  controller.error(new DOMException('cancelled', 'AbortError'));
-                });
-              },
-              cancel() {
-                clearTimeout(timer);
-              },
-            }),
-          );
-        }
-        throw new Error('测试不允许其他网络请求');
-      }) as typeof net.fetch;
-    },
-    { payload: Array.from(installer), digest },
-  );
+  const name = 'YOTOO-DeployCenter-99.0.0-Windows-x64-Setup.exe';
+  let badRedirect = true;
+  const requests: string[] = [];
+  const server = createServer((request, response) => {
+    requests.push(request.url || '');
+    if (request.url === '/latest') {
+      response.setHeader('Content-Type', 'application/json');
+      response.end(
+        JSON.stringify({
+          tag_name: 'v99.0.0',
+          html_url: 'https://github.com/liwl1995/DeployCenter/releases/tag/v99.0.0',
+          draft: false,
+          prerelease: false,
+          body: '测试更新说明\n<script>不执行</script>\n仅用于原生网络验收。',
+          published_at: '2026-11-13T01:00:00Z',
+          assets: [
+            {
+              name,
+              state: 'uploaded',
+              size: installer.length,
+              digest: 'sha256:' + digest,
+              browser_download_url:
+                'https://github.com/liwl1995/DeployCenter/releases/download/v99.0.0/' + name,
+            },
+          ],
+        }),
+      );
+    } else if (request.url === '/redirect') {
+      response.writeHead(302, {
+        Location: badRedirect
+          ? 'https://example.invalid/untrusted.exe'
+          : 'https://release-assets.githubusercontent.com/github-production-release-asset/fixture/setup.exe',
+      });
+      response.end();
+    } else if (request.url === '/installer') {
+      response.writeHead(200, {
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': installer.length,
+      });
+      response.flushHeaders();
+      const first = setTimeout(() => response.write(installer.subarray(0, 64 * 1024)), 300);
+      // 首包可能与响应头一起到达；第二段跨过进度节流窗口，确保真实观察到部分下载。
+      const middle = setTimeout(
+        () => response.write(installer.subarray(64 * 1024, 128 * 1024)),
+        800,
+      );
+      const timer = setTimeout(() => response.end(installer.subarray(128 * 1024)), 2000);
+      response.on('close', () => {
+        clearTimeout(first);
+        clearTimeout(middle);
+        clearTimeout(timer);
+      });
+    } else {
+      response.writeHead(404);
+      response.end();
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('测试服务未启动');
+  await app.evaluate(({ net }, base) => {
+    const original = net.request;
+    (globalThis as unknown as { originalUpdateRequest: typeof net.request }).originalUpdateRequest =
+      original;
+    // 仅把已知测试地址映射到本机夹具；仍由真实 net.request 处理 302 和响应流。
+    net.request = ((value) => {
+      const options = typeof value === 'string' ? { url: value } : value;
+      const url = options.url || '';
+      const route =
+        url === 'https://api.github.com/repos/liwl1995/DeployCenter/releases/latest'
+          ? '/latest'
+          : url.startsWith('https://github.com/liwl1995/DeployCenter/releases/download/v99.0.0/')
+            ? '/redirect'
+            : url ===
+                'https://release-assets.githubusercontent.com/github-production-release-asset/fixture/setup.exe'
+              ? '/installer'
+              : undefined;
+      if (!route) throw new Error('测试不允许未知网络请求');
+      return original({ ...options, url: base + route });
+    }) as typeof net.request;
+  }, 'http://127.0.0.1:' + address.port);
   try {
     await page.getByRole('navigation').getByRole('button', { name: '设置', exact: true }).click();
     await page.getByRole('tab', { name: '配置与帮助', exact: true }).click();
@@ -609,7 +643,21 @@ test('更新设置三种窗口下无溢出，按需下载、取消和校验，�
     await page.getByText('查看更新说明', { exact: true }).click();
     await expect(page.locator('.update-notes')).toContainText('<script>不执行</script>');
     await page.getByRole('button', { name: '下载更新', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('不受信任');
+    expect(requests).not.toContain('/installer');
+    badRedirect = false;
+    await page.getByRole('button', { name: '重新下载', exact: true }).click();
     await expect(page.getByRole('progressbar', { name: '安装包下载进度' })).toBeVisible();
+    await expect
+      .poll(async () =>
+        Number(
+          await page.getByRole('progressbar', { name: '安装包下载进度' }).getAttribute('value'),
+        ),
+      )
+      .toBeGreaterThan(0);
+    expect(
+      Number(await page.getByRole('progressbar', { name: '安装包下载进度' }).getAttribute('value')),
+    ).toBeLessThan(installer.length);
     await page.getByRole('button', { name: '取消下载', exact: true }).click();
     await expect(page.getByText('下载已取消或连接超时，可以重新下载。')).toBeVisible();
     await page.getByRole('button', { name: '下载更新', exact: true }).click();
@@ -650,13 +698,16 @@ test('更新设置三种窗口下无溢出，按需下载、取消和校验，�
     expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
   } finally {
     await app.evaluate(({ net }) => {
-      net.fetch = (
-        globalThis as unknown as { originalUpdateFetch: typeof net.fetch }
-      ).originalUpdateFetch;
+      net.request = (
+        globalThis as unknown as { originalUpdateRequest: typeof net.request }
+      ).originalUpdateRequest;
     });
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
   }
 });
-
 test('历史与构建环境单行布局在三个尺寸和两种主题下紧凑可用', async () => {
   test.setTimeout(120_000);
   const page = await app.firstWindow();
