@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { DesktopAPI } from '../src/platform';
 const bridge = vi.hoisted(() => ({
@@ -115,12 +115,22 @@ it('JDK自动检测展示版本和服务引用；Maven显示实际工具与版�
   );
   await waitFor(() => expect(bridge.checkTool).toHaveBeenCalledTimes(db.jdks.length));
   await waitFor(() => expect(bridge.toolInfo).toHaveBeenCalledTimes(db.services.length));
-  expect(screen.getAllByText('Java 21 测试版本')).toHaveLength(db.jdks.length);
-  expect(screen.getByRole('tab', { name: 'JDK 管理' }).getAttribute('aria-selected')).toBe('true');
-  expect(screen.getByText(/使用服务：Cordys CRM/)).toBeTruthy();
+  expect(screen.queryByText('Java 21 测试版本')).toBeNull();
+  const jdkPanel = screen.getByRole('tabpanel', { name: 'JDK 管理' });
+  await userEvent
+    .setup()
+    .click(within(jdkPanel).getByRole('row', { name: 'JDK ' + db.jdks[0].name }));
+  expect(within(jdkPanel).getByText('Java 21 测试版本')).toBeTruthy();
+  expect(within(jdkPanel).getByText('使用服务')).toBeTruthy();
   await userEvent.setup().click(screen.getByRole('tab', { name: '服务构建工具' }));
-  expect(screen.getAllByText('Apache Maven 测试版本')).toHaveLength(db.services.length);
-  expect(screen.getAllByText(/实际工具：E:\/tools/)).toHaveLength(db.services.length);
+  const toolPanel = screen.getByRole('tabpanel', { name: '服务构建工具' });
+  expect(within(toolPanel).queryByText('Apache Maven 测试版本')).toBeNull();
+  await userEvent
+    .setup()
+    .click(within(toolPanel).getByRole('row', { name: '构建工具 ' + db.services[0].name }));
+  expect(within(toolPanel).getByText('Apache Maven 测试版本')).toBeTruthy();
+  expect(within(toolPanel).getByText('实际工具')).toBeTruthy();
+  expect(within(toolPanel).getByText(/E:\/tools/)).toBeTruthy();
   await userEvent.setup().click(screen.getByRole('tab', { name: 'JDK 管理' }));
   expect(bridge.checkTool).toHaveBeenCalledTimes(db.jdks.length);
 });

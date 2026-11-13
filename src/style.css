@@ -3362,3 +3362,291 @@ main:has(.entity-cards-workspace) > .page-header .muted {
     padding: 16px;
   }
 }
+
+/* 历史与构建环境以单行摘要为主，完整输出按需展开。 */
+.compact-records.card {
+  padding: 0;
+  min-width: 0;
+}
+.compact-records > .card-head {
+  margin: 16px;
+}
+.compact-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.compact-table th,
+.compact-table td {
+  padding: 0 12px;
+  text-align: left;
+  min-width: 0;
+  border-bottom: 1px solid var(--line);
+}
+.compact-table thead th {
+  height: 38px;
+  background: var(--soft);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--sub);
+  white-space: nowrap;
+}
+.compact-table .compact-data-row {
+  height: 52px;
+  cursor: pointer;
+}
+.compact-table .compact-data-row > td {
+  height: 52px;
+  padding-block: 0;
+  white-space: nowrap;
+}
+.compact-table .compact-data-row:hover {
+  background: var(--soft);
+}
+.compact-table .compact-data-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.compact-table .compact-data-row[aria-disabled='true'] {
+  cursor: default;
+}
+.compact-table tr:last-child > td {
+  border-bottom: 0;
+}
+.compact-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.compact-ellipsis {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compact-mono,
+.compact-path {
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 12px;
+}
+.compact-path {
+  color: var(--sub);
+}
+.compact-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.compact-status i {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--sub);
+}
+.compact-status.good i {
+  background: var(--accent);
+}
+.compact-status.warn i {
+  background: var(--warn);
+}
+.compact-status.progress i {
+  background: light-dark(#2666bd, #83baff);
+}
+.compact-table .more-menu > .button,
+.compact-edit {
+  padding: 4px 8px;
+  min-height: 28px;
+  font-size: 12px;
+}
+.compact-item-name,
+.history-environment {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.compact-item-name > svg {
+  color: var(--sub);
+  flex-shrink: 0;
+  transform: rotate(-90deg);
+}
+.compact-item-name > svg.expanded {
+  transform: rotate(0);
+}
+.compact-detail-row > td {
+  padding: 16px;
+  background: var(--soft);
+}
+.compact-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 24px;
+  margin: 0 0 12px;
+}
+.compact-facts dt {
+  color: var(--sub);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.compact-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.compact-detail-row .tool-version {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+}
+.history-state-col {
+  width: 120px;
+}
+.history-service-col {
+  width: 23%;
+}
+.history-time-col {
+  width: 62px;
+}
+.history-elapsed-col {
+  width: 76px;
+}
+.history-version-col {
+  width: 138px;
+}
+.history-menu-col {
+  width: 68px;
+}
+.history-table .history-task {
+  padding: 0;
+}
+.history-day th {
+  height: 32px;
+  background: var(--bg);
+  font-weight: 400;
+  color: var(--sub);
+  font-size: 12px;
+}
+.history-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.history-content > strong {
+  font-weight: 600;
+}
+.history-operation {
+  font-size: 12px;
+  color: var(--sub);
+  flex-shrink: 0;
+}
+.history-hashes {
+  display: flex;
+  gap: 8px;
+  color: var(--sub);
+  font-size: 12px;
+}
+.history-hashes code {
+  font-size: 12px;
+}
+.compact-expand {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  color: var(--sub);
+}
+.compact-expand:hover {
+  color: var(--accent);
+  background: var(--tint);
+}
+.compact-expand[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+.history-expanded-info {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  color: var(--sub);
+  font-size: 12px;
+}
+.history-target-line {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 40px;
+  font-size: 12px;
+}
+.history-target-line > .compact-ellipsis {
+  flex: 1;
+}
+.tool-state-col {
+  width: 96px;
+}
+.tool-name-col {
+  width: 19%;
+}
+.tool-version-col {
+  width: 144px;
+}
+.tool-refs-col {
+  width: 90px;
+}
+.tool-menu-col {
+  width: 72px;
+}
+.maven-kind-col {
+  width: 100px;
+}
+.maven-jdk-col {
+  width: 130px;
+}
+.maven-edit-col {
+  width: 96px;
+}
+@media (max-width: 1150px) {
+  .history-state-col {
+    width: 112px;
+  }
+  .history-service-col {
+    width: 25%;
+  }
+  .compact-table th,
+  .compact-table td {
+    padding-inline: 8px;
+  }
+  .tool-name-col {
+    width: 18%;
+  }
+  .tool-version-col {
+    width: 112px;
+  }
+  .maven-jdk-col {
+    width: 104px;
+  }
+  .history-target-line {
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+}
+.compact-table .compact-data-row .warning {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--warn);
+}

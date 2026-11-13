@@ -60,15 +60,15 @@ it('单个任务一行，试运行明确标注检查通过，构建失败无目�
       onCopy={() => {}}
     />,
   );
-  expect(screen.getAllByRole('button', { name: '查看任务' })).toHaveLength(2);
+  expect(document.querySelectorAll('.history-task')).toHaveLength(2);
   expect(screen.getByText('检查通过')).toBeTruthy();
-  expect(screen.getByText(/构建失败，所选目标未开始/)).toBeTruthy();
-  await user.click(screen.getAllByRole('button', { name: '查看任务' })[1]);
+  expect(screen.getByText('构建失败', { exact: true })).toBeTruthy();
+  await user.click(screen.getByRole('row', { name: '查看任务：构建内容' }));
   expect(open).toHaveBeenCalledWith('DC-build-fail', undefined);
   await user.click(screen.getByRole('button', { name: '筛选部署历史' }));
   await user.selectOptions(screen.getByLabelText('任务类型'), 'dry-run');
   await user.click(screen.getByRole('button', { name: '应用' }));
-  expect(screen.getAllByRole('button', { name: '查看任务' })).toHaveLength(1);
+  expect(document.querySelectorAll('.history-task')).toHaveLength(1);
   await user.click(screen.getByRole('button', { name: '展开目标' }));
   expect(screen.getByRole('button', { name: '查看目标详情' })).toBeTruthy();
 });
@@ -149,19 +149,19 @@ it('筛选先编辑草稿，取消和重置不提前改变记录，应用后可�
   await user.click(screen.getByRole('button', { name: '筛选部署历史' }));
   await user.selectOptions(screen.getByLabelText('任务类型'), 'dry-run');
   await user.click(screen.getByRole('button', { name: '取消' }));
-  expect(screen.getAllByRole('button', { name: '查看任务' })).toHaveLength(2);
+  expect(document.querySelectorAll('.history-task')).toHaveLength(2);
   await user.click(screen.getByRole('button', { name: '筛选部署历史' }));
   expect((screen.getByLabelText('任务类型') as HTMLSelectElement).value).toBe('all');
   await user.selectOptions(screen.getByLabelText('任务类型'), 'dry-run');
   await user.selectOptions(screen.getByLabelText('任务结果'), 'success');
   await user.click(screen.getByRole('button', { name: '应用' }));
-  expect(screen.getAllByRole('button', { name: '查看任务' })).toHaveLength(1);
+  expect(document.querySelectorAll('.history-task')).toHaveLength(1);
   await user.click(screen.getByRole('button', { name: '移除类型：试运行' }));
   expect(screen.getByRole('button', { name: '移除结果：已完成 / 检查通过' })).toBeTruthy();
   await user.click(screen.getByRole('button', { name: '筛选部署历史' }));
   await user.click(screen.getByRole('button', { name: '重置' }));
   await user.click(screen.getByRole('button', { name: '取消' }));
-  expect(screen.getAllByRole('button', { name: '查看任务' })).toHaveLength(1);
+  expect(document.querySelectorAll('.history-task')).toHaveLength(1);
   await user.click(screen.getByRole('button', { name: '全部清除' }));
-  expect(screen.getAllByRole('button', { name: '查看任务' })).toHaveLength(2);
+  expect(document.querySelectorAll('.history-task')).toHaveLength(2);
 });

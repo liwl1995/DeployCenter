@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import type { DesktopAPI, TaskSummary } from './platform';
 import type { Database, History } from './model';
 import { fmtTime, seconds } from './model';
-import { operationLabel, targetLabels, taskResult } from './presentation';
+import { operationLabel, targetLabels, taskResult, shortHash, validHash } from './presentation';
 import type { HistorySearchResult } from './features';
 import { Badge, Card, Field, Modal } from './ui';
+import { MoreMenu } from './EntityActions';
+import { CompactStatus, historyDay, historyState } from './compact-list';
 import { DateRangeFilter } from './DateRangeFilter';
 import { withinDateRange, type DateRange } from './date-range';
 import { HashValue } from './DeployDetails';
-import { Search, SlidersHorizontal, X } from 'lucide-react';
+import { Search, SlidersHorizontal, X, ChevronDown } from 'lucide-react';
 type HistoryFilters = {
   kind: string;
   status: string;
@@ -47,6 +49,17 @@ export function TaskHistory({
   const [filters, setFilters] = useState<HistoryFilters>(emptyFilters);
   const [draft, setDraft] = useState<HistoryFilters>();
   const [query, setQuery] = useState('');
+  const [showVersion, setShowVersion] = useState(
+    () => window.matchMedia?.('(min-width: 1151px)').matches ?? true,
+  );
+  useEffect(() => {
+    const media = window.matchMedia?.('(min-width: 1151px)');
+    if (!media) return;
+    const update = () => setShowVersion(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
   const { kind, status, service, server, environment, date } = filters;
   const changeDraft = <K extends keyof HistoryFilters>(key: K, value: HistoryFilters[K]) =>
     setDraft((old) => (old ? { ...old, [key]: value } : old));
@@ -127,6 +140,16 @@ export function TaskHistory({
       if (h) onHistory(h);
     }
   };
+  const toggle = (id: string) =>
+    setExpanded((old) => {
+      const next = new Set(old);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const ordered = [...matching].sort(
+    (a, b) => (Date.parse(b.started) || 0) - (Date.parse(a.started) || 0),
+  );
   const chips: { key: keyof HistoryFilters; label: string }[] = [];
   if (kind !== 'all')
     chips.push({
@@ -328,124 +351,230 @@ export function TaskHistory({
           {error}
         </p>
       )}
-      <Card title="执行任务记录" className="history-records">
-        <div className="history-task-list">
-          {matching.map((row) => (
-            <article key={row.id} className="history-task">
-              <div className="row spread wrap">
-                <div className="grow">
-                  <strong>
-                    {row.service} ·{' '}
-                    {(row.targets || []).map((t) => t.name).join('、') || '构建阶段'}
-                  </strong>
-                  <p className="muted">
-                    {operationLabel(row)} · {fmtTime(row.started)} · {seconds(row.elapsed)}
-                  </p>
-                  {row.note && (
-                    <p className="history-note" title={row.note}>
-                      本次内容：{row.note}
-                    </p>
+      <Card className="history-records compact-records">
+        <h2 className="compact-visually-hidden">执行任务记录</h2>
+        <table className="compact-table history-table" aria-label="部署历史列表">
+          <colgroup>
+            <col className="history-state-col" />
+            <col />
+            <col className="history-service-col" />
+            <col className="history-time-col" />
+            <col className="history-elapsed-col" />
+            {showVersion && <col className="history-version-col" />}
+            <col className="history-menu-col" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th scope="col">状态</th>
+              <th scope="col">本次内容</th>
+              <th scope="col">服务 · 环境</th>
+              <th scope="col">开始</th>
+              <th scope="col">耗时</th>
+              {showVersion && (
+                <th scope="col" className="history-version-cell">
+                  Git · JAR
+                </th>
+              )}
+              <th scope="col">
+                <span className="compact-visually-hidden">操作</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {ordered.map((row, index) => {
+              const day = historyDay(row.started),
+                state = historyState(row),
+                isExpanded = expanded.has(row.id);
+              const environments = (row.targets || []).map((t) => t.name).join('、') || '构建阶段';
+              const note = row.note || operationLabel(row) + row.service;
+              const blocked = busy || !!row.uncertain;
+              return (
+                <Fragment key={row.id}>
+                  {(index === 0 || historyDay(ordered[index - 1].started).key !== day.key) && (
+                    <tr className="history-day">
+                      <th scope="rowgroup" colSpan={showVersion ? 7 : 6}>
+                        {day.label}
+                      </th>
+                    </tr>
                   )}
-                  <small className="muted">
-                    {row.id}
-                    {row.imported ? ' · 导入的历史快照' : ''}
-                  </small>
-                </div>
-                <Badge
-                  kind={
-                    row.status === 'success'
-                      ? 'good'
-                      : row.status === 'failed' || row.status === 'partial'
-                        ? 'warn'
-                        : ''
-                  }
-                >
-                  {taskResult(row)}
-                </Badge>
-                <div className="row wrap">
-                  <button
-                    className="button"
-                    disabled={busy || row.uncertain}
-                    title={row.uncertain ? row.note : undefined}
-                    onClick={() => open(row)}
+                  <tr
+                    className="history-task compact-data-row"
+                    tabIndex={blocked ? -1 : 0}
+                    aria-label={'查看任务：' + note}
+                    aria-disabled={blocked}
+                    onClick={(event) => {
+                      if (
+                        !blocked &&
+                        !(event.target as HTMLElement).closest('button,a,[role="menu"]')
+                      )
+                        open(row);
+                    }}
+                    onKeyDown={(event) => {
+                      if (
+                        event.target === event.currentTarget &&
+                        ['Enter', ' '].includes(event.key)
+                      ) {
+                        event.preventDefault();
+                        if (!blocked) open(row);
+                      }
+                    }}
                   >
-                    查看任务
-                  </button>
-                  <button
-                    className="button"
-                    disabled={!row.targets?.length}
-                    aria-expanded={expanded.has(row.id)}
-                    onClick={() =>
-                      setExpanded((old) => {
-                        const next = new Set(old);
-                        if (next.has(row.id)) next.delete(row.id);
-                        else next.add(row.id);
-                        return next;
-                      })
-                    }
-                  >
-                    {expanded.has(row.id) ? '收起目标' : '展开目标'}
-                  </button>
-                </div>
-              </div>
-              {row.buildFailed && (
-                <p className="warning">构建失败，所选目标未开始部署；请在任务详情查看构建日志。</p>
-              )}
-              {(row.commit || row.jarHash) && (
-                <div className="row wrap mt">
-                  {row.commit && <HashValue label="Git 提交" value={row.commit} onCopy={onCopy} />}
-                  <HashValue label="JAR 指纹" value={row.jarHash} onCopy={onCopy} />
-                </div>
-              )}
-              {expanded.has(row.id) && (
-                <div className="mt">
-                  {row.targets?.map((t) => (
-                    <div className="list-row" key={t.id}>
-                      <div className="grow">
-                        <strong>{t.name}</strong>
-                        <p className="muted">
-                          {t.server} · {seconds(t.elapsed)}
-                        </p>
-                      </div>
-                      <Badge>
-                        {row.maintenance
-                          ? taskResult(row)
-                          : row.buildFailed && ['pending', 'skipped'].includes(t.status)
-                            ? '构建失败，未执行'
-                            : row.dryRun && t.status === 'success'
-                              ? '检查通过'
-                              : targetLabels[t.status]}
-                      </Badge>
-                      <button className="button" disabled={busy} onClick={() => open(row, t.id)}>
-                        查看目标详情
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {!!search?.hits.some((h) => h.taskId === row.id) && (
-                <div className="history-hits mt">
-                  {search.hits
-                    .filter((h) => h.taskId === row.id)
-                    .map((h, i) => (
-                      <button
-                        key={i}
-                        className="history-hit"
-                        disabled={busy}
-                        onClick={() => open(row, h.targetId)}
-                      >
-                        <strong>
-                          {h.section}
-                          {h.line ? ' · 第 ' + h.line + ' 行' : ''}
+                    <td>
+                      <CompactStatus {...state} />
+                    </td>
+                    <td>
+                      <div className="history-content">
+                        <span className="history-operation">{operationLabel(row)}</span>
+                        <strong className="compact-ellipsis" title={note}>
+                          {note}
                         </strong>
-                        <span>{h.text}</span>
-                      </button>
-                    ))}
-                </div>
-              )}
-            </article>
-          ))}
-        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="history-environment">
+                        <span
+                          className="compact-ellipsis"
+                          title={row.service + ' · ' + environments}
+                        >
+                          {row.service} ·{' '}
+                          {row.targets && row.targets.length > 1
+                            ? row.targets.length + ' 个目标'
+                            : environments}
+                        </span>
+                        {!!row.targets?.length && (
+                          <button
+                            className="compact-expand"
+                            aria-label={isExpanded ? '收起目标' : '展开目标'}
+                            aria-expanded={isExpanded}
+                            onClick={() => toggle(row.id)}
+                          >
+                            <ChevronDown size={14} />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                    <td title={fmtTime(row.started)}>
+                      <time dateTime={row.started}>
+                        {Number.isFinite(Date.parse(row.started))
+                          ? fmtTime(row.started).slice(11, 16)
+                          : '—'}
+                      </time>
+                    </td>
+                    <td className="compact-mono" title={seconds(row.elapsed)}>
+                      <span className="compact-ellipsis">
+                        {seconds(row.elapsed).replace(/\s+/g, '')}
+                      </span>
+                    </td>
+                    {showVersion && (
+                      <td className="history-version-cell">
+                        <span className="history-hashes">
+                          <code title={'Git：' + (row.commit || '未记录')}>
+                            {validHash(row.commit) ? shortHash(row.commit) : '—'}
+                          </code>
+                          <code title={'JAR：' + (row.jarHash || '未记录')}>
+                            {validHash(row.jarHash) ? shortHash(row.jarHash) : '—'}
+                          </code>
+                        </span>
+                      </td>
+                    )}
+                    <td>
+                      <MoreMenu
+                        label={'更多任务 ' + row.id + '操作'}
+                        actions={[
+                          {
+                            label: '查看任务',
+                            disabled: blocked,
+                            reason: row.uncertain ? row.note : undefined,
+                            onClick: () => open(row),
+                          },
+                          {
+                            label: isExpanded ? '收起任务信息' : '展开任务信息',
+                            onClick: () => toggle(row.id),
+                          },
+                          { label: '复制任务编号', onClick: () => onCopy(row.id) },
+                          ...(validHash(row.commit)
+                            ? [{ label: '复制 Git 提交', onClick: () => onCopy(row.commit!) }]
+                            : []),
+                          ...(validHash(row.jarHash)
+                            ? [{ label: '复制 JAR 指纹', onClick: () => onCopy(row.jarHash!) }]
+                            : []),
+                        ]}
+                      />
+                    </td>
+                  </tr>
+                  {isExpanded && (
+                    <tr className="compact-detail-row">
+                      <td colSpan={showVersion ? 7 : 6}>
+                        <div className="history-expanded-info">
+                          <span>
+                            任务编号：<code>{row.id}</code>
+                            {row.imported && ' · 导入的历史快照'}
+                          </span>
+                          <HashValue label="Git 提交" value={row.commit} onCopy={onCopy} />
+                          <HashValue label="JAR 指纹" value={row.jarHash} onCopy={onCopy} />
+                        </div>
+                        {row.buildFailed && (
+                          <p className="warning">
+                            构建失败，所选目标未开始部署；请在任务详情查看构建日志。
+                          </p>
+                        )}
+                        {row.targets?.map((target) => (
+                          <div className="history-target-line" key={target.id}>
+                            <strong>{target.name}</strong>
+                            <span className="compact-ellipsis" title={target.server}>
+                              {target.server}
+                            </span>
+                            <span>{seconds(target.elapsed)}</span>
+                            <Badge>
+                              {row.maintenance
+                                ? taskResult(row)
+                                : row.buildFailed && ['pending', 'skipped'].includes(target.status)
+                                  ? '构建失败，未执行'
+                                  : row.dryRun && target.status === 'success'
+                                    ? '检查通过'
+                                    : targetLabels[target.status]}
+                            </Badge>
+                            <button
+                              className="link"
+                              disabled={blocked}
+                              onClick={() => open(row, target.id)}
+                            >
+                              查看目标详情
+                            </button>
+                          </div>
+                        ))}
+                      </td>
+                    </tr>
+                  )}
+                  {!!search?.hits.some((h) => h.taskId === row.id) && (
+                    <tr className="compact-detail-row">
+                      <td colSpan={showVersion ? 7 : 6}>
+                        <div className="history-hits">
+                          {search.hits
+                            .filter((h) => h.taskId === row.id)
+                            .map((hit, i) => (
+                              <button
+                                key={i}
+                                className="history-hit"
+                                disabled={blocked}
+                                onClick={() => open(row, hit.targetId)}
+                              >
+                                <strong>
+                                  {hit.section}
+                                  {hit.line ? ' · 第 ' + hit.line + ' 行' : ''}
+                                </strong>
+                                <span>{hit.text}</span>
+                              </button>
+                            ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
         {!matching.length && (
           <p className="empty">
             {query ? '暂无匹配记录，可等待后台日志搜索完成。' : '尚无匹配任务。'}

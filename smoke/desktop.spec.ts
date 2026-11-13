@@ -7,6 +7,10 @@ test.beforeEach(async () => {
   const root = path.resolve('.test-data');
   await fs.mkdir(root, { recursive: true });
   dir = await fs.mkdtemp(path.join(root, 'smoke-'));
+  await launchApp();
+});
+
+async function launchApp() {
   const env = { ...process.env, DEPLOY_CENTER_DATA_DIR: dir, DEPLOY_CENTER_TESTING: '1' };
   delete env.ELECTRON_RUN_AS_NODE;
   app = await electron.launch({
@@ -27,7 +31,7 @@ test.beforeEach(async () => {
       Number(process.env.DEPLOY_CENTER_TEST_SCALE),
     );
   }
-});
+}
 test.afterEach(async () => {
   await app?.close();
   const base = path.resolve('.test-data');
@@ -255,7 +259,7 @@ test('utilityProcess 通过 IPC 执行只读试运行，完成首次指纹确认
     await page.getByRole('button', { name: '返回部署', exact: true }).click();
     await expect(page.getByRole('heading', { name: '准备好，发布下一版本' })).toBeVisible();
     await page.getByRole('button', { name: '部署历史', exact: true }).click();
-    await page.getByRole('button', { name: '查看任务', exact: true }).click();
+    await page.locator('.history-task').first().click();
     await page.getByRole('button', { name: '返回部署历史', exact: true }).click();
     await expect(page.getByRole('heading', { name: '执行任务记录' })).toBeVisible();
   } finally {
@@ -330,9 +334,21 @@ test('1.1.0 自动读取 JAR/Git、刷新信息、字段提示及部署按钮间
   ];
   db.lastService = service.id;
   db.lastTargets = [db.targets[0].id];
+  // 在启动前准备配置，避免空白页尚未结束的自动保存覆盖测试数据。
+  await app.close();
+  const { Storage } = await import('../electron/storage');
+  const storage = new Storage(dir, {
+    encrypt: async () => {
+      throw new Error('此夹具不写入凭据');
+    },
+    decrypt: async () => {
+      throw new Error('此夹具不读取凭据');
+    },
+  });
+  storage.saveConfig(db);
+  storage.close();
+  await launchApp();
   const page = await app.firstWindow();
-  await page.evaluate((value) => window.deployCenter!.save(value), db);
-  await page.reload();
   await page
     .getByRole('navigation', { name: '主导航' })
     .getByRole('button', { name: '一键部署', exact: true })

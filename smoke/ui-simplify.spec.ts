@@ -9,7 +9,7 @@ import { BlobWriter, ZipWriter, TextReader } from '@zip.js/zip.js';
 import { emptyDatabase, newService, newTargetTemplate } from '../src/defaults';
 test.skip(process.platform !== 'win32', 'Windows 桌面及 .exe 验收仅在 Windows 运行');
 let app: ElectronApplication, dir: string;
-test.beforeEach(async () => {
+test.beforeEach(async ({}, info) => {
   const base = path.resolve('.test-data');
   await fs.mkdir(base, { recursive: true });
   dir = await fs.mkdtemp(path.join(base, 'v120-workspace-'));
@@ -77,6 +77,11 @@ test.beforeEach(async () => {
       throw new Error('界面夹具不读取凭据');
     },
   });
+  // 在应用启动前写入工具夹具，避免界面自动保存覆盖外部写入的数据。
+  if (info.title.startsWith('历史与构建环境单行布局')) {
+    db.jdks = Array.from({ length: 6 }, (_, i) => ({ name: 'JDK 21-' + i, path: path.join(dir, '中文 空格 构建环境-' + i, 'jdk-21') }));
+    db.services.forEach((service, i) => { service.jdk = db.jdks[i].name; service.profiles = 'production'; service.args = '-DskipTests'; });
+  }
   store.saveConfig(db);
   store.close();
   app = await electron.launch({
@@ -224,7 +229,8 @@ test('历史默认优先记录，筛选弹层支持应用取消与日期嵌套�
     await expect(page.getByLabel('任务类型', { exact: true })).toHaveCount(0);
     await expect(page.locator('.history-task')).toHaveCount(12);
     const first = (await page.locator('.history-task').first().boundingBox())!;
-    expect(first.y).toBeLessThan(290);
+    expect(first.y).toBeLessThan(330);
+    expect(first.height).toBeLessThanOrEqual(56);
     await boundaries();
     await shot('历史-' + width + 'x' + height);
     const trigger = page.getByRole('button', { name: '筛选部署历史', exact: true });
@@ -648,5 +654,153 @@ test('更新设置三种窗口下无溢出，按需下载、取消和校验，�
         globalThis as unknown as { originalUpdateFetch: typeof net.fetch }
       ).originalUpdateFetch;
     });
+  }
+});
+
+test('历史与构建环境单行布局在三个尺寸和两种主题下紧凑可用', async () => {
+  test.setTimeout(120_000);
+  const page = await app.firstWindow();
+  const config = (await page.evaluate(() => window.deployCenter!.load())).database;
+  expect(config.jdks).toHaveLength(6);
+  await app.evaluate(
+    ({ ipcMain }, fixture) => {
+      ipcMain.removeHandler('deploy:check-tool');
+      ipcMain.handle('deploy:check-tool', (_event, _kind, file: string) => {
+        if (file.includes('环境-2'))
+          throw new Error('测试夹具：JDK 路径不可用，展开可查看完整诊断。');
+        return 'openjdk version "21.0.8" 2025-07-15\nOpenJDK Runtime Environment\njavac 21.0.8';
+      });
+      ipcMain.removeHandler('deploy:tool-info');
+      ipcMain.handle('deploy:tool-info', (_event, serviceId: string) => ({
+        serviceId,
+        available: serviceId !== fixture.failed,
+        tool: fixture.directory + '/带中文 和空格/很长的项目构建路径/mvnw.cmd',
+        workDir: fixture.directory + '/构建工作目录',
+        version:
+          'Apache Maven 3.9.9\nMaven home: fixture\nJava version: 21.0.8\n此输出仅用于界面验收，不执行真实构建。',
+        javaVersion: 'openjdk version "21.0.8"',
+        reason: serviceId === fixture.failed ? '测试夹具：找不到 Maven，请检查工具路径。' : '',
+      }));
+    },
+    { directory: dir, failed: config.services[2].id },
+  );
+  const sqlite = new Sqlite(path.join(dir, 'deploy-center.sqlite'));
+  try {
+    for (let i = 0; i < 18; i++) {
+      const task = createTask(
+        config,
+        config.services[0],
+        config.targets.slice(0, i === 0 ? 3 : 1),
+        {},
+        'existing',
+      );
+      task.id = 'DC-compact-' + i;
+      task.started = new Date(Date.now() - i * 2 * 3600_000).toISOString();
+      task.note =
+        i === 0
+          ? '调整查询条件并优化列表加载速度，长备注在单行省略，悬停查看完整内容。'
+          : '优化告警查询';
+      task.status = i % 5 === 2 ? 'cancelled' : i % 5 === 3 ? 'failed' : 'success';
+      task.dryRun = i % 6 === 0 && i !== 0;
+      task.operation = i === 4 ? 'rollback' : 'deploy';
+      task.elapsed = 66 + i;
+      task.buildPhase = 3;
+      task.deployedCommit = 'a'.repeat(40);
+      task.artifact.sha256 = 'b'.repeat(64);
+      task.targets.forEach((target) => {
+        target.status =
+          task.status === 'failed'
+            ? 'rolledback'
+            : task.status === 'cancelled'
+              ? 'cancelled'
+              : i % 5 === 1
+                ? 'unverified'
+                : 'success';
+        target.elapsed = 32;
+      });
+      sqlite
+        .prepare('INSERT INTO tasks (id,json,updated,active) VALUES (?,?,?,0)')
+        .run(task.id, JSON.stringify(task), Date.now() - i * 1000);
+    }
+  } finally {
+    sqlite.close();
+  }
+  await page.reload();
+  const nav = page.getByRole('navigation');
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((theme) => {
+      document.documentElement.dataset.theme = theme;
+    }, theme);
+    for (const [width, height] of sizes) {
+      await size(width, height);
+      await nav.getByRole('button', { name: '部署历史', exact: true }).click();
+      await expect(page.locator('.history-task')).toHaveCount(18);
+      await expect(page.locator('.history-table thead th')).toHaveCount(width <= 1150 ? 6 : 7);
+      const tableRight = (await page.locator('.history-table').boundingBox())!;
+      const lastCell = (await page
+        .locator('.history-task')
+        .first()
+        .locator('td')
+        .last()
+        .boundingBox())!;
+      expect(Math.abs(lastCell.x + lastCell.width - tableRight.x - tableRight.width)).toBeLessThan(
+        3,
+      );
+      const heights = await page
+        .locator('.history-task')
+        .evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height));
+      expect(heights.every((height) => height >= 48 && height <= 56)).toBe(true);
+      expect(
+        await page.locator('main').evaluate((main) => main.scrollWidth <= main.clientWidth),
+      ).toBe(true);
+      await boundaries();
+      await shot(`单行历史-${theme}-${width}x${height}`);
+      const first = page.locator('.history-task').first();
+      await first.getByRole('button', { name: '展开目标', exact: true }).click();
+      await expect(page.locator('.history-target-line')).toHaveCount(3);
+      expect(
+        await page.locator('main').evaluate((main) => main.scrollWidth <= main.clientWidth),
+      ).toBe(true);
+      await first.getByRole('button', { name: /更多任务/ }).click();
+      const menu = page.getByRole('menu');
+      await expect(menu.getByRole('menuitem', { name: '复制 JAR 指纹' })).toBeVisible();
+      const bounds = (await menu.boundingBox())!;
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.y + bounds.height).toBeLessThanOrEqual(height);
+      await page.keyboard.press('Escape');
+      await first.getByRole('button', { name: '收起目标', exact: true }).click();
+      await first.focus();
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('heading', { name: '执行日志', exact: true })).toBeVisible();
+      await page.getByRole('button', { name: '返回部署历史', exact: true }).click();
+      await nav.getByRole('button', { name: '构建环境', exact: true }).click();
+      const jdk = page.getByRole('table', { name: '本机 JDK 列表', exact: true });
+      await expect(jdk.getByText('Java 21.0.8', { exact: true })).toHaveCount(5);
+      await expect(page.locator('.jdk-table .compact-detail-row')).toHaveCount(0);
+      const toolHeights = await jdk
+        .locator('.compact-data-row')
+        .evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height));
+      expect(toolHeights.every((height) => height >= 48 && height <= 56)).toBe(true);
+      await boundaries();
+      await shot(`单行JDK-${theme}-${width}x${height}`);
+      const jdkRow = jdk.getByRole('row', { name: 'JDK JDK 21-0', exact: true });
+      await jdkRow.focus();
+      await page.keyboard.press('Enter');
+      await expect(jdk.locator('.tool-version')).toContainText('javac 21.0.8');
+      await page.keyboard.press('Enter');
+      await page.getByRole('tab', { name: '服务构建工具', exact: true }).click();
+      const maven = page.getByRole('table', { name: '服务构建工具列表', exact: true });
+      await expect(maven.getByText('Maven 3.9.9', { exact: true })).toHaveCount(5);
+      await expect(maven.getByText('不可用', { exact: true })).toHaveCount(1);
+      expect(
+        await page.locator('main').evaluate((main) => main.scrollWidth <= main.clientWidth),
+      ).toBe(true);
+      await boundaries();
+      await shot(`单行Maven-${theme}-${width}x${height}`);
+      await maven.locator('.compact-data-row').first().click();
+      await expect(maven.getByText('Maven Profile', { exact: true })).toBeVisible();
+      await shot(`构建详情-${theme}-${width}x${height}`);
+      await nav.getByRole('button', { name: '部署历史', exact: true }).click();
+    }
   }
 });
