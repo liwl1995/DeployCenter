@@ -502,3 +502,151 @@ test('配置与帮助展示仓库并使用系统浏览器打开，其他外链�
   await boundaries();
   await shot('配置与帮助-仓库');
 });
+
+test('更新设置三种窗口下无溢出，按需下载、取消和校验，未安装版阻止安装', async () => {
+  const page = await app.firstWindow();
+  const installer = Buffer.from('MZ UI update fixture, never executed');
+  const digest = createHash('sha256').update(installer).digest('hex');
+  await app.evaluate(
+    ({ net }, { payload, digest }) => {
+      const name = 'YOTOO-DeployCenter-99.0.0-Windows-x64-Setup.exe';
+      const original = net.fetch;
+      (globalThis as unknown as { originalUpdateFetch: unknown }).originalUpdateFetch = original;
+      net.fetch = (async (destination: string, init: RequestInit = {}) => {
+        if (destination === 'https://api.github.com/repos/liwl1995/DeployCenter/releases/latest')
+          return Response.json({
+            tag_name: 'v99.0.0',
+            html_url: 'https://github.com/liwl1995/DeployCenter/releases/tag/v99.0.0',
+            draft: false,
+            prerelease: false,
+            body: '测试更新说明\n<script>不执行</script>\n这是仅在测试中注入的版本，不会发布或安装。',
+            published_at: '2026-11-13T01:00:00Z',
+            assets: [
+              {
+                name,
+                state: 'uploaded',
+                size: payload.length,
+                digest: 'sha256:' + digest,
+                browser_download_url:
+                  'https://github.com/liwl1995/DeployCenter/releases/download/v99.0.0/' + name,
+              },
+            ],
+          });
+        if (destination.includes('/releases/download/v99.0.0/')) {
+          let timer: ReturnType<typeof setTimeout>;
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(Uint8Array.from(payload.slice(0, 2)));
+                timer = setTimeout(() => {
+                  controller.enqueue(Uint8Array.from(payload.slice(2)));
+                  controller.close();
+                }, 2000);
+                init.signal?.addEventListener('abort', () => {
+                  clearTimeout(timer);
+                  controller.error(new DOMException('cancelled', 'AbortError'));
+                });
+              },
+              cancel() {
+                clearTimeout(timer);
+              },
+            }),
+          );
+        }
+        throw new Error('测试不允许其他网络请求');
+      }) as typeof net.fetch;
+    },
+    { payload: Array.from(installer), digest },
+  );
+  try {
+    await page.getByRole('navigation').getByRole('button', { name: '设置', exact: true }).click();
+    await page.getByRole('tab', { name: '配置与帮助', exact: true }).click();
+    await expect(page.getByRole('button', { name: '检查更新', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '快捷键', exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: '检查更新', exact: true }).click();
+    await expect(page.getByText('新版本 v99.0.0', { exact: true })).toBeVisible();
+    const main = page.locator('main');
+    for (const [width, height] of [
+      [1000, 620],
+      [1280, 800],
+      [1600, 900],
+    ]) {
+      await app.evaluate(
+        ({ BrowserWindow }, bounds) =>
+          BrowserWindow.getAllWindows()[0].setContentSize(bounds.width, bounds.height),
+        { width, height },
+      );
+      await page.waitForTimeout(120);
+      await boundaries();
+      await expect(page.getByRole('button', { name: '下载更新', exact: true })).toBeInViewport();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      await shot(`更新设置-${width}x${height}`);
+      const links = page.locator('.help-resource-list');
+      await links.scrollIntoViewIfNeeded();
+      expect(
+        await links.locator('.help-resource-row').evaluateAll((elements) => {
+          const bounds = elements.map((e) => e.getBoundingClientRect());
+          return (
+            bounds.length === 3 &&
+            bounds.every((b, i) => i === 0 || b.top >= bounds[i - 1].bottom - 1)
+          );
+        }),
+      ).toBe(true);
+      await page
+        .locator('.help-settings-section')
+        .last()
+        .screenshot({ path: path.join(captures, `帮助列表-${width}x${height}.png`) });
+      await page.getByRole('button', { name: '下载更新', exact: true }).scrollIntoViewIfNeeded();
+    }
+    await page.getByText('查看更新说明', { exact: true }).click();
+    await expect(page.locator('.update-notes')).toContainText('<script>不执行</script>');
+    await page.getByRole('button', { name: '下载更新', exact: true }).click();
+    await expect(page.getByRole('progressbar', { name: '安装包下载进度' })).toBeVisible();
+    await page.getByRole('button', { name: '取消下载', exact: true }).click();
+    await expect(page.getByText('下载已取消或连接超时，可以重新下载。')).toBeVisible();
+    await page.getByRole('button', { name: '下载更新', exact: true }).click();
+    await expect(page.getByRole('button', { name: '退出并安装', exact: true })).toBeEnabled();
+    await page.getByRole('button', { name: '退出并安装', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: '确认安装更新' })).toBeVisible();
+    await boundaries();
+    await shot('更新安装确认');
+    if (process.env.DEPLOY_CENTER_TEST_EXE) {
+      // 只在隔离数据库添加中断任务，验证主进程阻止安装；夹具安装包绝不执行。
+      const boot = await page.evaluate(() => window.deployCenter!.load());
+      const db = boot.database;
+      const task = createTask(db, db.services[0], [db.targets[0]], {}, 'existing');
+      task.status = 'interrupted';
+      const sqlite = new Sqlite(path.join(dir, 'deploy-center.sqlite'));
+      try {
+        sqlite
+          .prepare('INSERT INTO tasks (id,json,updated,active) VALUES (?,?,?,0)')
+          .run(task.id, JSON.stringify(task), Date.now());
+      } finally {
+        sqlite.close();
+      }
+      await page.getByRole('button', { name: '确认退出并安装', exact: true }).click();
+      await expect(page.getByRole('dialog').getByRole('alert')).toContainText('未结束');
+    } else {
+      await page.getByRole('button', { name: '确认退出并安装', exact: true }).click();
+      await expect(page.getByRole('dialog').getByRole('alert')).toContainText('安装版');
+    }
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await main.focus();
+    await page.keyboard.press('Alt+1');
+    await expect(page.getByRole('tab', { name: '配置与帮助', exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect((await page.evaluate(() => window.deployCenter!.updateState())).stage).toBe('ready');
+    expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
+  } finally {
+    await app.evaluate(({ net }) => {
+      net.fetch = (
+        globalThis as unknown as { originalUpdateFetch: typeof net.fetch }
+      ).originalUpdateFetch;
+    });
+  }
+});

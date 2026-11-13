@@ -201,28 +201,3 @@ export function PresetShelf({
     </Card>
   );
 }
-export function ShortcutHelp() {
-  return (
-    <Card title="快捷键">
-      <div className="table-wrap">
-        <table>
-          <tbody>
-            <tr>
-              <td>Alt + 1 / 2 / 3</td>
-              <td>一键部署 / 当前任务 / 部署历史</td>
-            </tr>
-            <tr>
-              <td>Ctrl + Enter</td>
-              <td>在部署确认页确认（所有安全条件满足后）</td>
-            </tr>
-            <tr>
-              <td>Esc</td>
-              <td>先关闭帮助说明，再关闭最上层弹窗</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p className="note">在输入框中编辑时，页面切换快捷键不生效。</p>
-    </Card>
-  );
-}

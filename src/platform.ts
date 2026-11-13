@@ -120,8 +120,14 @@ export type DesktopEvent =
   | { kind: 'observation-error'; targetId: string; message: string }
   | { kind: 'migration'; progress: MigrationProgress }
   | { kind: 'maintenance'; record: import('./features').MaintenanceRecord }
-  | { kind: 'open-task'; taskId: string };
+  | { kind: 'open-task'; taskId: string }
+  | { kind: 'update'; update: import('./app-update').AppUpdate };
 export interface DesktopAPI {
+  updateState(): Promise<import('./app-update').AppUpdate>;
+  checkUpdate(): Promise<import('./app-update').AppUpdate>;
+  downloadUpdate(): Promise<import('./app-update').AppUpdate>;
+  cancelUpdate(): Promise<void>;
+  installUpdate(): Promise<import('./app-update').AppUpdate>;
   load(): Promise<Startup>;
   save(database: Database): Promise<void>;
   confirmRecovery(): Promise<void>;

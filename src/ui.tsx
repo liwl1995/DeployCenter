@@ -244,13 +244,6 @@ export function Modal({
     }
     const key = (e: KeyboardEvent) => {
       if ([...document.querySelectorAll('[role="dialog"]')].at(-1) !== panel) return;
-      if (e.ctrlKey && e.key === 'Enter') {
-        const confirm = panel.querySelector<HTMLButtonElement>('button[data-confirm]');
-        if (confirm && !confirm.disabled && !e.isComposing) {
-          e.preventDefault();
-          confirm.click();
-        }
-      }
       if (e.key === 'Escape') {
         e.preventDefault();
         if (!cannotClose.current) close.current();

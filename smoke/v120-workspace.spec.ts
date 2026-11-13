@@ -199,7 +199,7 @@ test('批次 2 默认紧凑目标与配置详情在三个窗口尺寸下可见',
   }
 });
 
-test('紧凑列表会持久化，输入不抢快捷键，预设载入仍需确认', async () => {
+test('紧凑列表会持久化，自定义快捷键不切页，预设载入仍需确认', async () => {
   const page = await app.firstWindow(),
     nav = page.getByRole('navigation', { name: '主导航' });
   await nav.getByRole('button', { name: '一键部署', exact: true }).click();

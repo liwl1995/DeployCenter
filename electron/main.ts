@@ -4,6 +4,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  net,
   Notification,
   safeStorage,
   shell,
@@ -17,6 +18,8 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { LogSessions, observeTask } from './observation';
 import { Storage } from './storage';
+import { AppUpdater } from './app-updater';
+import { launchInstallerAfterExit } from './update-installer';
 import { migrationDestination, DataDirectory } from './data-directory';
 import { BackupManager } from './backup-manager';
 import { WorkbenchRecovery } from './workbench-recovery';
@@ -82,6 +85,10 @@ const readOnlyDuringMigration = new Set([
   'open-data-dir',
   'help',
   'about',
+  'update-state',
+  'check-update',
+  'download-update',
+  'cancel-update',
 ]);
 const lock = app.requestSingleInstanceLock();
 if (!lock) {
@@ -90,6 +97,7 @@ if (!lock) {
   void boot();
 }
 let win: BrowserWindow | undefined, storage: Storage, controller: Controller;
+let updater: AppUpdater | undefined;
 let backups: BackupManager;
 let workbench: WorkbenchRecovery;
 const approvedJars = new Set<string>();
@@ -304,6 +312,8 @@ async function boot() {
           event.senderFrame.url.split('#')[0] !== url
         )
           throw new Error('拒绝不受信任的界面请求');
+        if (updater?.isInstalling() && name !== 'update-state')
+          throw new Error('正在准备安装更新，请勿执行其他操作');
         if ((migrating || pendingRestart) && !readOnlyDuringMigration.has(name))
           throw new Error(
             pendingRestart
@@ -337,6 +347,32 @@ async function boot() {
           throw new Error('正在处理远程备份，请等待结果后再操作');
         return fn(...args);
       });
+    updater = new AppUpdater({
+      currentVersion: app.getVersion(),
+      directory: path.join(settingsDir, 'Updates'),
+      fetch: (destination, options) => net.fetch(destination, options),
+      emit: (update) => emit({ kind: 'update', update }),
+      installBlocked: () => {
+        if (!app.isPackaged || process.platform !== 'win32' || process.arch !== 'x64')
+          return '请在 Windows x64 安装版中安装更新';
+        if (controller.active() || storage.unfinished().length)
+          return '请先等待部署结束，并核实尚未结束的任务，再安装更新';
+        if (migrating || pendingRestart) return '请先完成数据迁移并重启，再安装更新';
+        if (backups.isBusy() || workbench.isBusy() || storage.artifacts.isBusy())
+          return '远程维护或本地清理尚未结束，请等待后再安装更新';
+        return undefined;
+      },
+      launch: async (file, hash) => {
+        await launchInstallerAfterExit(file, hash, path.dirname(app.getPath('exe')), settingsDir);
+        // 助手已持有本进程句柄，只会在正常退出后启动安装器。
+        setImmediate(() => app.quit());
+      },
+    });
+    handle('update-state', () => updater!.state());
+    handle('check-update', () => updater!.check());
+    handle('download-update', () => updater!.download());
+    handle('cancel-update', () => updater!.cancel());
+    handle('install-update', () => updater!.install());
     handle('load', async () => ({
       database: storage.database(),
       version: app.getVersion(),
@@ -1142,6 +1178,7 @@ async function boot() {
 }
 app.on('window-all-closed', () => app.quit());
 app.on('will-quit', () => {
+  updater?.dispose();
   void historySearch.stop();
   backups?.close();
   sessions.closeAll();

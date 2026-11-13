@@ -24,6 +24,9 @@ import {
   Coffee,
   Loader2,
   FolderOpen,
+  BookOpen,
+  Code2,
+  Info,
 } from 'lucide-react';
 import {
   loadDatabase,
@@ -76,7 +79,7 @@ import { deploymentBlockReason, HashValue, PrecheckPanel, VersionFacts } from '.
 import type { LocalPrecheck } from './features';
 import { RemoteBackups, BackupAudit } from './RemoteBackups';
 import { WorkbenchReviewPanel } from './WorkbenchReview';
-import { PresetShelf, FirstGuide, ShortcutHelp } from './WorkspaceHome';
+import { PresetShelf, FirstGuide } from './WorkspaceHome';
 import { preparePreset, type WorkspacePage } from './workspace-model';
 import { TaskHistory } from './TaskHistory';
 import { MoreMenu, DeleteEntity } from './EntityActions';
@@ -88,6 +91,7 @@ import { taskProgress, readExpandedTargets, saveExpandedTargets } from './layout
 import { EntityWorkspace, EntityDetail, WorkspaceTabs, Disclosure } from './WorkspaceLayout';
 import { DiagnosticPanel } from './TaskExtras';
 import { TaskView } from './TaskView';
+import { AppUpdateSettings } from './AppUpdateSettings';
 import type { DiagnosticKind } from './features';
 import brandIcon from '../assets/icon.svg';
 import { newService, newTargetTemplate, emptyDatabase, prototype } from './defaults';
@@ -1134,27 +1138,6 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       pinnedOnly={pinnedOnly}
     />
   );
-  useEffect(() => {
-    const key = (event: KeyboardEvent) => {
-      if (event.isComposing || event.repeat) return;
-      if (
-        event.altKey &&
-        !event.ctrlKey &&
-        /^[1-3]$/.test(event.key) &&
-        !(event.target as HTMLElement)?.closest('input,textarea,select,[contenteditable="true"]') &&
-        !document.querySelector('[role="dialog"]')
-      ) {
-        const dest = (['deploy', 'task', 'history'] as const)[Number(event.key) - 1];
-        if (dest !== 'task' || isActive(task)) {
-          event.preventDefault();
-          if (dest === 'task' && page !== 'task') setTaskReturnPage(page);
-          setPage(dest);
-        }
-      }
-    };
-    window.addEventListener('keydown', key);
-    return () => window.removeEventListener('keydown', key);
-  }, [task, page]);
   const changeBackup = (id: string, b: Backup) => setOverrides((old) => ({ ...old, [id]: b }));
   return (
     <div
@@ -2655,66 +2638,90 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                     {
                       id: 'help',
                       label: '配置与帮助',
-                      description: '配置迁移、快捷键和使用说明。导出不会包含认证口令。',
+                      description: '检查软件更新、备份配置或查看使用说明。',
                       content: (
-                        <div className="stack">
-                          <Card title="配置导入导出" className="mt">
-                            <p className="muted">
-                              {desktop
-                                ? 'SQLite 保存配置和历史，完整日志独立保存。导出不包含认证口令。'
-                                : '原型通过当前浏览器本地存储保存配置和历史。导出不包含认证口令。'}
-                            </p>
-                            <div className="row wrap mt">
-                              <button
-                                className="button"
-                                onClick={() =>
-                                  desktop
-                                    ? void nativeAction(async () => {
-                                        await desktop!.save(db);
-                                        await desktop!.exportConfig();
-                                      })
-                                    : download(
-                                        'deploy-center-config-v3.json',
-                                        safeConfigJson(db),
-                                        'application/json',
-                                      )
-                                }
-                              >
-                                <Download size={16} />
-                                导出配置
-                              </button>
-                              <button
-                                className="button"
-                                onClick={() =>
-                                  desktop ? void importNative() : importRef.current?.click()
-                                }
-                                disabled={isActive(task)}
-                              >
-                                <Upload size={16} />
-                                导入配置
-                              </button>
+                        <div className="help-settings">
+                          <AppUpdateSettings api={desktop} version={boot?.version || '1.5.2'} active={isActive(task)} />
+                          <Card className="help-settings-section">
+                            <div className="help-section-row">
+                              <div>
+                                <h2>配置备份</h2>
+                                <p className="muted">导出服务、服务器和目标配置，不包含认证口令；完整日志单独保存。</p>
+                              </div>
+                              <div className="row wrap">
+                                <button
+                                  className="button"
+                                  onClick={() =>
+                                    desktop
+                                      ? void nativeAction(async () => {
+                                          await desktop!.save(db);
+                                          await desktop!.exportConfig();
+                                        })
+                                      : download('deploy-center-config-v3.json', safeConfigJson(db), 'application/json')
+                                  }
+                                >
+                                  <Download size={16} />
+                                  导出配置
+                                </button>
+                                <button
+                                  className="button"
+                                  onClick={() => (desktop ? void importNative() : importRef.current?.click())}
+                                  disabled={isActive(task)}
+                                >
+                                  <Upload size={16} />
+                                  导入配置
+                                </button>
+                              </div>
                             </div>
-                            <p className="note">
-                              {desktop
-                                ? '数据目录：' + boot?.dataDir
-                                : '正式桌面版改用本地数据库及 Windows 加密凭据，安装与数据目录分离。'}
-                            </p>
                           </Card>
-                          <ShortcutHelp />
-                          <Card title="版本与源码">
-                            <p className="muted">获取最新安装包、版本说明与源码。</p>
-                            <a className="button primary" href="https://github.com/liwl1995/DeployCenter/releases"
-                              target="_blank" rel="noopener noreferrer">
-                              查看版本与源码
-                            </a>
-                          </Card>
-                          <Card title="帮助">
-                            <div className="row wrap">
-                              <button className="button" onClick={() => void desktop!.help()}>
-                                使用说明
+                          <Card className="help-settings-section">
+                            <h2>帮助与项目</h2>
+                            <div className="help-resource-list">
+                              <button
+                                className="help-resource-row"
+                                aria-label="使用说明"
+                                disabled={!desktop}
+                                onClick={() => void desktop?.help()}
+                              >
+                                <span className="help-resource-icon">
+                                  <BookOpen size={18} />
+                                </span>
+                                <span className="help-resource-copy">
+                                  <strong>使用说明</strong>
+                                  <span>配置、部署、回滚与常见问题</span>
+                                </span>
+                                <ChevronRight size={16} aria-hidden="true" />
                               </button>
-                              <button className="button" onClick={() => void desktop!.about()}>
-                                关于 YOTOO 部署中心
+                              <a
+                                className="help-resource-row"
+                                aria-label="查看版本与源码"
+                                href="https://github.com/liwl1995/DeployCenter/releases"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                <span className="help-resource-icon">
+                                  <Code2 size={18} />
+                                </span>
+                                <span className="help-resource-copy">
+                                  <strong>版本与源码</strong>
+                                  <span>发布记录、安装包与项目源码</span>
+                                </span>
+                                <ChevronRight size={16} aria-hidden="true" />
+                              </a>
+                              <button
+                                className="help-resource-row"
+                                aria-label="关于 YOTOO 部署中心"
+                                disabled={!desktop}
+                                onClick={() => void desktop?.about()}
+                              >
+                                <span className="help-resource-icon">
+                                  <Info size={18} />
+                                </span>
+                                <span className="help-resource-copy">
+                                  <strong>关于应用</strong>
+                                  <span>YOTOO 部署中心 · 本地部署工作台</span>
+                                </span>
+                                <ChevronRight size={16} aria-hidden="true" />
                               </button>
                             </div>
                           </Card>
@@ -2725,7 +2732,6 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 />
               ) : (
                 <>
-                  <ShortcutHelp />
                   {desktop && (
                     <Card title="后台提醒">
                       <Switch
@@ -3044,7 +3050,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         </main>
         <footer className="workspace-footer" aria-label="应用状态">
           <span className="footer-version">
-            {desktop ? 'v' + (boot?.version || '1.4.1') : '界面原型 v0.3'}
+            {desktop ? 'v' + (boot?.version || '1.5.2') : '界面原型 v0.3'}
           </span>
           <button
             className="footer-directory"

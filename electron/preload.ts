@@ -2,6 +2,11 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { DesktopAPI, DesktopEvent } from '../src/platform';
 const invoke = (name: string, ...args: unknown[]) => ipcRenderer.invoke('deploy:' + name, ...args);
 const api: DesktopAPI = {
+  updateState: () => invoke('update-state'),
+  checkUpdate: () => invoke('check-update'),
+  downloadUpdate: () => invoke('download-update'),
+  cancelUpdate: () => invoke('cancel-update'),
+  installUpdate: () => invoke('install-update'),
   load: () => invoke('load'),
   save: (db) => invoke('save', db),
   confirmRecovery: () => invoke('confirm-recovery'),
