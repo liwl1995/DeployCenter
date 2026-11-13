@@ -278,13 +278,14 @@ async function boot() {
         contextIsolation: true,
         sandbox: true,
         webSecurity: true,
+        backgroundThrottling: false,
         devTools: !app.isPackaged,
       },
     });
     win.on('focus', () => win?.flashFrame(false));
     win.webContents.setWindowOpenHandler(({ url: destination }) => {
       // 仅将配置与帮助里的固定仓库链接交给系统浏览器，外部页面不进入桌面窗口。
-      if (destination === 'https://github.com/liwl1995/DeployCenter')
+      if (destination === 'https://github.com/liwl1995/DeployCenter/releases')
         void shell.openExternal(destination).catch(() => {});
       return { action: 'deny' };
     });

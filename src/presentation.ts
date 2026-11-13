@@ -231,3 +231,8 @@ export function taskNotice(task: Task, redact: (text: string) => string = (text)
     .replace(/[\r\n]+/g, ' ')
     .slice(0, 300);
 }
+
+/** 老配置用「未记录」表示无部署时间，不能把这类占位文案当作已部署。 */
+export function deploymentTime(value?: string) {
+  return value && Number.isFinite(Date.parse(value)) ? value : undefined;
+}

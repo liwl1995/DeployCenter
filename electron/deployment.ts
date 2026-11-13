@@ -1,3 +1,4 @@
+import { LogBatcher } from './log-batcher';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { shellQuote as q, seconds, type RunTarget, type Step, type Task } from '../src/model';
@@ -7,6 +8,7 @@ import { nativeCapabilities } from './native-capabilities';
 import { knownCommit, targetLabels } from '../src/presentation';
 import type { EngineDependencies } from './capabilities';
 import { applyRemoteJournal, targetOutcome } from './remote-events';
+import { stepNames } from '../src/step-names';
 import { localHealth } from './health';
 import { mustExec, type Transport } from './ssh';
 import {
@@ -42,6 +44,7 @@ export class Deployment {
   private transport?: Transport;
   private pendingLogs = new Map<string, string>();
   private lastSnapshot = 0;
+  private logBatch = new LogBatcher((message) => this.send(message));
   constructor(
     private input: WorkerInput,
     private send: (message: WorkerMessage) => void,
@@ -54,7 +57,7 @@ export class Deployment {
   private redact(text: string) {
     return this.deps.credentials.redact(text);
   }
-  private log(text: string, r?: RunTarget, flush = false) {
+  private log(text: string, r?: RunTarget, flush = false, contextStep?: Step) {
     const id = r?.target.id || 'build';
     const pending = (this.pendingLogs.get(id) || '') + text;
     const cut = flush ? pending.length : pending.lastIndexOf('\n') + 1;
@@ -65,6 +68,7 @@ export class Deployment {
     const safe = this.redact(pending.slice(0, cut));
     this.pendingLogs.set(id, pending.slice(cut));
     const step =
+      contextStep ||
       (r ? r.steps : this.task.buildSteps).find((s) => s.status === 'running') ||
       (r ? r.steps[r.phase] : this.task.buildSteps[this.task.buildPhase]);
     const command =
@@ -75,7 +79,7 @@ export class Deployment {
           : !r && this.task.buildPhase === 1 && this.task.build === 'rebuild'
             ? this.task.buildContext.command
             : undefined;
-    this.send({
+    this.logBatch.append({
       kind: 'log',
       taskId: this.task.id,
       targetId: r?.target.id,
@@ -101,6 +105,7 @@ export class Deployment {
         step.elapsed = Math.max(0, now - step.startedAt) / 1000;
     if (force || now - this.lastSnapshot > 200) {
       this.lastSnapshot = now;
+      this.logBatch.flush();
       const snapshot = structuredClone(this.task);
       snapshot.buildLogs = [];
       for (const target of snapshot.targets) target.logs = [];
@@ -111,12 +116,24 @@ export class Deployment {
     step.status = 'running';
     step.startedAt = this.deps.clock.now();
     step.elapsed = 0;
+    this.log(
+      '开始：' + step.label + '。\n',
+      this.task.targets.find((r) => r.steps.includes(step)),
+    );
     this.emit(true);
   }
   private finish(step: Step, status: Step['status'] = 'success') {
     step.status = status;
     step.endedAt = this.deps.clock.now();
-    step.elapsed = (step.endedAt - (step.startedAt || step.endedAt)) / 1000;
+    step.elapsed = (step.endedAt - (step.startedAt ?? step.endedAt)) / 1000;
+    this.log(
+      (status === 'success' ? '完成：' : status === 'skipped' ? '已跳过：' : '失败：') +
+        step.label +
+        ' · 耗时 ' +
+        seconds(step.elapsed) +
+        '。\n',
+      this.task.targets.find((r) => r.steps.includes(step)),
+    );
     this.emit(true);
   }
   private async phase(r: RunTarget, key: string, action: () => Promise<void>) {
@@ -156,10 +173,8 @@ export class Deployment {
     if (settling) return;
     if (r?.remote && ['running', 'launching'].includes(r.remote.phase)) {
       try {
-        if (r.remote.protocol === 2)
-          await this.writeControl(r, 'cancel', '1');
-        else
-          await mustExec(this.transport!, 'printf 1 > ' + q(r.remote.jobDir + '/cancel'));
+        if (r.remote.protocol === 2) await this.writeControl(r, 'cancel', '1');
+        else await mustExec(this.transport!, 'printf 1 > ' + q(r.remote.jobDir + '/cancel'));
         this.log('已向远端写入取消请求，等待安全边界。\n', r);
       } catch {
         this.log('取消标记暂未送达；不会强制杀死远端切换，需核实执行结果。\n', r);
@@ -397,11 +412,19 @@ export class Deployment {
     return this.task.id + '-' + r.target.id;
   }
   private async writeControl(r: RunTarget, name: 'cancel' | 'local-health', value: string) {
-    const script = workbenchHeader(r.target, this.owner(r)) + [
-      'dc_verify',
-      'if [ -e "$JOB/' + name + '" ]; then [ "$(dc_value "$JOB/' + name + '")" = ' + q(value) + ' ];',
-      'else (umask 077; set -C; printf "%s" ' + q(value) + ' > "$JOB/' + name + '"); fi',
-    ].join('\n');
+    const script =
+      workbenchHeader(r.target, this.owner(r)) +
+      [
+        'dc_verify',
+        'if [ -e "$JOB/' +
+          name +
+          '" ]; then [ "$(dc_value "$JOB/' +
+          name +
+          '")" = ' +
+          q(value) +
+          ' ];',
+        'else (umask 077; set -C; printf "%s" ' + q(value) + ' > "$JOB/' + name + '"); fi',
+      ].join('\n');
     await mustExec(this.transport!, 'bash -s', script);
   }
   private async retryWorkbenchCleanup(r: RunTarget) {
@@ -465,6 +488,14 @@ export class Deployment {
       if (fields.algorithm === 'none')
         this.log('警告：远端缺少哈希工具，本次经确认仅按字节数校验；此模式只允许普通 JAR。\n', r);
       await this.phase(r, 'upload', async () => {
+        this.log(
+          '部署文件：' +
+            this.task.artifact.name +
+            ' · ' +
+            this.task.artifact.size +
+            ' 字节。上传及校验完成前，当前服务继续运行。\n',
+          r,
+        );
         if (this.task.operation === 'rollback') {
           const source = this.task.sourceBackup!;
           const expected = this.task.artifact.sha256;
@@ -554,16 +585,54 @@ export class Deployment {
       this.emit(true);
     }
   }
-  private async readRemote(r: RunTarget, final = false) {
+  private journal(r: RunTarget, text: string) {
+    for (const line of text.split('\n').filter(Boolean)) {
+      applyRemoteJournal(r, line + '\n');
+      const [, kind, key, status] = line.split('\t');
+      if (kind === 'STEP') {
+        const step = r.steps.find((s) => s.key === key);
+        const label = stepNames[key] || step?.label || key;
+        const result =
+          status === 'START'
+            ? '开始'
+            : status === 'OK'
+              ? '完成'
+              : status === 'SKIP'
+                ? '已跳过'
+                : '失败';
+        this.log(
+          result +
+            '：' +
+            label +
+            (status !== 'START' ? ' · 耗时 ' + seconds(step?.elapsed || 0) : '') +
+            '。\n',
+          r,
+          false,
+          step,
+        );
+      }
+      if (kind === 'BACKUP')
+        this.log('旧版本备份已保存：' + r.backupPath + '，共 ' + r.backupSize + ' 字节。\n', r);
+    }
+  }
+  private async readRemote(
+    r: RunTarget,
+    final = false,
+    packet?: { journal?: Buffer; output?: Buffer },
+  ) {
     const remote = r.remote!;
-    const journal = await this.transport!.read(remote.jobDir + '/journal', remote.journalOffset);
+    const journal =
+      packet?.journal ??
+      (await this.transport!.read(remote.jobDir + '/journal', remote.journalOffset));
     const last = journal.lastIndexOf(10);
     if (last >= 0) {
-      applyRemoteJournal(r, journal.subarray(0, last + 1).toString('utf8'));
+      this.journal(r, journal.subarray(0, last + 1).toString('utf8'));
       remote.journalOffset += last + 1;
     }
     for (let i = 0; i < 20; i++) {
-      const data = await this.transport!.read(remote.jobDir + '/output.log', remote.logOffset);
+      const data =
+        packet?.output ??
+        (await this.transport!.read(remote.jobDir + '/output.log', remote.logOffset));
       if (!data.length) break;
       const end = final ? data.length : data.lastIndexOf(10) + 1;
       if (!end) {
@@ -576,7 +645,7 @@ export class Deployment {
       }
       this.log(data.subarray(0, end).toString('utf8'), r, final);
       remote.logOffset += end;
-      if (data.length < 262144) break;
+      if (packet?.output || data.length < 262144) break;
     }
   }
   private applyFinalState(r: RunTarget, state: FinalState) {
@@ -584,8 +653,7 @@ export class Deployment {
     if (state === 'ROLLBACK_FAILED') {
       r.error = '新版本失败且自动回滚失败';
       r.recovery = '请查看回滚阶段日志，原备份未删除：' + (r.backupPath || '无可用备份');
-    } else if (state === 'ROLLEDBACK')
-      r.recovery = '已恢复旧 JAR，并按目标配置重新启动和检查。';
+    } else if (state === 'ROLLEDBACK') r.recovery = '已恢复旧 JAR，并按目标配置重新启动和检查。';
     else if (state === 'FAILED')
       r.recovery = r.backupCreated
         ? '存在备份，但未成功自动恢复。请查看日志或发起历史回滚。'
@@ -598,20 +666,23 @@ export class Deployment {
     );
   }
   private async finishPrepared(r: RunTarget, state: 'CANCELLED' | 'FAILED') {
-    const result = (await mustExec(
-      this.transport!,
-      'bash -s',
-      workbenchHeader(r.target, this.owner(r)) + [
-        'dc_path "$JOB"; dc_path "$LOCK"',
-        'if ! dc_lock; then printf NOT_OURS; exit 0; fi',
-        'dc_verify',
-        'current="$(dc_value "$JOB/state")"',
-        'if dc_terminal "$current"; then printf "%s" "$current"; exit 0; fi',
-        '[ "$current" = PREPARED ] && [ ! -e "$JOB/pid" ] && [ ! -L "$JOB/pid" ]',
-        '(umask 077; set -C; printf "%s" ' + q(state) + ' > "$JOB/state.next")',
-        'mv -f -- "$JOB/state.next" "$JOB/state"; printf "%s" ' + q(state),
-      ].join('\n'),
-    )).trim();
+    const result = (
+      await mustExec(
+        this.transport!,
+        'bash -s',
+        workbenchHeader(r.target, this.owner(r)) +
+          [
+            'dc_path "$JOB"; dc_path "$LOCK"',
+            'if ! dc_lock; then printf NOT_OURS; exit 0; fi',
+            'dc_verify',
+            'current="$(dc_value "$JOB/state")"',
+            'if dc_terminal "$current"; then printf "%s" "$current"; exit 0; fi',
+            '[ "$current" = PREPARED ] && [ ! -e "$JOB/pid" ] && [ ! -L "$JOB/pid" ]',
+            '(umask 077; set -C; printf "%s" ' + q(state) + ' > "$JOB/state.next")',
+            'mv -f -- "$JOB/state.next" "$JOB/state"; printf "%s" ' + q(state),
+          ].join('\n'),
+      )
+    ).trim();
     if (result === 'NOT_OURS') return false;
     if (result !== state) throw new Error('远端已留下其他结果，请重新核实');
     return true;
@@ -622,13 +693,18 @@ export class Deployment {
     const logDecoder = new StringDecoder('utf8');
     let journalTail = '';
     const receipt = await verifyWorkbench(
-      this.transport!, r, this.owner(r), state,
+      this.transport!,
+      r,
+      this.owner(r),
+      state,
       (file, chunk, offset) => {
         if (file === 'journal') {
-          journalTail += journalDecoder.write(chunk.subarray(Math.max(0, job.journalOffset - offset)));
+          journalTail += journalDecoder.write(
+            chunk.subarray(Math.max(0, job.journalOffset - offset)),
+          );
           const end = journalTail.lastIndexOf('\n') + 1;
           if (end > 0) {
-            applyRemoteJournal(r, journalTail.slice(0, end));
+            this.journal(r, journalTail.slice(0, end));
             journalTail = journalTail.slice(end);
           }
           if (journalTail.length > 65536) throw new Error('远端步骤日志格式异常');
@@ -653,6 +729,7 @@ export class Deployment {
     target.remote!.journalOffset = journalSize;
     target.remote!.logOffset = logSize;
     if (!this.persist) throw new Error('本机工作台保存通道不可用');
+    this.logBatch.flush();
     await this.persist(checkpoint, r.target.id, receipt);
     Object.assign(job, target.remote);
     try {
@@ -667,10 +744,15 @@ export class Deployment {
     let empty = 0;
     while (true) {
       const versioned = r.remote?.protocol === 2;
-      const polled = versioned ? await pollWorkbench(this.transport!, r, this.owner(r)) : undefined;
-      const state = polled?.state ?? (
-        await mustExec(this.transport!, 'cat -- ' + q(r.remote!.jobDir + '/state'))
-      ).trim();
+      const polled = versioned
+        ? await pollWorkbench(this.transport!, r, this.owner(r), {
+            journal: r.remote!.journalOffset,
+            log: r.remote!.logOffset,
+          })
+        : undefined;
+      const state =
+        polled?.state ??
+        (await mustExec(this.transport!, 'cat -- ' + q(r.remote!.jobDir + '/state'))).trim();
       if (isFinalState(state)) {
         if (polled) {
           // 终态公布到监督进程真正退出之间可能相隔一个轮询周期。
@@ -689,7 +771,7 @@ export class Deployment {
       }
       if (!['RUNNING', 'LAUNCHING', 'PREPARED', 'AWAITING_LOCAL'].includes(state))
         throw new Error('无法识别远端任务状态：' + state);
-      await this.readRemote(r);
+      await this.readRemote(r, false, polled);
       this.emit(true);
       if (state === 'AWAITING_LOCAL') {
         const passed = await localHealth(
@@ -705,10 +787,15 @@ export class Deployment {
             'printf ' + q(passed ? 'PASS' : 'FAIL') + ' > ' + q(r.remote!.jobDir + '/local-health'),
           );
       }
-      const alive = polled?.alive ?? !(await this.transport!.exec(
-        'pid=$(cat ' + q(r.remote!.jobDir + '/pid') +
-          ' 2>/dev/null || true); case "$pid" in ""|*[!0-9]*) exit 1;; esac; kill -0 "$pid" 2>/dev/null',
-      )).code;
+      const alive =
+        polled?.alive ??
+        !(
+          await this.transport!.exec(
+            'pid=$(cat ' +
+              q(r.remote!.jobDir + '/pid') +
+              ' 2>/dev/null || true); case "$pid" in ""|*[!0-9]*) exit 1;; esac; kill -0 "$pid" 2>/dev/null',
+          )
+        ).code;
       if (!alive && ++empty >= 3)
         throw new Error('远端任务进程已退出或身份无法核对，且没有最终结果，必须人工核实');
       if (alive) empty = 0;
@@ -722,9 +809,10 @@ export class Deployment {
     t.active = t.targets.indexOf(r);
     this.transport = this.makeTransport(r, true);
     await this.transport.connect();
-    const state = r.remote!.protocol === 2
-      ? (await pollWorkbench(this.transport, r, this.owner(r))).state
-      : (await mustExec(this.transport, 'cat -- ' + q(r.remote!.jobDir + '/state'))).trim();
+    const state =
+      r.remote!.protocol === 2
+        ? (await pollWorkbench(this.transport, r, this.owner(r))).state
+        : (await mustExec(this.transport, 'cat -- ' + q(r.remote!.jobDir + '/state'))).trim();
     if (state === 'PREPARED') {
       if (r.remote!.protocol === 2) {
         if (!(await this.finishPrepared(r, 'CANCELLED'))) throw new Error('远端任务 ID 已变化');

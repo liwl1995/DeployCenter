@@ -67,6 +67,7 @@ import {
   healthLabels,
   toolLabels,
   taskResult,
+  deploymentTime,
   cloneService,
   cloneTarget,
   deletionReason,
@@ -84,7 +85,7 @@ import { TargetConfiguration } from './TargetConfiguration';
 import { DateRangeFilter } from './DateRangeFilter';
 import { withinDateRange, type DateRange } from './date-range';
 import { taskProgress, readExpandedTargets, saveExpandedTargets } from './layout-state';
-import { EntityWorkspace, WorkspaceTabs, Disclosure } from './WorkspaceLayout';
+import { EntityWorkspace, EntityDetail, WorkspaceTabs, Disclosure } from './WorkspaceLayout';
 import { DiagnosticPanel } from './TaskExtras';
 import { TaskView } from './TaskView';
 import type { DiagnosticKind } from './features';
@@ -796,13 +797,202 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     setDialog(null);
     notify('部署目标已保存');
   }
-  const serviceDeployment = (id: string) => {
-    const last = taskRows.find((row) => row.serviceId === id && !row.dryRun);
-    const historical = db.history.find((row) => row.service.id === id);
-    return last
-      ? '上次部署：' + fmtTime(last.started) + ' · ' + taskResult(last)
-      : historical ? '上次部署：' + fmtTime(historical.time) : '尚未部署';
-  };
+  const serviceActions = (s: Service) => (
+    <div className="entity-actions">
+      <MoreMenu
+        label={'更多服务' + s.name + '操作'}
+        actions={[
+          {
+            label: '配置目标',
+            onClick: () => {
+              selectService(s.id);
+              setPage('targets');
+            },
+          },
+          {
+            label: '复制服务',
+            onClick: () => setDialog({ kind: 'service', value: cloneService(s) }),
+          },
+          {
+            label: '删除服务',
+            disabled: !!entityRemovalReason('service', s.id),
+            reason: entityRemovalReason('service', s.id),
+            destructive: true,
+            onClick: () => setDialog({ kind: 'delete', entity: 'service', id: s.id }),
+          },
+        ]}
+      />
+      <button className="button" onClick={() => setDialog({ kind: 'service', value: s })}>
+        编辑
+      </button>
+
+      <button
+        className="button primary"
+        onClick={() => {
+          selectService(s.id);
+          setPage('deploy');
+        }}
+      >
+        去部署
+      </button>
+    </div>
+  );
+  const targetActions = (t: Target) => (
+    <div className="entity-actions">
+      <MoreMenu
+        label={'更多目标' + t.name + '操作'}
+        actions={[
+          {
+            label: '复制目标',
+            onClick: () => setDialog({ kind: 'target', value: cloneTarget(t) }),
+          },
+          ...(desktop
+            ? [
+                {
+                  label: '查看并清理远程备份',
+                  onClick: () => setBackupTarget(t),
+                },
+                {
+                  label: '只读诊断',
+                  onClick: () =>
+                    setNativeDialog({
+                      title: t.name + ' · 只读诊断',
+                      diagnostic: {
+                        target: t,
+                        server: db.servers.find((s) => s.id === t.serverId)!,
+                      },
+                    }),
+                },
+                {
+                  label: '核实远程工作台',
+                  disabled: isActive(task),
+                  reason: isActive(task) ? '请先等待当前任务结束' : undefined,
+                  onClick: () =>
+                    setNativeDialog({
+                      title: t.name + ' · 核实远程工作台',
+                      server: db.servers.find((s) => s.id === t.serverId),
+                      workbenchTarget: t.id,
+                    }),
+                },
+                {
+                  label: '检查或接管任务锁',
+                  disabled: isActive(task),
+                  reason: isActive(task) ? '任务执行中不能接管锁' : undefined,
+                  onClick: () =>
+                    setNativeDialog({
+                      title: t.name + ' · 检查任务锁',
+                      server: db.servers.find((s) => s.id === t.serverId),
+                      lockTarget: t.id,
+                    }),
+                },
+              ]
+            : []),
+          {
+            label: '删除目标',
+            disabled: !!entityRemovalReason('target', t.id),
+            reason: entityRemovalReason('target', t.id),
+            destructive: true,
+            onClick: () => setDialog({ kind: 'delete', entity: 'target', id: t.id }),
+          },
+        ]}
+      />
+      <button className="button" onClick={() => setDialog({ kind: 'target', value: t })}>
+        <Pencil size={15} />
+        编辑目标
+      </button>
+      <button
+        className="button primary"
+        onClick={() => {
+          selectService(t.serviceId);
+          setSelected([t.id]);
+          setPage('deploy');
+        }}
+      >
+        去部署
+      </button>
+    </div>
+  );
+  const serverActions = (s: Server) => (
+    <div className="entity-actions">
+      <button
+        className="button"
+        aria-label={'编辑服务器' + s.name}
+        onClick={() => setDialog({ kind: 'server', value: s })}
+      >
+        <Pencil size={15} />
+        编辑
+      </button>
+      <MoreMenu
+        label={'更多服务器' + s.name + '操作'}
+        actions={[
+          ...(desktop && s.auth === 'alias'
+            ? [
+                {
+                  label: '查看 SSH 最终地址',
+                  onClick: () =>
+                    void nativeAction(async () => {
+                      await desktop!.save(db);
+                      const parsed = await desktop!.resolveAlias(s.id);
+                      setNativeDialog({
+                        title: s.name + ' · SSH Config 最终地址',
+                        content:
+                          '系统 SSH 解析后的连接地址，仅用于核对，不会修改配置：\n' +
+                          parsed.user +
+                          '@' +
+                          parsed.host +
+                          ':' +
+                          parsed.port,
+                      });
+                    }),
+                },
+              ]
+            : []),
+          ...(desktop
+            ? [
+                {
+                  label: '服务器体检（只读）',
+                  onClick: () =>
+                    setNativeDialog({
+                      title: s.name + ' · 服务器体检',
+                      diagnostic: { server: s },
+                    }),
+                },
+              ]
+            : []),
+          {
+            label: '删除服务器',
+            disabled: !!entityRemovalReason('server', s.id),
+            reason: entityRemovalReason('server', s.id),
+            destructive: true,
+            onClick: () => setDialog({ kind: 'delete', entity: 'server', id: s.id }),
+          },
+        ]}
+      />{' '}
+      <button
+        className="button primary"
+        onClick={() =>
+          desktop
+            ? setNativeDialog({ title: '测试连接 · ' + s.name, server: s })
+            : notify('原型未发起连接。正式版将展示主机指纹及认证结果。')
+        }
+      >
+        测试连接
+      </button>
+    </div>
+  );
+  const cardTime = (value?: string) => (deploymentTime(value) ? fmtTime(value!).slice(5, 16) : '—');
+  const serviceLastDeploy = (id: string) =>
+    db.targets
+      .filter((t) => t.serviceId === id && deploymentTime(t.lastDeploy))
+      .map((t) => t.lastDeploy)
+      .sort()
+      .at(-1) ||
+    db.history.find(
+      (h) =>
+        h.service.id === id &&
+        ['success', 'unverified', 'rolledback'].includes(h.status) &&
+        deploymentTime(h.time),
+    )?.time;
   const header = (title: string, description: string, action?: ReactNode) => (
     <header className="page-header">
       <div>
@@ -1758,16 +1948,26 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                     添加服务
                   </button>
                 }
+                cardActions={serviceActions}
+                cardState={(s) => ({
+                  good: !!serviceLastDeploy(s.id),
+                  label: serviceLastDeploy(s.id) ? '已部署' : '未部署',
+                })}
+                cardMeta={(s) => (
+                  <>
+                    <span>{db.targets.filter((t) => t.serviceId === s.id).length} 个目标</span>
+                    <time>{cardTime(serviceLastDeploy(s.id))}</time>
+                  </>
+                )}
                 summary={(s) => (
                   <>
                     <span className="path" title={s.root}>
                       {s.root}
                     </span>
-                    <span>
-                      {s.jdk || '未选择 JDK'} · {toolLabels[s.tool]}
+                    <span className="tags">
+                      <Badge>{s.jdk || '未选择 JDK'}</Badge>
+                      <Badge>{toolLabels[s.tool]}</Badge>
                     </span>
-                    <span>{db.targets.filter((t) => t.serviceId === s.id).length} 个目标</span>
-                    <span>{serviceDeployment(s.id)}</span>
                   </>
                 )}
                 label="服务"
@@ -1777,11 +1977,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 searchText={(s) => s.code + ' ' + s.root}
               >
                 {(s) => (
-                  <Card
-                    key={s.id}
-                    title={s.name}
-                    action={<Badge>{db.targets.filter((t) => t.serviceId === s.id).length} 个目标</Badge>}
-                  >
+                  <EntityDetail key={s.id} title={s.name} action={serviceActions(s)}>
                     <p className="muted">{s.description}</p>
                     <p className="path">{s.root}</p>
                     <div className="tags">
@@ -1802,46 +1998,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                             : '尚未部署';
                       })()}
                     </p>
-                    <footer className="row end wrap">
-                      <MoreMenu
-                        label={'更多服务' + s.name + '操作'}
-                        actions={[
-                          {
-                            label: '复制服务',
-                            onClick: () => setDialog({ kind: 'service', value: cloneService(s) }),
-                          },
-                          {
-                            label: '删除服务',
-                            disabled: !!entityRemovalReason('service', s.id),
-                            reason: entityRemovalReason('service', s.id),
-                            destructive: true,
-                            onClick: () => setDialog({ kind: 'delete', entity: 'service', id: s.id }),
-                          },
-                        ]}
-                      />
-                      <button className="button" onClick={() => setDialog({ kind: 'service', value: s })}>
-                        编辑
-                      </button>
-                      <button
-                        className="button"
-                        onClick={() => {
-                          selectService(s.id);
-                          setPage('targets');
-                        }}
-                      >
-                        配置目标
-                      </button>
-                      <button
-                        className="button"
-                        onClick={() => {
-                          selectService(s.id);
-                          setPage('deploy');
-                        }}
-                      >
-                        去部署
-                      </button>
-                    </footer>
-                  </Card>
+                  </EntityDetail>
                 )}
               </EntityWorkspace>
             </>
@@ -1873,12 +2030,25 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                     </Field>
                   </div>
                 }
+                cardActions={targetActions}
+                cardState={(t) => ({
+                  good: !!deploymentTime(t.lastDeploy),
+                  label: deploymentTime(t.lastDeploy) ? '已部署' : '未部署',
+                })}
+                cardMeta={(t) => (
+                  <>
+                    <span>{t.healthState}</span>
+                    <time>{cardTime(t.lastDeploy)}</time>
+                  </>
+                )}
                 summary={(t) => (
                   <>
-                    <span>{db.services.find((s) => s.id === t.serviceId)?.name}</span>
-                    <span>{db.servers.find((s) => s.id === t.serverId)?.name || '未关联服务器'}</span>
-                    <span>
-                      {modeLabel(t.mode)} · {t.healthState}
+                    <span className="path" title={remoteJar(t)}>
+                      {remoteJar(t)}
+                    </span>
+                    <span className="tags">
+                      <Badge>{modeLabel(t.mode)}</Badge>
+                      <Badge kind={t.production ? 'warn' : ''}>{t.production ? '正式' : '非正式'}</Badge>
                     </span>
                   </>
                 )}
@@ -1886,7 +2056,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 label="部署目标"
                 items={targets}
                 title={(t) => t.name}
-                subtitle={(t) => (t.production ? '正式环境' : '非正式环境')}
+                subtitle={(t) => db.servers.find((s) => s.id === t.serverId)?.name || '未关联服务器'}
                 searchText={(t) =>
                   [
                     db.services.find((s) => s.id === t.serviceId)?.name,
@@ -1896,7 +2066,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 }
               >
                 {(t) => (
-                  <Card
+                  <EntityDetail
                     key={t.id}
                     title={
                       <span className="row">
@@ -1904,80 +2074,13 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                         <Badge kind={t.production ? 'warn' : ''}>{modeLabel(t.mode)}</Badge>
                       </span>
                     }
-                    action={
-                      <div className="row">
-                        <MoreMenu
-                          label={'更多目标' + t.name + '操作'}
-                          actions={[
-                            {
-                              label: '复制目标',
-                              onClick: () => setDialog({ kind: 'target', value: cloneTarget(t) }),
-                            },
-                            ...(desktop
-                              ? [
-                                  {
-                                    label: '查看并清理远程备份',
-                                    onClick: () => setBackupTarget(t),
-                                  },
-                                  {
-                                    label: '只读诊断',
-                                    onClick: () =>
-                                      setNativeDialog({
-                                        title: t.name + ' · 只读诊断',
-                                        diagnostic: {
-                                          target: t,
-                                          server: db.servers.find((s) => s.id === t.serverId)!,
-                                        },
-                                      }),
-                                  },
-                                  {
-                                    label: '核实远程工作台',
-                                    disabled: isActive(task),
-                                    reason: isActive(task) ? '请先等待当前任务结束' : undefined,
-                                    onClick: () =>
-                                      setNativeDialog({
-                                        title: t.name + ' · 核实远程工作台',
-                                        server: db.servers.find((s) => s.id === t.serverId),
-                                        workbenchTarget: t.id,
-                                      }),
-                                  },
-                                  {
-                                    label: '检查或接管任务锁',
-                                    disabled: isActive(task),
-                                    reason: isActive(task) ? '任务执行中不能接管锁' : undefined,
-                                    onClick: () =>
-                                      setNativeDialog({
-                                        title: t.name + ' · 检查任务锁',
-                                        server: db.servers.find((s) => s.id === t.serverId),
-                                        lockTarget: t.id,
-                                      }),
-                                  },
-                                ]
-                              : []),
-                            {
-                              label: '删除目标',
-                              disabled: !!entityRemovalReason('target', t.id),
-                              reason: entityRemovalReason('target', t.id),
-                              destructive: true,
-                              onClick: () => setDialog({ kind: 'delete', entity: 'target', id: t.id }),
-                            },
-                          ]}
-                        />
-                        <button
-                          className="button"
-                          onClick={() => setDialog({ kind: 'target', value: t })}
-                        >
-                          <Pencil size={15} />
-                          编辑目标
-                        </button>
-                      </div>
-                    }
+                    action={targetActions(t)}
                   >
                     <TargetConfiguration
                       target={t}
                       server={db.servers.find((s) => s.id === t.serverId)}
                     />
-                  </Card>
+                  </EntityDetail>
                 )}
               </EntityWorkspace>
             </>
@@ -2011,34 +2114,51 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                     添加服务器
                   </button>
                 }
+                cardActions={serverActions}
+                cardState={(s) => ({
+                  good: serverChecks[s.id]?.identity === serverIdentity(s) && serverChecks[s.id].ok,
+                  label:
+                    serverChecks[s.id]?.identity === serverIdentity(s)
+                      ? serverChecks[s.id].ok
+                        ? '连接正常'
+                        : '检查失败'
+                      : '未检查',
+                })}
+                cardMeta={(s) => (
+                  <>
+                    <span>{db.targets.filter((t) => t.serverId === s.id).length} 个目标</span>
+                    <time>
+                      {serverChecks[s.id]?.identity === serverIdentity(s)
+                        ? cardTime(new Date(serverChecks[s.id].time).toISOString())
+                        : '—'}
+                    </time>
+                  </>
+                )}
                 summary={(s) => (
                   <>
-                    <span>
-                      {s.auth === 'alias'
-                        ? 'SSH Config'
-                        : s.auth === 'password'
-                          ? '密码认证'
-                          : '私钥认证'}
+                    <span className="path" title={serverAddress(s)}>
+                      {serverAddress(s)}
                     </span>
-                    <span>关联 {db.targets.filter((t) => t.serverId === s.id).length} 个目标</span>
-                    <span>
-                      {serverChecks[s.id]?.identity === serverIdentity(s)
-                        ? (serverChecks[s.id].ok ? '测试通过' : '测试未通过') +
-                          ' · ' +
-                          fmtTime(serverChecks[s.id].time)
-                        : '未测试'}
+                    <span className="tags">
+                      <Badge>
+                        {s.auth === 'alias'
+                          ? 'SSH 别名'
+                          : s.auth === 'password'
+                            ? '密码认证'
+                            : '私钥认证'}
+                      </Badge>
                     </span>
                   </>
                 )}
                 label="服务器"
                 items={db.servers}
                 title={(s) => s.name}
-                subtitle={(s) => serverAddress(s)}
+                subtitle={(s) => s.note || '服务器连接配置'}
               >
                 {(s) => {
                   const related = db.targets.filter((t) => t.serverId === s.id);
                   return (
-                    <Card title={s.name}>
+                    <EntityDetail title={s.name}>
                       <div className="list-row server-row" key={s.id}>
                         <ServerIcon size={20} />
                         <div className="grow">
@@ -2062,71 +2182,9 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                               fmtTime(serverChecks[s.id].time)
                             : '未测试'}
                         </Badge>
-                        <button
-                          className="button primary"
-                          onClick={() =>
-                            desktop
-                              ? setNativeDialog({ title: '测试连接 · ' + s.name, server: s })
-                              : notify('原型未发起连接。正式版将展示主机指纹及认证结果。')
-                          }
-                        >
-                          测试连接
-                        </button>
-                        <button
-                          className="icon-button"
-                          aria-label={'编辑服务器' + s.name}
-                          onClick={() => setDialog({ kind: 'server', value: s })}
-                        >
-                          <Pencil size={17} />
-                        </button>
-                        <MoreMenu
-                          label={'更多服务器' + s.name + '操作'}
-                          actions={[
-                            ...(desktop && s.auth === 'alias'
-                              ? [
-                                  {
-                                    label: '查看 SSH 最终地址',
-                                    onClick: () =>
-                                      void nativeAction(async () => {
-                                        await desktop!.save(db);
-                                        const parsed = await desktop!.resolveAlias(s.id);
-                                        setNativeDialog({
-                                          title: s.name + ' · SSH Config 最终地址',
-                                          content:
-                                            '系统 SSH 解析后的连接地址，仅用于核对，不会修改配置：\n' +
-                                            parsed.user +
-                                            '@' +
-                                            parsed.host +
-                                            ':' +
-                                            parsed.port,
-                                        });
-                                      }),
-                                  },
-                                ]
-                              : []),
-                            ...(desktop
-                              ? [
-                                  {
-                                    label: '服务器体检（只读）',
-                                    onClick: () =>
-                                      setNativeDialog({
-                                        title: s.name + ' · 服务器体检',
-                                        diagnostic: { server: s },
-                                      }),
-                                  },
-                                ]
-                              : []),
-                            {
-                              label: '删除服务器',
-                              disabled: !!entityRemovalReason('server', s.id),
-                              reason: entityRemovalReason('server', s.id),
-                              destructive: true,
-                              onClick: () => setDialog({ kind: 'delete', entity: 'server', id: s.id }),
-                            },
-                          ]}
-                        />
+                        {serverActions(s)}
                       </div>
-                    </Card>
+                    </EntityDetail>
                   );
                 }}
               </EntityWorkspace>
@@ -2643,11 +2701,11 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                             </p>
                           </Card>
                           <ShortcutHelp />
-                          <Card title="项目仓库">
-                            <p className="muted">查看项目源码、版本发布和问题反馈。</p>
-                            <a className="repository-link" href="https://github.com/liwl1995/DeployCenter"
+                          <Card title="版本与源码">
+                            <p className="muted">获取最新安装包、版本说明与源码。</p>
+                            <a className="button primary" href="https://github.com/liwl1995/DeployCenter/releases"
                               target="_blank" rel="noopener noreferrer">
-                              https://github.com/liwl1995/DeployCenter
+                              查看版本与源码
                             </a>
                           </Card>
                           <Card title="帮助">

@@ -6,9 +6,17 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { seed, shellQuote as q, type Target } from '../src/model';
 import { createTask } from '../src/engine';
-import { dryRunScript, launchRunner, preflightScript, remotePaths, runnerScript } from '../electron/remote';
+import {
+  dryRunScript,
+  launchRunner,
+  preflightScript,
+  remotePaths,
+  runnerScript,
+} from '../electron/remote';
 import {
   cleanWorkbench,
+  workbenchPollScript,
+  parseWorkbenchPoll,
   verifyWorkbench,
   workbenchHeader,
   type FinalState,
@@ -194,13 +202,19 @@ describe.skipIf(!available)('隔离 Linux Bash 执行远程部署和收尾（Doc
       const { task, r } = makeRun(directory, { first: true });
       r.target.createDirectory = true;
       const prefix =
-        'export PATH=' + q(dir) + ':$PATH\n' +
+        'export PATH=' +
+        q(dir) +
+        ':$PATH\n' +
         setFile(dir + '/' + command, '#!/bin/bash\n' + stub + '\n') +
-        'chmod +x -- ' + q(dir + '/' + command) + '\n';
+        'chmod +x -- ' +
+        q(dir + '/' + command) +
+        '\n';
       for (const script of [dryRunScript(task, r), preflightScript(task, r, false)]) {
         const result = await shell(prefix + script);
         expect(result.code).toBe(1);
-        expect(result.stderr).toContain('服务器的 ' + usage + ' 不支持所需用法，需要 GNU coreutils');
+        expect(result.stderr).toContain(
+          '服务器的 ' + usage + ' 不支持所需用法，需要 GNU coreutils',
+        );
         expect(result.stderr).toContain('Alpine、BusyBox');
         await run('test ! -e ' + q(directory));
       }
@@ -236,6 +250,15 @@ describe.skipIf(!available)('隔离 Linux Bash 执行远程部署和收尾（Doc
       expect(result.code, result.stderr).toBe(0);
       const transport = session(prefix);
       const state = (await run('cat -- ' + q(job + '/state'))) as FinalState;
+      const frame = await shell(
+        prefix + workbenchPollScript(target, owner, { journal: 0, log: 0 }),
+      );
+      expect(frame.code, frame.stderr).toBe(0);
+      const polled = parseWorkbenchPoll(frame.bytes);
+      expect(polled.state).toBe(state);
+      expect(polled.alive).toBe(false);
+      expect(polled.journal?.length).toBeGreaterThan(0);
+
       expect(await run('test -d ' + q(r.remote!.lockDir) + ' && printf YES')).toBe('YES');
       const files: Record<string, string> = {};
       const receipt = await verifyWorkbench(transport, r, owner, state, (name, bytes) => {

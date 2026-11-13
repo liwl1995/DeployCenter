@@ -3025,3 +3025,212 @@ tr:last-child td {
   font-size: 14px;
   white-space: nowrap;
 }
+
+/* 1.5.1：卡片入口直接操作，详情不再重复套卡片。 */
+.entity-card-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+.entity-card {
+  height: 204px;
+  padding: 14px;
+  gap: 6px;
+}
+.entity-card-title {
+  gap: 8px;
+}
+.entity-name {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 15px;
+  font-weight: 650;
+  text-align: start;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.entity-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--sub);
+}
+.entity-state > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--sub);
+}
+.entity-state.good > span {
+  background: var(--accent);
+}
+.entity-card-subtitle {
+  margin: 0;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.entity-card-summary {
+  gap: 7px;
+}
+.entity-card-summary .path {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  -webkit-line-clamp: unset;
+}
+.entity-card-summary .tags {
+  margin: 0;
+  gap: 5px;
+}
+.entity-card-summary .badge {
+  font-size: 11px;
+  padding: 1px 5px;
+}
+.entity-card-meta {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 7px;
+  color: var(--sub);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.entity-card-meta > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.entity-card-meta time {
+  flex-shrink: 0;
+}
+.entity-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.entity-actions > .more-menu {
+  margin-inline-end: auto;
+  order: -1;
+}
+.entity-card .entity-actions {
+  margin-top: 3px;
+}
+.entity-card .entity-actions .button {
+  padding: 4px 8px;
+  min-height: 29px;
+  font-size: 12px;
+}
+.entity-flat-detail > .card-head {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.entity-flat-detail > .card-head .entity-actions {
+  margin-inline-start: auto;
+}
+.entity-toolbar .target-service-filter .field {
+  margin: 0;
+}
+.entity-toolbar .search-box,
+.entity-toolbar .target-service-filter select {
+  height: 38px;
+}
+.entity-toolbar .target-service-filter {
+  flex-basis: 180px;
+}
+.terminal-upload {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  padding: 6px 10px;
+  min-height: 56px;
+  font:
+    12px/1.8 Consolas,
+    'Microsoft YaHei',
+    monospace;
+  color: #9fe5c9;
+  font-variant-numeric: tabular-nums;
+}
+.terminal-upload > span:first-child {
+  white-space: nowrap;
+}
+@media (max-width: 1050px) {
+  .entity-card {
+    height: 188px;
+    padding: 12px;
+  }
+  .entity-card-grid {
+    gap: 20px;
+  }
+  .entity-card .entity-actions .button {
+    padding: 4px 6px;
+  }
+  .entity-actions {
+    gap: 5px;
+  }
+  .entity-card .entity-actions svg {
+    display: none;
+  }
+  .entity-card-title {
+    align-items: baseline;
+  }
+  .entity-name {
+    font-size: 14px;
+  }
+}
+@media (max-width: 780px) {
+  .entity-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.log-activity {
+  margin: 3px 0 0;
+  font-size: 11px;
+  color: var(--sub);
+  flex-shrink: 0;
+}
+
+.app .workspace > main:has(.entity-cards-workspace) {
+  padding: 18px 22px 6px;
+}
+main:has(.entity-cards-workspace) > .page-header {
+  margin-bottom: 10px;
+}
+main:has(.entity-cards-workspace) > .page-header h1 {
+  font-size: 23px;
+  line-height: 1.3;
+}
+main:has(.entity-cards-workspace) > .page-header .muted {
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.entity-toolbar {
+  margin-bottom: 12px;
+}
+.entity-toolbar > .button {
+  height: 38px;
+  padding-block: 5px;
+}
+@media (max-width: 1050px) {
+  .entity-card {
+    height: 186px;
+  }
+}
+
+.entity-toolbar .search-box input {
+  height: 100%;
+  margin: 0;
+  padding-block: 0;
+}

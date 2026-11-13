@@ -53,7 +53,17 @@ export function workbenchHeader(target: Pick<Target, 'directory'>, owner: string
     '',
   ].join('\n');
 }
-export async function pollWorkbench(transport: Transport, r: RunTarget, owner: string) {
+export async function pollWorkbench(
+  transport: Transport,
+  r: RunTarget,
+  owner: string,
+  offsets?: { journal: number; log: number },
+) {
+  if (offsets && transport.execBytes) {
+    const script = workbenchPollScript(r.target, owner, offsets);
+    const packet = await transport.execBytes('bash -s', script, 2 * 262144 + 128);
+    return parseWorkbenchPoll(packet);
+  }
   const result = await mustExec(
     transport,
     'bash -s',
@@ -63,7 +73,13 @@ export async function pollWorkbench(transport: Transport, r: RunTarget, owner: s
   const [state, code] = result.trim().split('\t');
   if (!/^[A-Z_]+$/.test(state) || !['0', '1', '2'].includes(code))
     throw new Error('远端工作台状态无法读取');
-  return { state, alive: code === '0', exited: code === '1' };
+  return {
+    state,
+    alive: code === '0',
+    exited: code === '1',
+    journal: undefined as Buffer | undefined,
+    output: undefined as Buffer | undefined,
+  };
 }
 const hashScript =
   [
@@ -224,4 +240,60 @@ export async function cleanWorkbench(transport: Transport, target: Target, recei
         : result.stderr.trim() || '远程校验或清理未完成',
     );
   }
+}
+
+/** 身份核对、进程状态和两份增量日志在一次连接中读取，不改变终态确认与清理规则。 */
+export function workbenchPollScript(
+  target: Target,
+  owner: string,
+  offsets: { journal: number; log: number },
+) {
+  for (const offset of [offsets.journal, offsets.log])
+    if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('远端日志偏移无效');
+  return (
+    workbenchHeader(target, owner) +
+    [
+      'dc_verify',
+      'dc_file "$JOB/journal"; dc_file "$JOB/output.log"',
+      'state="$(dc_value "$JOB/state")"; alive=0; dc_alive || alive=$?',
+      'js="$(stat -c%s -- "$JOB/journal")"; os="$(stat -c%s -- "$JOB/output.log")"',
+      '[ "$js" -ge ' + offsets.journal + ' ] && [ "$os" -ge ' + offsets.log + ' ]',
+      'jl=$((js - ' + offsets.journal + ')); ol=$((os - ' + offsets.log + '))',
+      '[ "$jl" -le 262144 ] || jl=262144; [ "$ol" -le 262144 ] || ol=262144',
+      'printf "%s\\t%s\\t%s\\t%s\\n" "$state" "$alive" "$jl" "$ol"',
+      // head 读满约定长度后会主动关管道，tail 的 SIGPIPE 不表示日志读取失败。
+      '( set +o pipefail; tail -c +' +
+        (offsets.journal + 1) +
+        ' -- "$JOB/journal" | head -c "$jl" )',
+      '( set +o pipefail; tail -c +' +
+        (offsets.log + 1) +
+        ' -- "$JOB/output.log" | head -c "$ol" )',
+    ].join('\n') +
+    '\n'
+  );
+}
+
+export function parseWorkbenchPoll(packet: Buffer) {
+  const end = packet.indexOf(10);
+  if (end < 0 || end > 120) throw new Error('远端任务状态响应无效');
+  const [state, alive, a, b] = packet.subarray(0, end).toString('ascii').split('\t');
+  const journalSize = Number(a),
+    outputSize = Number(b);
+  if (
+    !/^[A-Z_]+$/.test(state) ||
+    !['0', '1', '2'].includes(alive) ||
+    !/^\d+$/.test(a || '') ||
+    !/^\d+$/.test(b || '') ||
+    journalSize > 262144 ||
+    outputSize > 262144 ||
+    packet.length !== end + 1 + journalSize + outputSize
+  )
+    throw new Error('远端任务状态或增量日志长度无效');
+  return {
+    state,
+    alive: alive === '0',
+    exited: alive === '1',
+    journal: packet.subarray(end + 1, end + 1 + journalSize),
+    output: packet.subarray(end + 1 + journalSize),
+  };
 }

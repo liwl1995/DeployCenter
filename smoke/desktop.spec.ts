@@ -37,9 +37,7 @@ test.afterEach(async () => {
 test('首次启动无示例服务器；安全选项和 IPC 工作', async () => {
   const page = await app.firstWindow();
   await expect(page.getByRole('heading', { name: '一键部署', exact: true })).toBeVisible();
-  await expect(
-    page.getByText('添加服务并配置部署目标，或导入已有配置。'),
-  ).toBeVisible();
+  await expect(page.getByText('添加服务并配置部署目标，或导入已有配置。')).toBeVisible();
   expect(
     await page.evaluate(() => ({
       require: typeof (window as unknown as { require: unknown }).require,
@@ -75,6 +73,13 @@ test('通过界面保存第一个服务，重启后从 SQLite 恢复', async () 
   ).toBeVisible();
   await page.getByRole('button', { name: '服务器', exact: true }).click();
   await expect(page.getByText('cordys-19', { exact: false })).toHaveCount(0);
+  // 配置保存有防抖，重启验证前等待真实落库，不依赖界面操作恰好超过防抖时间。
+  await expect
+    .poll(
+      async () =>
+        (await page.evaluate(() => window.deployCenter!.load())).database.services[0]?.name,
+    )
+    .toBe('本机验收服务');
   const loaded = await page.evaluate(() => window.deployCenter!.load());
   expect(loaded.database.services[0].name).toBe('本机验收服务');
   expect(loaded.database.settings.allowMavenNonzero).toBe(true);

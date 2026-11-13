@@ -69,7 +69,7 @@ describe('v0.3 组件回归', () => {
     start();
     await advance(6);
     fireEvent.click(within(screen.getByRole('group', { name: '部署阶段' })).getByRole('button', { name: /上传与校验/ }));
-    expect(screen.getByRole('progressbar', { name: '文件上传进度' }).closest('.task-upload')?.textContent).toMatch(/33%.*MB\/s/);
+    expect(screen.getByRole('progressbar', { name: '文件上传进度' }).textContent).toMatch(/33%.*MB\/s/);
     expect(screen.getAllByText(/0.8 秒|0.9 秒/).length).toBeGreaterThan(0);
     await advance(14);
     fireEvent.click(screen.getByRole('button', { name: '部署历史' }));

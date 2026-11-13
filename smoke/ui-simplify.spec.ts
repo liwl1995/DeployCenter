@@ -99,7 +99,6 @@ test.beforeEach(async () => {
   }
   const page = await app.firstWindow();
   await expect(page.getByRole('heading', { name: '准备好，发布下一版本' })).toBeVisible();
-
 });
 test.afterEach(async () => {
   await app?.close();
@@ -150,7 +149,14 @@ test('启动直接部署，三个配置页卡片与详情在三种尺寸下可�
       const columns = await grid.evaluate(
         (el) => getComputedStyle(el).gridTemplateColumns.split(' ').length,
       );
-      expect(columns).toBe(width >= 1280 ? 3 : 2);
+      expect(columns).toBe(3);
+      const lastCard = (await grid.locator('.entity-card').last().boundingBox())!;
+      const footerBox = (await page.getByRole('contentinfo', { name: '应用状态' }).boundingBox())!;
+      expect(lastCard.y + lastCard.height).toBeLessThanOrEqual(footerBox.y);
+      await expect(
+        grid.locator('.entity-card').first().locator('.entity-actions button'),
+      ).toHaveCount(3);
+
       await expect(page.locator('.entity-detail')).toHaveCount(0);
       const toolbar = page.locator('.entity-toolbar');
       const search = toolbar.getByRole('textbox');
@@ -171,8 +177,8 @@ test('启动直接部署，三个配置页卡片与详情在三种尺寸下可�
       await card.scrollIntoViewIfNeeded();
       const main = page.getByRole('main');
       const before = await main.evaluate((el) => el.scrollTop);
-      const label = await card.getAttribute('aria-label');
-      await card.click();
+      const label = await card.locator('.entity-name').getAttribute('aria-label');
+      await card.locator('.entity-name').click();
       await expect(page.locator('.entity-detail')).toBeVisible();
       await expect(page.getByRole('button', { name: '返回列表', exact: true })).toBeInViewport({
         ratio: 1,
@@ -354,6 +360,11 @@ test('日志优先任务页的八种状态与连续输出在三个尺寸下可�
         }
         await upload.click();
         const viewport = taskPage.getByRole('log', { name: '任务日志' });
+        const elapsed = await taskPage.locator('.task-duration').textContent();
+        await expect.poll(() => taskPage.locator('.task-duration').textContent()).not.toBe(elapsed);
+        await expect(taskPage.getByText('任务详情', { exact: true })).toHaveCount(0);
+        await expect(taskPage.locator('.terminal-upload')).toHaveCount(1);
+
         for (const batch of [1, 2]) {
           await app.evaluate(
             ({ BrowserWindow }, { taskId, targetId, batch }) => {
@@ -471,10 +482,10 @@ test('配置与帮助展示仓库并使用系统浏览器打开，其他外链�
   await page.getByRole('navigation').getByRole('button', { name: '设置', exact: true }).click();
   await page.getByRole('tab', { name: '配置与帮助', exact: true }).click();
   const link = page.getByRole('link', {
-    name: 'https://github.com/liwl1995/DeployCenter',
+    name: '查看版本与源码',
     exact: true,
   });
-  await expect(link).toHaveAttribute('href', 'https://github.com/liwl1995/DeployCenter');
+  await expect(link).toHaveAttribute('href', 'https://github.com/liwl1995/DeployCenter/releases');
   await page.evaluate(() => window.open('https://example.com'));
   expect(
     await app.evaluate(
@@ -486,7 +497,7 @@ test('配置与帮助展示仓库并使用系统浏览器打开，其他外链�
     .poll(() =>
       app.evaluate(() => (globalThis as unknown as { repositoryOpened?: string }).repositoryOpened),
     )
-    .toBe('https://github.com/liwl1995/DeployCenter');
+    .toBe('https://github.com/liwl1995/DeployCenter/releases');
   expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
   await boundaries();
   await shot('配置与帮助-仓库');

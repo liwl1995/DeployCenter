@@ -36,6 +36,7 @@ export interface Transport {
     command: string,
     options?: { input?: string; timeout?: number; maxOutput?: number },
   ): Promise<{ code: number; stdout: string; stderr: string }>;
+  execBytes?(command: string, input: string, maxOutput: number): Promise<Buffer>;
   upload(
     file: string,
     remote: string,
@@ -46,6 +47,37 @@ export interface Transport {
   close(): void;
 }
 class BaseTransport {
+  /** 同一 SSH 通道读取有边界的二进制响应，避免别名模式为每个日志文件重复握手。 */
+  async execBytes(this: Transport, command: string, input: string, maxOutput: number) {
+    const channel = await this.channel(command);
+    const chunks: Buffer[] = [];
+    let size = 0,
+      exceeded = false,
+      timedOut = false;
+    channel.error.resume();
+    channel.output.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > maxOutput) {
+        exceeded = true;
+        channel.stop();
+      } else chunks.push(chunk);
+    });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      channel.stop();
+    }, 30000);
+    channel.input.end(input);
+    try {
+      const code = await channel.done;
+      if (exceeded) throw new Error('远端任务状态响应超过限制');
+      if (timedOut) throw new Error('读取远端任务状态超时');
+      if (code) throw new Error('读取远端任务状态失败，现场已保留');
+      return Buffer.concat(chunks);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async exec(
     this: Transport,
     command: string,

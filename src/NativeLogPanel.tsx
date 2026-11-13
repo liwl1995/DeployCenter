@@ -1,3 +1,5 @@
+import { LogActivity } from './LogActivity';
+import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import type { DesktopAPI, DesktopEvent } from './platform';
 import { desktop } from './platform';
@@ -7,6 +9,8 @@ import { VirtualLogs } from './LogViewer';
 export function NativeLogPanel({
   active = true,
   compact = false,
+  running = false,
+  trailing,
   taskId,
   targetId,
   initial,
@@ -16,6 +20,8 @@ export function NativeLogPanel({
 }: {
   active?: boolean;
   compact?: boolean;
+  running?: boolean;
+  trailing?: ReactNode;
   taskId: string;
   targetId: string;
   initial: string[];
@@ -31,6 +37,7 @@ export function NativeLogPanel({
     [ready, setReady] = useState(false),
     [focusLine, setFocusLine] = useState<{ id: string; nonce: number }>();
   const epoch = useRef(0);
+  const received = useRef(Date.now());
   const loader = useRef<(() => Promise<boolean>) | undefined>(undefined),
     currentLines = useRef<LogLine[]>([]),
     hasMore = useRef(false),
@@ -81,6 +88,7 @@ export function NativeLogPanel({
         (event.targetId && event.targetId !== targetId)
       )
         return;
+      received.current = Date.now();
       if (!loaded) {
         pending.push(event);
         return;
@@ -243,10 +251,12 @@ export function NativeLogPanel({
       <VirtualLogs
         active={active}
         compact={compact}
+        trailing={trailing}
         entries={lines}
         focusLine={focusLine}
         onExport={() => void api.exportLogs(taskId, targetId).catch((e) => setError(String(e)))}
       />
+      {compact && running && <LogActivity received={received.current} />}
     </>
   );
 }

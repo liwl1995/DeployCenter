@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fmtTime } from './model';
 import { logLevel, type LogLine } from './log-model';
@@ -7,6 +8,7 @@ type Row = { id: string; kind: 'group' | 'command' | 'line'; step: string; line:
 export function VirtualLogs({
   active = true,
   compact = false,
+  trailing,
   entries,
   focusStep,
   focusError,
@@ -16,6 +18,7 @@ export function VirtualLogs({
   entries: LogLine[];
   active?: boolean;
   compact?: boolean;
+  trailing?: ReactNode;
   focusLine?: { id: string; nonce: number };
   focusStep?: { name: string; nonce: number };
   focusError?: number;
@@ -146,7 +149,8 @@ export function VirtualLogs({
       automaticTop.current = el.scrollTop;
       setTop(el.scrollTop);
     };
-    const end = () => Math.max(0, rows.length * height - (el.clientHeight || 420));
+    const end = () =>
+      Math.max(0, rows.length * height + (trailing ? 70 : 0) - (el.clientHeight || 420));
     if (jump) {
       const index = rows.findIndex((r) => r.id === jump);
       if (index >= 0) {
@@ -164,7 +168,7 @@ export function VirtualLogs({
     } else {
       setTop(el.scrollTop);
     }
-  }, [rows, follow, jump, selected, active]);
+  }, [rows, follow, jump, selected, active, !!trailing]);
   const copy = async () => {
     const text = entries.map((r) => r.text).join('\n');
     try {
@@ -350,6 +354,7 @@ export function VirtualLogs({
             )}
           </div>
         </div>
+        {level === 'all' && trailing}
       </div>
     </div>
   );

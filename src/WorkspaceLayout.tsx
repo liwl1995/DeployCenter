@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Search, ChevronRight, ArrowLeft } from 'lucide-react';
+import { Search, ArrowLeft } from 'lucide-react';
 
 /** 卡片入口和单项详情共用状态，返回时恢复列表位置与键盘焦点。 */
 export function EntityWorkspace<T extends { id: string }>({
@@ -9,6 +9,9 @@ export function EntityWorkspace<T extends { id: string }>({
   subtitle,
   searchText,
   summary,
+  cardActions,
+  cardState,
+  cardMeta,
   actions,
   filters,
   children,
@@ -19,6 +22,9 @@ export function EntityWorkspace<T extends { id: string }>({
   subtitle: (item: T) => string;
   searchText?: (item: T) => string;
   summary?: (item: T) => ReactNode;
+  cardActions?: (item: T) => ReactNode;
+  cardState?: (item: T) => { good: boolean; label: string };
+  cardMeta?: (item: T) => ReactNode;
   actions?: ReactNode;
   filters?: ReactNode;
   children: (item: T) => ReactNode;
@@ -106,20 +112,32 @@ export function EntityWorkspace<T extends { id: string }>({
           </div>
           <div className="entity-card-grid" aria-label={label + '列表'}>
             {visible.map((item) => (
-              <button
-                key={item.id}
-                className="entity-card"
-                data-entity-id={item.id}
-                aria-label={'查看' + label + title(item) + '详情'}
-                onClick={() => enter(item.id)}
-              >
-                <span className="entity-card-title">
-                  <strong>{title(item)}</strong>
-                  <ChevronRight size={16} />
-                </span>
-                {subtitle(item) && <span className="entity-card-subtitle">{subtitle(item)}</span>}
-                <span className="entity-card-summary">{summary?.(item)}</span>
-              </button>
+              <article key={item.id} className="entity-card">
+                <div className="entity-card-title">
+                  <button
+                    className="entity-name"
+                    data-entity-id={item.id}
+                    aria-label={'查看' + label + title(item) + '详情'}
+                    onClick={() => enter(item.id)}
+                  >
+                    {title(item)}
+                  </button>
+                  {cardState && (
+                    <span className={'entity-state' + (cardState(item).good ? ' good' : '')}>
+                      <span aria-hidden="true" />
+                      {cardState(item).label}
+                    </span>
+                  )}
+                </div>
+                {subtitle(item) && (
+                  <p className="entity-card-subtitle" title={subtitle(item)}>
+                    {subtitle(item)}
+                  </p>
+                )}
+                <div className="entity-card-summary">{summary?.(item)}</div>
+                {cardMeta && <div className="entity-card-meta">{cardMeta(item)}</div>}
+                {cardActions?.(item)}
+              </article>
             ))}
           </div>
           {!visible.length && (
@@ -221,5 +239,26 @@ export function Disclosure({
       </summary>
       <div className="disclosure-body">{children}</div>
     </details>
+  );
+}
+
+/** 详情直接使用内容区，不重复嵌套带边框的大卡片。 */
+export function EntityDetail({
+  title,
+  action,
+  children,
+}: {
+  title?: ReactNode;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="entity-flat-detail">
+      <header className="card-head">
+        <h2>{title}</h2>
+        {action}
+      </header>
+      {children}
+    </section>
   );
 }

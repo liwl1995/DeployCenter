@@ -1,37 +1,18 @@
+import { stepNames as names } from './step-names';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft, Check, Circle, CircleAlert, Clock3, Loader2, Minus, X } from 'lucide-react';
 import { desktop } from './platform';
 import { Badge, Card, Demo, download } from './ui';
 import { MoreMenu, type MenuAction } from './EntityActions';
-import { Disclosure } from './WorkspaceLayout';
+import { useTaskClock } from './task-clock';
+import { UploadProgress } from './UploadProgress';
 import { NativeLogPanel } from './NativeLogPanel';
 import { VirtualLogs } from './LogViewer';
 import { diagnostics } from './validation';
-import { remoteJar, seconds, type RunTarget, type Step, type Task } from './model';
+import { seconds, type RunTarget, type Step, type Task } from './model';
 import { failureAdvice, operationLabel, taskResult } from './presentation';
 import type { DiagnosticKind } from './features';
 
-const names: Record<string, string> = {
-  local: '检查本机配置',
-  environment: '检查本机构建环境',
-  build: '构建部署文件',
-  artifact: '校验部署文件',
-  connect: '连接服务器',
-  preflight: '检查服务器环境',
-  mount: '检查容器挂载',
-  upload: '上传文件',
-  verify: '校验文件',
-  permissions: '准备文件权限',
-  backup: '备份旧版本',
-  stop: '停止服务',
-  replace: '替换文件',
-  chmod: '设置执行权限',
-  start: '启动服务',
-  containerHash: '核对容器中的文件',
-  stability: '检查容器运行状态',
-  health: '检查应用是否可用',
-  rollback: '恢复并检查旧版本',
-};
 const targetStatus: Record<RunTarget['status'], string> = {
   pending: '等待',
   running: '进行中',
@@ -110,7 +91,7 @@ function resultFor(task: Task, run?: RunTarget): { tone: Status; text: string } 
 }
 
 export function TaskView({
-  task,
+  task: snapshot,
   inspected,
   setInspected,
   backLabel,
@@ -156,6 +137,7 @@ export function TaskView({
   onObserve?: () => void;
   onBackups?: () => void;
 }) {
+  const task = useTaskClock(snapshot);
   const run = task.targets[inspected];
   const active = task.status === 'running' || task.status === 'cancelling';
   const result = resultFor(task, run);
@@ -475,10 +457,6 @@ export function TaskView({
                       step.key === 'upload' && task.operation === 'rollback'
                         ? '准备历史备份'
                         : names[step.key] || step.label;
-                    const upload =
-                      step.key === 'upload' && run?.upload && run.upload.total > 0
-                        ? run.upload
-                        : undefined;
                     return (
                       <li key={step.key + index} className={'task-tone-' + status}>
                         <div className="task-step-row">
@@ -498,22 +476,6 @@ export function TaskView({
                             <small>{seconds(step.elapsed || 0)}</small>
                           )}
                         </div>
-                        {upload && (
-                          <div className="task-upload">
-                            <progress max={100} value={upload.percent} aria-label="文件上传进度" />
-                            <p>
-                              {Math.round(upload.percent)}% · {(upload.bytes / 1048576).toFixed(1)}{' '}
-                              / {(upload.total / 1048576).toFixed(1)} MB
-                              {status === 'running' && upload.speed > 0 && (
-                                <>
-                                  {' '}
-                                  · {(upload.speed / 1048576).toFixed(1)} MB/s · 约剩{' '}
-                                  {seconds(Math.max(0, upload.total - upload.bytes) / upload.speed)}
-                                </>
-                              )}
-                            </p>
-                          </div>
-                        )}
                       </li>
                     );
                   })}
@@ -545,42 +507,28 @@ export function TaskView({
               targetId={targetId}
               initial={logs}
               compact
+              running={active}
+              trailing={
+                run?.steps.find((s) => s.key === 'upload')?.status === 'running' && run.upload ? (
+                  <UploadProgress upload={run.upload} />
+                ) : undefined
+              }
               focusStep={logFocus}
               focusError={logError}
             />
           ) : (
             <VirtualLogs
               compact
+              trailing={
+                run?.steps.find((s) => s.key === 'upload')?.status === 'running' && run.upload ? (
+                  <UploadProgress upload={run.upload} />
+                ) : undefined
+              }
               entries={logs.map((text, index) => ({ id: String(index), text }))}
             />
           )}
         </Card>
       </div>
-      <Disclosure title="任务详情">
-        <dl className="detail-list">
-          <dt>任务编号</dt>
-          <dd className="path">
-            {task.id}{' '}
-            <button className="link" onClick={() => onCopy(task.id)}>
-              复制编号
-            </button>
-          </dd>
-          {run && (
-            <>
-              <dt>服务器</dt>
-              <dd>{run.server.name}</dd>
-              <dt>远程路径</dt>
-              <dd className="path">{remoteJar(run.target)}</dd>
-              <dt>备份位置</dt>
-              <dd className="path">{run.backupPath || '没有已记录的备份'}</dd>
-            </>
-          )}
-          <dt>Git 提交</dt>
-          <dd className="path">{task.deployedCommit || task.service.git.commit || '未记录'}</dd>
-          <dt>JAR 指纹</dt>
-          <dd className="path">{task.artifact.sha256 || '未记录'}</dd>
-        </dl>
-      </Disclosure>
     </section>
   );
 }
