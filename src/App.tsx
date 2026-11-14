@@ -5,7 +5,6 @@ import {
   Server as ServerIcon,
   Wrench,
   History as HistoryIcon,
-  Settings,
   SlidersHorizontal,
   Plus,
   Search,
@@ -92,6 +91,7 @@ import { EntityWorkspace, EntityDetail, WorkspaceTabs, Disclosure } from './Work
 import { DiagnosticPanel } from './TaskExtras';
 import { TaskView } from './TaskView';
 import { AppUpdateSettings } from './AppUpdateSettings';
+import { HeaderActions } from './HeaderActions';
 import type { DiagnosticKind } from './features';
 import brandIcon from '../assets/icon.svg';
 import { newService, newTargetTemplate, emptyDatabase, prototype } from './defaults';
@@ -131,7 +131,6 @@ const nav = [
   { page: 'servers', name: '服务器', icon: ServerIcon },
   { page: 'tools', name: '构建环境', icon: Wrench },
   { page: 'history', name: '部署历史', icon: HistoryIcon },
-  { page: 'settings', name: '设置', icon: Settings },
 ] as const;
 const uid = () => Math.random().toString(36).slice(2, 10);
 const isActive = (t: Task | null) => !!t && ['running', 'cancelling'].includes(t.status);
@@ -1249,6 +1248,12 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
             <ShieldCheck size={16} />
             {desktop ? '真实部署 · 请核对目标' : '界面原型 · 未连接服务器'}
           </strong>
+          <HeaderActions
+            theme={db.settings.theme}
+            onTheme={(theme) => setDb((old) => ({ ...old, settings: { ...old.settings, theme } }))}
+            settingsActive={page === 'settings'}
+            onSettings={() => setPage('settings')}
+          />
         </div>
         <main>
           {!!taskIssues.length && (
@@ -2641,7 +2646,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                       description: '检查软件更新、备份配置或查看使用说明。',
                       content: (
                         <div className="help-settings">
-                          <AppUpdateSettings api={desktop} version={boot?.version || '1.5.4'} active={isActive(task)} />
+                          <AppUpdateSettings api={desktop} version={boot?.version || '1.5.5'} active={isActive(task)} />
                           <Card className="help-settings-section">
                             <div className="help-section-row">
                               <div>
@@ -3050,7 +3055,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         </main>
         <footer className="workspace-footer" aria-label="应用状态">
           <span className="footer-version">
-            {desktop ? 'v' + (boot?.version || '1.5.4') : '界面原型 v0.3'}
+            {desktop ? 'v' + (boot?.version || '1.5.5') : '界面原型 v0.3'}
           </span>
           <button
             className="footer-directory"

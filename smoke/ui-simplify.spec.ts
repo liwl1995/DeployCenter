@@ -486,7 +486,7 @@ test('配置与帮助展示仓库并使用系统浏览器打开，其他外链�
       (globalThis as unknown as { repositoryOpened?: string }).repositoryOpened = destination;
     };
   });
-  await page.getByRole('navigation').getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByRole('tab', { name: '配置与帮助', exact: true }).click();
   const link = page.getByRole('link', {
     name: '查看版本与源码',
@@ -599,7 +599,7 @@ test('更新设置三种窗口下无溢出，按需下载、取消和校验，�
     }) as typeof net.request;
   }, 'http://127.0.0.1:' + address.port);
   try {
-    await page.getByRole('navigation').getByRole('button', { name: '设置', exact: true }).click();
+    await page.getByRole('button', { name: '设置', exact: true }).click();
     await page.getByRole('tab', { name: '配置与帮助', exact: true }).click();
     await expect(page.getByRole('button', { name: '检查更新', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: '快捷键', exact: true })).toHaveCount(0);
@@ -854,4 +854,114 @@ test('历史与构建环境单行布局在三个尺寸和两种主题下紧凑�
       await nav.getByRole('button', { name: '部署历史', exact: true }).click();
     }
   }
+});
+
+test('顶栏外观与设置在三个窗口下固定可用，主题同步保存并跟随系统', async () => {
+  test.setTimeout(120_000);
+  const page = await app.firstWindow();
+  const nav = page.getByRole('navigation', { name: '主导航' });
+  const group = page.getByRole('group', { name: '外观与设置' });
+  const appearance = group.getByRole('button', { name: /切换外观/ });
+  const settings = group.getByRole('button', { name: '设置', exact: true });
+  await expect(nav.getByRole('button', { name: '设置', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '设置', exact: true })).toHaveCount(1);
+  const colors: Record<string, string> = {};
+  for (const [theme, label] of [
+    ['light', '浅色'],
+    ['dark', '深色'],
+  ]) {
+    await appearance.click();
+    await page.getByRole('menuitemradio', { name: label, exact: true }).click();
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.dataset.theme))
+      .toBe(theme);
+    await expect
+      .poll(() =>
+        page.evaluate(async () => (await window.deployCenter!.load()).database.settings.theme),
+      )
+      .toBe(theme);
+    colors[theme] = await page.evaluate(
+      () => getComputedStyle(document.documentElement).backgroundColor,
+    );
+    for (const [width, height] of sizes) {
+      await size(width, height);
+      const bar = (await page.locator('.workspace-bar').boundingBox())!;
+      const mode = (await page.getByText('真实部署 · 请核对目标', { exact: true }).boundingBox())!;
+      const icon = (await settings.boundingBox())!;
+      const themeIcon = (await appearance.boundingBox())!;
+      expect(bar.height).toBeGreaterThanOrEqual(48);
+      expect(bar.height).toBeLessThanOrEqual(50);
+      expect(icon.width).toBeGreaterThanOrEqual(36);
+      expect(icon.height).toBeGreaterThanOrEqual(36);
+      expect(icon.x + icon.width).toBeGreaterThan(width - 50);
+      expect(themeIcon.x).toBeGreaterThan(mode.x + mode.width);
+      await appearance.click();
+      const menu = page.getByRole('menu');
+      await expect(menu.getByRole('menuitemradio')).toHaveCount(3);
+      await expect(menu.getByRole('menuitemradio', { name: label, exact: true })).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+      const popup = (await menu.boundingBox())!;
+      expect(popup.x).toBeGreaterThanOrEqual(0);
+      expect(popup.x + popup.width).toBeLessThanOrEqual(width);
+      expect(popup.y).toBeGreaterThanOrEqual(0);
+      expect(popup.y + popup.height).toBeLessThanOrEqual(height);
+      await boundaries();
+      await shot(`顶栏全局操作-${theme}-${width}x${height}`);
+      await page.keyboard.press('Escape');
+      await expect(appearance).toBeFocused();
+      await settings.click();
+      await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
+      await expect(settings).toHaveAttribute('aria-current', 'page');
+      await page.locator('main').evaluate((main) => {
+        main.scrollTop = main.scrollHeight;
+      });
+      const fixed = (await settings.boundingBox())!;
+      expect(Math.abs(fixed.y - icon.y)).toBeLessThan(1);
+      await expect(settings).toBeInViewport({ ratio: 1 });
+      await boundaries();
+      await nav.getByRole('button', { name: '部署历史', exact: true }).click();
+    }
+  }
+  expect(colors.light).not.toBe(colors.dark);
+  await appearance.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('menuitemradio', { name: '深色', exact: true })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(appearance).toBeFocused();
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await expect(settings).toBeFocused();
+  await settings.click();
+  await page.getByRole('tab', { name: '外观与提醒', exact: true }).click();
+  await expect(page.getByLabel('界面主题', { exact: true })).toHaveValue('dark');
+  await page.getByLabel('界面主题', { exact: true }).selectOption('light');
+  await expect(appearance).toHaveAttribute('title', /浅色/);
+  await appearance.click();
+  await page.getByRole('menuitemradio', { name: '深色', exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(async () => (await window.deployCenter!.load()).database.settings.theme),
+    )
+    .toBe('dark');
+  await page.reload();
+  await expect(appearance).toHaveAttribute('title', /深色/);
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe('dark');
+  await appearance.click();
+  await page.getByRole('menuitemradio', { name: '跟随系统', exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(async () => (await window.deployCenter!.load()).database.settings.theme),
+    )
+    .toBe('system');
+  for (const theme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: theme });
+    await expect
+      .poll(() => page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor))
+      .toBe(colors[theme]);
+    await expect(appearance).toHaveAttribute('title', /跟随系统/);
+  }
+  await page.emulateMedia({ colorScheme: null });
 });

@@ -1,5 +1,6 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { Check } from 'lucide-react';
 import { Field, Modal } from './ui';
 export type MenuAction = {
   label: string;
@@ -7,8 +8,19 @@ export type MenuAction = {
   disabled?: boolean;
   reason?: string;
   destructive?: boolean;
+  checked?: boolean;
 };
-export function MoreMenu({ label, actions }: { label: string; actions: MenuAction[] }) {
+export function MoreMenu({
+  label,
+  actions,
+  trigger: content,
+  iconOnly = false,
+}: {
+  label: string;
+  actions: MenuAction[];
+  trigger?: ReactNode;
+  iconOnly?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ left: number; top: number }>();
   const trigger = useRef<HTMLButtonElement>(null);
@@ -28,7 +40,9 @@ export function MoreMenu({ label, actions }: { label: string; actions: MenuActio
           ? anchor.bottom + 5
           : Math.max(8, anchor.top - box.height - 5),
     });
-    const first = menu.current.querySelector<HTMLElement>('[role="menuitem"]:not([disabled])');
+    const first =
+      menu.current.querySelector<HTMLElement>('[aria-checked="true"]:not([disabled])') ||
+      menu.current.querySelector<HTMLElement>('[role^="menuitem"]:not([disabled])');
     (first || menu.current).focus();
     const outside = (e: PointerEvent) => {
       if (!menu.current?.contains(e.target as Node) && !trigger.current?.contains(e.target as Node))
@@ -51,13 +65,20 @@ export function MoreMenu({ label, actions }: { label: string; actions: MenuActio
     <div className="more-menu">
       <button
         ref={trigger}
-        className="button"
+        className={iconOnly ? 'icon-button header-icon-button' : 'button'}
+        title={iconOnly ? label : undefined}
         aria-label={label}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
+        onKeyDown={(event) => {
+          if (iconOnly && ['ArrowDown', 'ArrowUp'].includes(event.key)) {
+            event.preventDefault();
+            setOpen(true);
+          }
+        }}
       >
-        更多
+        {content ?? '更多'}
       </button>
       {open &&
         createPortal(
@@ -77,14 +98,14 @@ export function MoreMenu({ label, actions }: { label: string; actions: MenuActio
                 close(true);
               }
               if (e.key === 'Tab') {
-                e.preventDefault();
+                if (!iconOnly) e.preventDefault();
                 close(true);
               }
               if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
                 e.preventDefault();
                 const items = [
                   ...menu.current!.querySelectorAll<HTMLButtonElement>(
-                    '[role="menuitem"]:not([disabled])',
+                    '[role^="menuitem"]:not([disabled])',
                   ),
                 ];
                 const index = items.indexOf(document.activeElement as HTMLButtonElement);
@@ -101,8 +122,12 @@ export function MoreMenu({ label, actions }: { label: string; actions: MenuActio
             {actions.map((action) => (
               <span title={action.reason} key={action.label}>
                 <button
-                  role="menuitem"
-                  className={action.destructive ? 'destructive-menu-item' : ''}
+                  role={action.checked === undefined ? 'menuitem' : 'menuitemradio'}
+                  aria-checked={action.checked}
+                  className={
+                    (action.destructive ? 'destructive-menu-item' : '') +
+                    (action.checked === undefined ? '' : ' menu-radio')
+                  }
                   disabled={action.disabled}
                   aria-description={action.reason}
                   onClick={() => {
@@ -110,7 +135,16 @@ export function MoreMenu({ label, actions }: { label: string; actions: MenuActio
                     action.onClick();
                   }}
                 >
-                  {action.label}
+                  {action.checked === undefined ? (
+                    action.label
+                  ) : (
+                    <>
+                      <span className="menu-selection" aria-hidden="true">
+                        {action.checked && <Check size={16} />}
+                      </span>
+                      <span>{action.label}</span>
+                    </>
+                  )}
                 </button>
               </span>
             ))}

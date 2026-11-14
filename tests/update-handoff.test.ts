@@ -23,12 +23,17 @@ it.skipIf(process.platform !== 'win32')(
       { windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] },
     );
     await once(parent, 'spawn');
+    // 只隔离产品名称扫描，避免开发机上用户的正式程序影响夹具；父进程等待与文件校验仍真实执行。
+    const fixtureName = 'DC-' + path.basename(dir);
     const script = installerScript(
       file,
       createHash('sha256').update(payload).digest('hex'),
       path.join(dir, "中文 空格 ' $目录"),
       path.join(dir, 'helper.log'),
       parent.pid!,
+    ).replace(
+      /GetProcessesByName\('(?:YOTOO 部署中心|Deploy Center)'\)/g,
+      () => "GetProcessesByName('" + fixtureName + "')",
     );
     const helper = spawn(
       path.join(
@@ -72,7 +77,10 @@ it.skipIf(process.platform !== 'win32')(
           .catch(() => false),
       ).toBe(false);
       parent.stdin.end('exit');
-      expect((await finished)[0], await fs.readFile(path.join(dir, 'helper.log'), 'utf8').catch(() => '没有助手错误日志')).toBe(0);
+      expect(
+        (await finished)[0],
+        await fs.readFile(path.join(dir, 'helper.log'), 'utf8').catch(() => '没有助手错误日志'),
+      ).toBe(0);
       await expect
         .poll(async () => fs.readFile(marker, 'utf8').catch(() => ''))
         .toContain('launched');

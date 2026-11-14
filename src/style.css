@@ -1769,7 +1769,7 @@ tr:last-child td {
   min-width: 180px;
   box-shadow: 0 8px 24px #0002;
 }
-.entity-action-menu [role='menuitem'] {
+.entity-action-menu :is([role='menuitem'], [role='menuitemradio']) {
   display: block;
   width: 100%;
   padding: 8px 10px;
@@ -1778,10 +1778,10 @@ tr:last-child td {
   text-align: left;
   border-radius: 4px;
 }
-.entity-action-menu [role='menuitem']:hover {
+.entity-action-menu :is([role='menuitem'], [role='menuitemradio']):hover {
   background: var(--soft);
 }
-.entity-action-menu [role='menuitem']:disabled {
+.entity-action-menu :is([role='menuitem'], [role='menuitemradio']):disabled {
   pointer-events: none;
 }
 .entity-action-menu > span {
@@ -3649,4 +3649,58 @@ main:has(.entity-cards-workspace) > .page-header .muted {
   border-radius: 0;
   background: none;
   color: var(--warn);
+}
+
+/* 固定顶栏的全局操作，不增加顶栏高度。 */
+.app .workspace-bar {
+  min-height: 48px;
+  padding: 5px 26px;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.header-actions .header-icon-button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--sub);
+  background: transparent;
+}
+.header-actions .header-icon-button:hover {
+  background: var(--soft);
+  color: var(--ink);
+}
+.header-actions .header-icon-button.selected {
+  background: var(--tint);
+  color: var(--accent);
+}
+.header-actions .header-icon-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.entity-action-menu .menu-radio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.menu-selection {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+}
+.entity-action-menu [role='menuitemradio'][aria-checked='true'] {
+  font-weight: 600;
+  background: var(--tint);
 }

@@ -116,7 +116,7 @@ test('全部页面在三个宽度和两种主题下无横向溢出，真实边�
         '构建环境',
         '设置',
       ]) {
-        await nav.getByRole('button', { name, exact: true }).click();
+        await (name === '设置' ? page : nav).getByRole('button', { name, exact: true }).click();
         if (name === '一键部署')
           await expect(page.locator('.badge').filter({ hasText: '未选择 JDK' })).toBeVisible();
         await expect(page.getByText('真实部署 · 请核对目标', { exact: true })).toBeVisible();
@@ -323,7 +323,7 @@ test('1.2.1 分类层级、详情工作区和提示横幅在实际桌面中可�
         '部署历史',
         '设置',
       ]) {
-        await nav.getByRole('button', { name, exact: true }).click();
+        await (name === '设置' ? page : nav).getByRole('button', { name, exact: true }).click();
         if (name === '设置') {
           for (const tab of ['外观与提醒', '部署与构建', '数据与存储', '配置与帮助']) {
             await page.getByRole('tab', { name: tab, exact: true }).click();
@@ -520,7 +520,7 @@ test('1.2.2 固定外壳在最小窗口中保持页脚可见、导航可操作�
         '构建环境',
         '设置',
       ]) {
-        await nav.getByRole('button', { name, exact: true }).click();
+        await (name === '设置' ? page : nav).getByRole('button', { name, exact: true }).click();
         const before = await page.getByRole('contentinfo', { name: '应用状态' }).boundingBox();
         const view = await page.evaluate(() => ({
           width: innerWidth,
@@ -622,7 +622,7 @@ test('1.2.2 部署首屏可见主要内容，数据页三块不折叠，迁移�
   await nav.getByRole('button', { name: '一键部署', exact: true }).click();
   await expect(page.locator('.target-card')).toHaveCount(1);
   await page.screenshot({ path: path.resolve('.test-data', 'v122-部署首屏.png') });
-  await nav.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByRole('tab', { name: '数据与存储', exact: true }).click();
   for (const name of ['存储占用与清理', '数据位置', '保留规则'])
     await expect(page.getByRole('heading', { name, exact: true })).toHaveCount(1);
