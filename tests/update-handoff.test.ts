@@ -2,73 +2,105 @@
 import { it, expect } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createHash } from 'node:crypto';
-import { installerScript } from '../electron/update-installer';
+import { createRequire } from 'node:module';
 
-it.skipIf(process.platform !== 'win32')(
-  'Windows 助手在父进程存活时不启动，正常退出后只启动无害测试脚本',
-  async () => {
+// Windows 系统 .NET Framework 原生夹具在其他平台明确跳过，跨平台启动参数和失败保护另有测试。
+it.skipIf(process.platform !== 'win32').each([
+  ['node', false],
+  ['electron', false],
+  ['node', true],
+] as const)(
+  '真实独立助手等待 %s 退出后交接，并复核产物（篡改：%s）',
+  async (runtime, tampered) => {
     const base = path.resolve('.test-data');
     await fs.mkdir(base, { recursive: true });
-    const dir = await fs.mkdtemp(path.join(base, 'update-handoff-'));
+    const dir = await fs.mkdtemp(path.join(base, 'update-entry-'));
+    const file = path.join(dir, "中文 空格 ' $安装器.cmd");
     const marker = path.join(dir, 'launched.txt');
-    const file = path.join(dir, 'setup-fixture.cmd');
     const payload = Buffer.from('@echo off\r\necho launched>"%~dp0launched.txt"\r\n', 'ascii');
     await fs.writeFile(file, payload);
-    const parent = spawn(
-      process.execPath,
-      ['-e', "process.stdin.once('data', () => process.exit(0));"],
-      { windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] },
+    // 同一 C# 实现，仅隔离产品进程名和失败弹窗；仍实测等待、校验与启动，避免干扰正式程序。
+    const source = path.join(dir, 'UpdateHelper.cs');
+    await fs.writeFile(
+      source,
+      (await fs.readFile('installer/UpdateHelper.cs', 'utf8'))
+        .replace('"YOTOO 部署中心", "Deploy Center"', JSON.stringify('DC-' + path.basename(dir)))
+        .replace(
+          'MessageBox.Show(message, "YOTOO 部署中心 更新失败", MessageBoxButtons.OK, MessageBoxIcon.Error)',
+          'File.AppendAllText(log, " [测试记录安装失败提示]")',
+        ),
     );
-    await once(parent, 'spawn');
-    // 只隔离产品名称扫描，避免开发机上用户的正式程序影响夹具；父进程等待与文件校验仍真实执行。
-    const fixtureName = 'DC-' + path.basename(dir);
-    const script = installerScript(
-      file,
-      createHash('sha256').update(payload).digest('hex'),
-      path.join(dir, "中文 空格 ' $目录"),
-      path.join(dir, 'helper.log'),
-      parent.pid!,
-    ).replace(
-      /GetProcessesByName\('(?:YOTOO 部署中心|Deploy Center)'\)/g,
-      () => "GetProcessesByName('" + fixtureName + "')",
-    );
-    const helper = spawn(
+    const helper = path.join(dir, 'update-helper.exe');
+    execFileSync(
       path.join(
         process.env.SystemRoot || 'C:\\Windows',
-        'System32',
-        'WindowsPowerShell',
-        'v1.0',
-        'powershell.exe',
+        'Microsoft.NET/Framework64/v4.0.30319/csc.exe',
       ),
-      [
-        '-NoLogo',
-        '-NoProfile',
-        '-NonInteractive',
-        '-EncodedCommand',
-        Buffer.from(script, 'utf16le').toString('base64'),
-      ],
-      { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+      ['/nologo', '/target:exe', '/reference:System.Windows.Forms.dll', '/out:' + helper, source],
+      { windowsHide: true },
     );
-    const finished = once(helper, 'exit');
+    const { build } = await import('esbuild');
+    const entry = path.join(dir, 'parent.cjs');
+    await build({
+      stdin: {
+        contents: `import { existsSync } from 'node:fs';
+import { launchInstallerAfterExit } from ${JSON.stringify(path.resolve('electron/update-installer.ts'))};
+${runtime === 'electron' ? `import { app } from 'electron'; app.setPath('userData', ${JSON.stringify(path.join(dir, 'electron-data'))});` : ''}
+(async () => {
+${runtime === 'electron' ? 'await app.whenReady();' : ''}
+await launchInstallerAfterExit(${JSON.stringify(file)}, ${JSON.stringify(createHash('sha256').update(payload).digest('hex'))}, ${JSON.stringify(path.join(dir, "中文 空格 ' $目录"))}, ${JSON.stringify(dir)}, ${JSON.stringify(helper)});
+console.log('PARENT_READY');
+setInterval(() => { if (existsSync(${JSON.stringify(path.join(dir, 'exit-parent'))})) ${runtime === 'electron' ? 'app.quit()' : 'process.exit(0)'}; }, 50);
+})().catch(error => { console.error(error); process.exit(1); });`,
+        resolveDir: process.cwd(),
+      },
+      bundle: true,
+      platform: 'node',
+      format: 'cjs',
+      external: ['electron'],
+      outfile: entry,
+    });
+    const env = { ...process.env };
+    delete env.ELECTRON_RUN_AS_NODE;
+    const executable: string =
+      runtime === 'electron'
+        ? createRequire(path.resolve('package.json'))('electron')
+        : process.execPath;
+    const parent = spawn(executable, [entry], {
+      env,
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const finished = once(parent, 'exit');
+    let errors = '';
+    parent.stderr.on('data', (data) => {
+      errors += String(data);
+    });
+    let completed = false;
     try {
       await new Promise<void>((resolve, reject) => {
-        let text = '';
-        const timer = setTimeout(() => reject(new Error('助手未就绪')), 20000);
-        helper.stdout.on('data', (data) => {
-          text += String(data);
-          if (text.includes('UPDATE_READY')) {
-            clearTimeout(timer);
-            resolve();
-          }
-        });
-        helper.once('error', (error) => {
+        let output = '';
+        const timer = setTimeout(() => reject(new Error('正式启动函数未就绪：' + errors)), 20000);
+        const earlyExit = () => {
+          clearTimeout(timer);
+          reject(new Error('父进程提前退出：' + errors));
+        };
+        parent.once('exit', earlyExit);
+        parent.once('error', (error) => {
           clearTimeout(timer);
           reject(error);
         });
-        helper.stderr.on('data', () => {});
+        parent.stdout.on('data', (data) => {
+          output += String(data);
+          if (output.includes('PARENT_READY')) {
+            clearTimeout(timer);
+            parent.off('exit', earlyExit);
+            resolve();
+          }
+        });
       });
       expect(
         await fs
@@ -76,19 +108,37 @@ it.skipIf(process.platform !== 'win32')(
           .then(() => true)
           .catch(() => false),
       ).toBe(false);
-      parent.stdin.end('exit');
-      expect(
-        (await finished)[0],
-        await fs.readFile(path.join(dir, 'helper.log'), 'utf8').catch(() => '没有助手错误日志'),
-      ).toBe(0);
-      await expect
-        .poll(async () => fs.readFile(marker, 'utf8').catch(() => ''))
-        .toContain('launched');
+      if (tampered) await fs.appendFile(file, '\r\nREM changed after ready');
+      await fs.writeFile(path.join(dir, 'exit-parent'), 'exit');
+      expect((await finished)[0], errors).toBe(0);
+      if (tampered) {
+        await expect
+          .poll(
+            async () => fs.readFile(path.join(dir, 'update-install.log'), 'utf8').catch(() => ''),
+            { timeout: 10000 },
+          )
+          .toContain('[测试记录安装失败提示]');
+        expect(await fs.readFile(path.join(dir, 'update-install.log'), 'utf8')).toContain(
+          '安装包校验失败',
+        );
+        expect(
+          await fs
+            .stat(marker)
+            .then(() => true)
+            .catch(() => false),
+        ).toBe(false);
+      } else {
+        await expect
+          .poll(async () => fs.readFile(marker, 'utf8').catch(() => ''), { timeout: 10000 })
+          .toContain('launched');
+      }
+      completed = true;
     } finally {
       if (parent.exitCode === null) parent.kill();
-      if (helper.exitCode === null) helper.kill();
       if (path.dirname(dir) !== base) throw new Error('测试目录越界');
-      await fs.rm(dir, { recursive: true, force: true });
+      // 失败时保留本夹具现场，避免删掉仍在读取的文件。
+      if (completed)
+        await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
   },
   40000,

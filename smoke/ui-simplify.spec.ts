@@ -80,8 +80,15 @@ test.beforeEach(async ({}, info) => {
   });
   // 在应用启动前写入工具夹具，避免界面自动保存覆盖外部写入的数据。
   if (info.title.startsWith('历史与构建环境单行布局')) {
-    db.jdks = Array.from({ length: 6 }, (_, i) => ({ name: 'JDK 21-' + i, path: path.join(dir, '中文 空格 构建环境-' + i, 'jdk-21') }));
-    db.services.forEach((service, i) => { service.jdk = db.jdks[i].name; service.profiles = 'production'; service.args = '-DskipTests'; });
+    db.jdks = Array.from({ length: 6 }, (_, i) => ({
+      name: 'JDK 21-' + i,
+      path: path.join(dir, '中文 空格 构建环境-' + i, 'jdk-21'),
+    }));
+    db.services.forEach((service, i) => {
+      service.jdk = db.jdks[i].name;
+      service.profiles = 'production';
+      service.args = '-DskipTests';
+    });
   }
   store.saveConfig(db);
   store.close();
@@ -964,4 +971,38 @@ test('顶栏外观与设置在三个窗口下固定可用，主题同步保存�
     await expect(appearance).toHaveAttribute('title', /跟随系统/);
   }
   await page.emulateMedia({ colorScheme: null });
+});
+
+test('正式包包含独立更新助手，无效参数在就绪前被拒绝且不启动安装', async () => {
+  test.skip(!process.env.DEPLOY_CENTER_TEST_EXE, '独立助手资源位置只在正式包验收');
+  const resourceDir = await app.evaluate(() => process.resourcesPath);
+  const helper = path.join(resourceDir, 'update-helper.exe');
+  expect(await fs.readFile(helper)).toEqual(await fs.readFile('dist-electron/update-helper.exe'));
+  const { spawn } = await import('node:child_process');
+  const result = await new Promise<{ code: number | null; output: string }>((resolve, reject) => {
+    const child = spawn(helper, ['invalid'], {
+      detached: true,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error('独立更新助手未正常退出'));
+    }, 10000);
+    child.stdout.on('data', (data) => {
+      output += String(data);
+    });
+    child.stderr.on('data', () => {});
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once('exit', (code) => {
+      clearTimeout(timer);
+      resolve({ code, output });
+    });
+  });
+  expect(result.code).toBe(1);
+  expect(result.output).not.toContain('UPDATE_READY');
 });

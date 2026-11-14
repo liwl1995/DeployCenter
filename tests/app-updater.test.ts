@@ -10,7 +10,7 @@ import {
   newerVersion,
   parseRelease,
 } from '../electron/app-updater';
-import { installerScript } from '../electron/update-installer';
+import { installerArguments } from '../electron/update-installer';
 
 const bytes = Buffer.from('MZ installer fixture, never executed');
 const hash = createHash('sha256').update(bytes).digest('hex');
@@ -245,23 +245,24 @@ describe('应用更新', () => {
     expect((await f.updater.download()).message).toContain('安全');
     expect(await fs.readdir(outside)).toEqual(['keep.txt']);
   });
-  it('安装助手等待原进程退出、再次校验且不强杀，不静默安装；特殊路径按数据编码', () => {
+  it('安装助手参数校验且特殊路径按数据编码，不经 shell 拼接', () => {
     const directory = "D:\\程序 中文 ' $目录";
-    const script = installerScript(
+    const args = installerArguments(
       directory + '\\setup.exe',
       hash,
       directory,
       directory + '\\log.txt',
       123,
     );
-    expect(script.indexOf('$parent.WaitForExit()')).toBeLessThan(
-      script.indexOf('[Diagnostics.Process]::Start'),
-    );
-    expect(script).toContain('[Security.Cryptography.SHA256]::Create()');
-    expect(script).toContain('UPDATE_READY');
-    expect(script).not.toMatch(/Stop-Process|taskkill|\/S\b/);
-    expect(script).not.toContain(directory);
-    expect(script).toContain(Buffer.from(directory, 'utf8').toString('base64'));
+    expect(args).toEqual([
+      '123',
+      Buffer.from(directory + '\\setup.exe').toString('base64'),
+      hash,
+      Buffer.from(directory).toString('base64'),
+      Buffer.from(directory + '\\log.txt').toString('base64'),
+    ]);
+    expect(() => installerArguments('a.exe', 'bad', directory, 'log', 1)).toThrow('安装参数无效');
+    expect(() => installerArguments('a.exe', hash, directory, 'log', 0)).toThrow('安装参数无效');
   });
 });
 

@@ -1,6 +1,7 @@
 import { build as viteBuild } from 'vite';
 import { build } from 'esbuild';
 import fs from 'node:fs/promises';
+import { buildUpdateHelper } from './build-update-helper.mjs';
 await viteBuild();
 await fs.mkdir('dist-electron', { recursive: true });
 await build({
@@ -21,4 +22,5 @@ await build({
   define: { __PROTOTYPE__: 'false' },
   sourcemap: true,
 });
+await buildUpdateHelper();
 console.log('Built Vite renderer, Electron main/preload and utilityProcess engine.');

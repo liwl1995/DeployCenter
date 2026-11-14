@@ -1,6 +1,6 @@
 {
   "name": "deploy-center",
-  "version": "1.5.5",
+  "version": "1.5.6",
   "private": true,
   "type": "module",
   "scripts": {
@@ -59,7 +59,8 @@
       "dist-electron/**/*",
       "assets/**/*",
       "package.json",
-      "!node_modules/better-sqlite3/prebuilds/{darwin*,linux*,win32-arm64*}"
+      "!node_modules/better-sqlite3/prebuilds/{darwin*,linux*,win32-arm64*}",
+      "!dist-electron/update-helper.exe"
     ],
     "asar": true,
     "asarUnpack": [
@@ -69,6 +70,10 @@
     "electronDist": "node_modules/electron/dist",
     "npmRebuild": false,
     "extraResources": [
+      {
+        "from": "dist-electron/update-helper.exe",
+        "to": "update-helper.exe"
+      },
       {
         "from": "README.md",
         "to": "README.md"

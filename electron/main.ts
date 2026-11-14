@@ -364,7 +364,16 @@ async function boot() {
         return undefined;
       },
       launch: async (file, hash) => {
-        await launchInstallerAfterExit(file, hash, path.dirname(app.getPath('exe')), settingsDir);
+        await launchInstallerAfterExit(
+          file,
+          hash,
+          path.dirname(app.getPath('exe')),
+          settingsDir,
+          path.join(
+            app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'dist-electron'),
+            'update-helper.exe',
+          ),
+        );
         // 助手已持有本进程句柄，只会在正常退出后启动安装器。
         setImmediate(() => app.quit());
       },
