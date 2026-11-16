@@ -1,9 +1,10 @@
 import { useState } from 'react';
+import { copyText } from './clipboard';
 import type { DesktopAPI } from './platform';
 import type { Server, Target } from './model';
 import { fmtTime, serverAddress } from './model';
 import type { DiagnosticKind, DiagnosticResult } from './features';
-import { Field, download } from './ui';
+import { Field } from './ui';
 import { failureAdvice } from './presentation';
 const labels: Record<DiagnosticKind, string> = {
   directory: '目标目录文件',
@@ -31,10 +32,12 @@ export function DiagnosticPanel({
     [credential, setCredential] = useState(''),
     [busy, setBusy] = useState(false),
     [result, setResult] = useState<DiagnosticResult>(),
+    [copyMessage, setCopyMessage] = useState(''),
     [error, setError] = useState('');
   const execute = async () => {
     setBusy(true);
     setError('');
+    setCopyMessage('');
     try {
       setResult(
         target
@@ -118,15 +121,21 @@ export function DiagnosticPanel({
               const text = result.command + '\n' + result.output;
               void (async () => {
                 try {
-                  await navigator.clipboard.writeText(text);
+                  await copyText(text);
+                  setCopyMessage('已复制命令和结果');
                 } catch {
-                  download('只读诊断.txt', text);
+                  setCopyMessage('复制失败，请稍后重试。可先选中文字后按 Ctrl+C 复制。');
                 }
               })();
             }}
           >
             复制命令和结果
           </button>
+          {copyMessage && (
+            <p role="status" className="note">
+              {copyMessage}
+            </p>
+          )}
         </>
       )}
     </>

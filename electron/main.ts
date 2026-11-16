@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -184,6 +185,7 @@ const readOnlyDuringMigration = new Set([
   'about',
   'update-state',
   'open-update-cache',
+  'copy-text',
   'open-update-link',
   'cancel-update',
 ]);
@@ -481,6 +483,11 @@ async function boot() {
           throw new Error('正在处理远程备份，请等待结果后再操作');
         return fn(...args);
       });
+    handle('copy-text', (value) => {
+      const content = text(value, 16 * 1024 * 1024);
+      if (content.includes('\0')) throw new Error('复制内容含有无效字符');
+      return clipboard.writeText(content);
+    });
     updater = new AppUpdater({
       currentVersion: app.getVersion(),
       directory: dataPaths(dataDir).updates,

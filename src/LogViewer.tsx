@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fmtTime } from './model';
 import { logLevel, type LogLine } from './log-model';
-import { download } from './ui';
+import { copyText } from './clipboard';
 const height = 28;
 type Row = { id: string; kind: 'group' | 'command' | 'line'; step: string; line: LogLine };
 export function VirtualLogs({
@@ -26,6 +26,7 @@ export function VirtualLogs({
 }) {
   const root = useRef<HTMLDivElement>(null),
     viewport = useRef<HTMLDivElement>(null),
+    content = useRef<HTMLDivElement>(null),
     frozen = useRef(entries);
   const focusedError = useRef<number>(undefined);
   const automaticTop = useRef<number | undefined>(undefined);
@@ -149,8 +150,8 @@ export function VirtualLogs({
       automaticTop.current = el.scrollTop;
       setTop(el.scrollTop);
     };
-    const end = () =>
-      Math.max(0, rows.length * height + (trailing ? 70 : 0) - (el.clientHeight || 420));
+    // 以真实滚动内容为准，包含上传区换行、底部留白和横向滚动条占用。
+    const end = () => Math.max(0, (el.scrollHeight || rows.length * height) - el.clientHeight);
     if (jump) {
       const index = rows.findIndex((r) => r.id === jump);
       if (index >= 0) {
@@ -163,20 +164,20 @@ export function VirtualLogs({
       if (typeof ResizeObserver !== 'undefined') {
         const observer = new ResizeObserver(() => scrollTo(end()));
         observer.observe(el);
+        if (content.current) observer.observe(content.current);
         return () => observer.disconnect();
       }
     } else {
       setTop(el.scrollTop);
     }
-  }, [rows, follow, jump, selected, active, !!trailing]);
+  }, [rows, follow, jump, selected, active, !!trailing, level]);
   const copy = async () => {
     const text = entries.map((r) => r.text).join('\n');
     try {
-      await navigator.clipboard.writeText(text);
+      await copyText(text);
       setMessage('已复制全部已加载日志。');
     } catch {
-      download('任务日志.log', text);
-      setMessage('剪贴板不可用，已下载已加载日志。');
+      setMessage('复制失败，请稍后重试。可先选中文字后按 Ctrl+C 复制。');
     }
   };
   const [frozenTop, setFrozenTop] = useState(0);
@@ -307,54 +308,56 @@ export function VirtualLogs({
           }
         }}
       >
-        <div style={{ height: rows.length * height, position: 'relative', minWidth: '100%' }}>
-          <div style={{ position: 'absolute', top: start * height, minWidth: '100%' }}>
-            {rows.slice(start, end).map((row) =>
-              row.kind === 'group' ? (
-                <div key={row.id} className="log-group">
-                  <button
-                    aria-expanded={!collapsed.has(row.step)}
-                    onClick={() =>
-                      setCollapsed((old) => {
-                        const next = new Set(old);
-                        if (next.has(row.step)) next.delete(row.step);
-                        else next.add(row.step);
-                        return next;
-                      })
+        <div ref={content} className="log-content">
+          <div style={{ height: rows.length * height, position: 'relative', minWidth: '100%' }}>
+            <div style={{ position: 'absolute', top: start * height, minWidth: '100%' }}>
+              {rows.slice(start, end).map((row) =>
+                row.kind === 'group' ? (
+                  <div key={row.id} className="log-group">
+                    <button
+                      aria-expanded={!collapsed.has(row.step)}
+                      onClick={() =>
+                        setCollapsed((old) => {
+                          const next = new Set(old);
+                          if (next.has(row.step)) next.delete(row.step);
+                          else next.add(row.step);
+                          return next;
+                        })
+                      }
+                    >
+                      {collapsed.has(row.step) ? '展开' : '收起'} · {row.step}
+                    </button>
+                  </div>
+                ) : row.kind === 'command' ? (
+                  <div key={row.id} className="log-command" title={row.line.command}>
+                    命令上下文：{row.line.command}
+                  </div>
+                ) : (
+                  <div
+                    data-log-line
+                    key={row.id}
+                    className={
+                      'log-line ' +
+                      logLevel(row.line.text) +
+                      (row.line.id === located ? ' log-match' : '')
                     }
                   >
-                    {collapsed.has(row.step) ? '展开' : '收起'} · {row.step}
-                  </button>
-                </div>
-              ) : row.kind === 'command' ? (
-                <div key={row.id} className="log-command" title={row.line.command}>
-                  命令上下文：{row.line.command}
-                </div>
-              ) : (
-                <div
-                  data-log-line
-                  key={row.id}
-                  className={
-                    'log-line ' +
-                    logLevel(row.line.text) +
-                    (row.line.id === located ? ' log-match' : '')
-                  }
-                >
-                  <time>
-                    {row.line.time !== undefined
-                      ? fmtTime(new Date(row.line.time).toISOString())
-                      : '时间未记录'}
-                  </time>
-                  <span className="log-level">
-                    {{ error: '错误', warning: '警告', info: '信息' }[logLevel(row.line.text)]}
-                  </span>
-                  <span className="log-text">{row.line.text || ' '}</span>
-                </div>
-              ),
-            )}
+                    <time>
+                      {row.line.time !== undefined
+                        ? fmtTime(new Date(row.line.time).toISOString())
+                        : '时间未记录'}
+                    </time>
+                    <span className="log-level">
+                      {{ error: '错误', warning: '警告', info: '信息' }[logLevel(row.line.text)]}
+                    </span>
+                    <span className="log-text">{row.line.text || ' '}</span>
+                  </div>
+                ),
+              )}
+            </div>
           </div>
+          {level === 'all' && trailing}
         </div>
-        {level === 'all' && trailing}
       </div>
     </div>
   );

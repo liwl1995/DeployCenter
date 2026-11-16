@@ -95,3 +95,25 @@ it('隐藏日志页签不计算滚动位置，恢复后跟随最新；暂停跟�
   rerender(<VirtualLogs active={true} entries={later} />);
   expect(position).toBe(112);
 });
+
+it('真实滚动内容包含可变高进度区和滚动条时，跟随底部不使用固定附加高度', () => {
+  const entries = Array.from({ length: 100 }, (_, i) => ({
+    id: String(i),
+    text: '日志' + i,
+    step: '上传',
+  }));
+  const { container, rerender } = render(
+    <VirtualLogs entries={entries} trailing={<div>动态上传状态</div>} />,
+  );
+  const viewport = container.querySelector<HTMLElement>('.log-viewport')!;
+  Object.defineProperty(viewport, 'scrollHeight', { configurable: true, value: 3200 });
+  Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 383 });
+  rerender(
+    <VirtualLogs
+      entries={[...entries, { id: 'last', text: '最后一行', step: '上传' }]}
+      trailing={<div>多行动态上传状态</div>}
+    />,
+  );
+  expect(viewport.scrollTop).toBe(3200 - 383);
+  expect(screen.getByText('最后一行')).toBeTruthy();
+});

@@ -8,6 +8,7 @@ it('安装模板仅关闭框架缓存，变化时停止；构建成功与失败�
     const source=await fs.readFile('node_modules/app-builder-lib/templates/nsis/include/installer.nsh','utf8');
     const updated=withoutInstallerCache(source);
     if(!updated.includes('File "/oname=')||!updated.includes('!macro registryAddInstallInfo'))process.exit(2);
+    if(!updated.includes('DC_InstallStage 2'))process.exit(7);
     let refused=0;for(const bad of ['',source+source]){try{withoutInstallerCache(bad);}catch{refused++;}}
     if(refused!==2)process.exit(3);
     const base=path.resolve('.test-data');await fs.mkdir(base,{recursive:true});

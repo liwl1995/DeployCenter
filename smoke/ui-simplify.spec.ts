@@ -135,6 +135,8 @@ async function size(width: number, height: number) {
   );
   const page = await app.firstWindow();
   await expect.poll(() => page.evaluate(() => [innerWidth, innerHeight])).toEqual([width, height]);
+  // 等待视口调整对应的布局和滚动事件落定，避免新打开的菜单被上一帧事件关闭。
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 }
 async function boundaries() {
   const page = await app.firstWindow();
@@ -401,6 +403,12 @@ test('日志优先任务页的八种状态与连续输出在三个尺寸下可�
           await expect
             .poll(() => viewport.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight))
             .toBeLessThanOrEqual(2);
+          await expect.poll(() => viewport.evaluate((el) => {
+            const row = el.querySelector('[data-log-line]:last-child') as HTMLElement | null;
+            if (!row) return false;
+            const box = el.getBoundingClientRect(), last = row.getBoundingClientRect();
+            return last.top >= box.top && last.bottom <= box.top + el.clientHeight;
+          })).toBe(true);
         }
       }
       if (fixture === 'unverified') {
@@ -1061,4 +1069,49 @@ test('正式包包含独立更新助手，无效参数在就绪前被拒绝且�
   });
   expect(result.code).toBe(1);
   expect(result.output).not.toContain('UPDATE_READY');
+});
+
+
+test('文本复制写入原生剪贴板并可直接粘贴，失败不会下载；目标编辑文案一致', async () => {
+  const page=await app.firstWindow();
+  const value='YOTOO 中文复制夹具\n完整提交 123456789abcdef';
+  await app.evaluate(async ({clipboard,ClipboardItem,BrowserWindow})=>{
+    const backup=[];
+    for(const item of await clipboard.read()){
+      const data:Record<string,any>={};
+      for(const type of item.types)data[type]=await item.getType(type);
+      backup.push(new ClipboardItem(data));
+    }
+    (globalThis as any).__clipboardBackup=backup;
+    (globalThis as any).__copyDownloads=0;
+    BrowserWindow.getAllWindows()[0].webContents.session.on('will-download',()=>{(globalThis as any).__copyDownloads++;});
+  });
+  let owned=value;
+  try {
+    await page.evaluate(value=>window.deployCenter!.copyText(value),value);
+    expect(await app.evaluate(({clipboard})=>clipboard.readText())).toBe(value);
+    await page.evaluate(async()=>{
+      for(const bad of [42,null,'bad\0text']){
+        let rejected=false;try{await window.deployCenter!.copyText(bad as string);}catch{rejected=true;}
+        if(!rejected)throw new Error('无效剪贴板参数未拒绝');
+      }
+    });
+    await page.getByRole('button',{name:'复制Git 提交',exact:true}).first().click();
+    owned='b'.repeat(40);
+    await expect.poll(()=>app.evaluate(({clipboard})=>clipboard.readText())).toBe(owned);
+    await expect(page.getByRole('status').filter({hasText:'已复制'})).toBeVisible();
+    await page.getByRole('navigation').getByRole('button',{name:'服务管理',exact:true}).click();
+    const search=page.locator('.entity-toolbar').getByRole('textbox');
+    await search.focus();await page.keyboard.press('Control+V');await expect(search).toHaveValue(owned);
+    await page.getByRole('navigation').getByRole('button',{name:'部署目标',exact:true}).click();
+    await expect(page.locator('.entity-card-grid').getByRole('button',{name:'编辑',exact:true})).toHaveCount(6);
+    await expect(page.getByRole('button',{name:'编辑目标',exact:true})).toHaveCount(0);
+    expect(await app.evaluate(()=>(globalThis as any).__copyDownloads)).toBe(0);
+  }finally{
+    await app.evaluate(async ({clipboard},owned)=>{
+      const backup=(globalThis as any).__clipboardBackup;
+      if(await clipboard.readText()===owned){if(backup.length)await clipboard.write(backup);else clipboard.clear();}
+      delete (globalThis as any).__clipboardBackup;
+    },owned);
+  }
 });

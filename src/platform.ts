@@ -123,6 +123,7 @@ export type DesktopEvent =
   | { kind: 'open-task'; taskId: string }
   | { kind: 'update'; update: import('./app-update').AppUpdate };
 export interface DesktopAPI {
+  copyText(value: string): Promise<void>;
   openUpdateCache(): Promise<void>;
   openUpdateLink(url: string): Promise<void>;
   updateState(): Promise<import('./app-update').AppUpdate>;

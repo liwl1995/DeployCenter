@@ -55,7 +55,7 @@ describe('组件交互', () => {
     render(<App />);
     await user.click(screen.getByRole('button', { name: /^部署目标/ }));
     await user.click(screen.getByRole('button', { name: '查看部署目标备用环境 · 新增示例详情' }));
-    await user.click(screen.getByRole('button', { name: '编辑目标' }));
+    await user.click(screen.getByRole('button', { name: /^编辑$/ }));
     const dialog = screen.getByRole('dialog');
     const remote = within(dialog).getByRole('textbox', { name: '远程 JAR 文件名' });
     expect((remote as HTMLInputElement).value).toBe('crm.jar');

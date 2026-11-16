@@ -53,6 +53,7 @@ import {
   type Task,
   type History,
 } from './model';
+import { copyText } from './clipboard';
 import { createTask, startTask, tick, cancelTask, requestFailure } from './engine';
 import { recordTask, pruneHistory, canRollback as rollbackAllowed, historyLogs } from './records';
 import { CredentialSession, credentialServers } from './credentials';
@@ -644,11 +645,10 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   }
   async function copy(text: string) {
     try {
-      await navigator.clipboard.writeText(text);
+      await copyText(text);
       notify('已复制');
     } catch {
-      download('deploy-diagnostics.txt', text);
-      notify('浏览器未允许剪贴板访问，已改为下载文本。');
+      notify('复制失败，请稍后重试。可先选中文字后按 Ctrl+C 复制。');
     }
   }
   async function repeatTask(dryRun: boolean) {
@@ -901,7 +901,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       />
       <button className="button" onClick={() => setDialog({ kind: 'target', value: t })}>
         <Pencil size={15} />
-        编辑目标
+        编辑
       </button>
       <button
         className="button primary"
@@ -2646,7 +2646,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                       description: '检查软件更新、备份配置或查看使用说明。',
                       content: (
                         <div className="help-settings">
-                          <AppUpdateSettings api={desktop} version={boot?.version || '1.5.7'} active={isActive(task)} />
+                          <AppUpdateSettings api={desktop} version={boot?.version || '1.6.0'} active={isActive(task)} />
                           <Card className="help-settings-section">
                             <div className="help-section-row">
                               <div>
@@ -3055,7 +3055,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         </main>
         <footer className="workspace-footer" aria-label="应用状态">
           <span className="footer-version">
-            {desktop ? 'v' + (boot?.version || '1.5.7') : '界面原型 v0.3'}
+            {desktop ? 'v' + (boot?.version || '1.6.0') : '界面原型 v0.3'}
           </span>
           <button
             className="footer-directory"
@@ -3224,6 +3224,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       {dialog?.kind === 'confirm' && (
         <Confirm
           task={dialog.task}
+          onCopy={(value) => void copy(value)}
           returnFocus={dialog.returnFocus}
           onClose={() => setDialog(null)}
           saved={saved}
@@ -3538,10 +3539,12 @@ function ServicePicker({ db, onChoose }: { db: Database; onChoose: (id: string) 
 function Confirm({
   task: initial,
   onStart,
+  onCopy,
   onClose,
   returnFocus,
   saved = [],
 }: {
+  onCopy: (value: string) => void;
   saved?: string[];
   task: Task;
   onStart: (
@@ -3839,9 +3842,7 @@ function Confirm({
           <HashValue
             label="Git 提交"
             value={initial.service.git.commit}
-            onCopy={(value) => {
-              void navigator.clipboard.writeText(value);
-            }}
+            onCopy={onCopy}
           />
         </p>
       </Disclosure>

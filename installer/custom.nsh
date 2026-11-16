@@ -3,6 +3,7 @@
 !include nsDialogs.nsh
 !include WinMessages.nsh
 !include Sections.nsh
+!include "${PROJECT_DIR}\installer\progress.nsh"
 !include "${PROJECT_DIR}\installer\data-cleanup.nsh"
 !include "${PROJECT_DIR}\installer\data-paths.nsh"
 !ifdef BUILD_UNINSTALLER
@@ -173,6 +174,10 @@ FunctionEnd
 !macroend
 
 !macro customHeader
+!ifndef BUILD_UNINSTALLER
+  ShowInstDetails show
+  !insertmacro DC_ProgressFunctions
+!endif
 !insertmacro DC_DataCleanupVariables
 !ifdef BUILD_UNINSTALLER
   !insertmacro DC_DataPathFunctions "un."
@@ -351,6 +356,8 @@ FunctionEnd
 
 !macro customPageAfterChangeDir
   Page custom DC_OptionsCreate DC_OptionsLeave
+  !define MUI_PAGE_CUSTOMFUNCTION_SHOW DC_ShowInstallProgress
+  !define MUI_PAGE_CUSTOMFUNCTION_LEAVE DC_CloseInstallProgress
 !macroend
 
 !macro customInstall
@@ -362,6 +369,7 @@ FunctionEnd
   FileOpen $DC_Log "$DC_InstallerLogs\last-install.log" a
   FileWrite $DC_Log "安装成功 ${VERSION}，目录：$INSTDIR$\r$\n"
   FileClose $DC_Log
+  !insertmacro DC_InstallStage 4 "程序文件与快捷方式已安装完成"
 !macroend
 
 ; 卸载组件页默认不勾选数据清理。升级时即使被传入该选项，也不执行删除。
@@ -437,4 +445,15 @@ FunctionEnd
       !insertmacro SelectSection ${DC_PurgeData}
     ${EndIf}
   FunctionEnd
+!macroend
+
+; 解压及写入程序文件已经完成后，进入系统注册和快捷方式阶段。
+!macro customFiles_x64
+  !insertmacro DC_InstallStage 3 "正在注册程序并创建快捷方式"
+!macroend
+!macro customFiles_ia32
+  !insertmacro DC_InstallStage 3 "正在注册程序并创建快捷方式"
+!macroend
+!macro customFiles_arm64
+  !insertmacro DC_InstallStage 3 "正在注册程序并创建快捷方式"
 !macroend

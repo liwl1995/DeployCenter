@@ -3801,3 +3801,6 @@ main:has(.entity-cards-workspace) > .page-header .muted {
   border-left-color: var(--red);
   background: color-mix(in srgb, var(--red) 10%, var(--panel));
 }
+
+/* 末行留出文字与滚动条间距；附加进度区也计入真实滚动内容。 */
+.log-content { min-width: 100%; padding-bottom: 12px; }
