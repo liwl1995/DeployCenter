@@ -8,13 +8,9 @@ export async function buildUpdateHelper(
   source = path.resolve('installer/UpdateHelper.cs'),
 ) {
   if (process.platform !== 'win32') return;
-  const compiler = path.join(
-    process.env.SystemRoot || 'C:\\Windows',
-    'Microsoft.NET',
-    'Framework64',
-    'v4.0.30319',
-    'csc.exe',
-  );
+  const windows = process.env.SystemRoot || process.env.windir;
+  if (!windows || !path.isAbsolute(windows)) throw new Error('无法定位 Windows 系统目录，请检查 SystemRoot 或 windir');
+  const compiler = path.join(windows, 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe');
   await fs.mkdir(path.dirname(output), { recursive: true });
   execFileSync(
     compiler,

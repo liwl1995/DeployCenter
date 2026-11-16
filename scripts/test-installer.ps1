@@ -1,22 +1,29 @@
-﻿param(
+param(
   [Parameter(Mandatory=$true)][string]$Installer,
   [string]$OlderInstaller,
   [switch]$ResumeOwnedTest,
   [switch]$RunDesktopSmoke,
-  [string]$InstallRoot = 'E:\temp\codex-data\2026-11-03\xia\work\安装验收',
-  [string]$Report = 'E:\temp\codex-data\2026-11-03\xia\outputs\installer-verification.json'
+  [string]$InstallRoot = (Join-Path $PSScriptRoot '../.test-data/安装验收'),
+  [string]$Report = (Join-Path $PSScriptRoot '../release/installer-verification.json')
 )
 $ErrorActionPreference = 'Stop'
 $installerPath = (Resolve-Path -LiteralPath $Installer).Path
 $expectedVersion = (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../package.json') -Raw | ConvertFrom-Json).version
 $testRoot = [IO.Path]::GetFullPath($InstallRoot)
-$permittedRoot = [IO.Path]::GetFullPath('E:\temp\codex-data\2026-11-03\xia\work') + '\'
-if (-not $testRoot.StartsWith($permittedRoot,[StringComparison]::OrdinalIgnoreCase)) { throw '安装测试目录必须位于本任务 work 目录' }
+$permittedRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../.test-data')) + '\'
+if (-not $testRoot.StartsWith($permittedRoot,[StringComparison]::OrdinalIgnoreCase)) { throw '安装测试目录必须位于源码 .test-data 目录' }
 $targetDir = Join-Path $testRoot '中文 Space\Deploy Center'
 $registryKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\331cf176-7a71-5b12-9fb9-5cf75e4f46af'
-$dataPath = Join-Path $env:APPDATA 'DeployCenter'
+$dataPath = $null
+try { $dataPath = Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\YOTOO\DeployCenter' -Name DataDirectory -ErrorAction Stop } catch [System.Management.Automation.ItemNotFoundException] { } catch [System.Management.Automation.PSArgumentException] { }
+$configuredLocation = $dataPath
+if (-not $dataPath) {
+  $legacyPointer = Join-Path $env:LOCALAPPDATA 'DeployCenter/Settings/data-location.json'
+  if (Test-Path -LiteralPath $legacyPointer) { $dataPath = (Get-Content -LiteralPath $legacyPointer -Raw | ConvertFrom-Json).active }
+}
+if (-not $dataPath) { $dataPath = Join-Path $env:APPDATA 'DeployCenter' }
 $marker = [guid]::NewGuid().ToString()
-if ((Test-Path -LiteralPath $registryKey) -or (Test-Path -LiteralPath $dataPath)) {
+if ($configuredLocation -or (Test-Path -LiteralPath $registryKey) -or (Test-Path -LiteralPath $dataPath)) {
   if (-not $ResumeOwnedTest) { throw '已存在安装或用户数据，停止以保护现有内容；仅本任务的验收夹具可显式恢复' }
   $ownership = Join-Path $dataPath '.installer-test-owned'
   $oldLocation = Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\331cf176-7a71-5b12-9fb9-5cf75e4f46af' -Name InstallLocation
@@ -24,6 +31,7 @@ if ((Test-Path -LiteralPath $registryKey) -or (Test-Path -LiteralPath $dataPath)
   $marker = (Get-Content -LiteralPath $ownership -Raw).Trim()
   $null = [guid]::Parse($marker)
 }
+New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Report))) -Force | Out-Null
 $results = [System.Collections.Generic.List[object]]::new()
 function Assert-Check([string]$Name,[bool]$Condition,[string]$Detail='') {
   $results.Add(@{name=$Name;passed=$Condition;detail=$Detail})

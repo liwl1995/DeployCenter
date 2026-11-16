@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import Sqlite from 'better-sqlite3';
 import { z } from 'zod';
 import { plainPath } from './managed-path';
+import { transferTree } from './data-paths';
 import { MigrationReporter } from './migration-progress';
 import { databaseVersion } from './storage';
 
@@ -72,12 +73,24 @@ async function digest(file: string, signal?: AbortSignal, onChunk?: (bytes: numb
   }
   return hash.digest('hex');
 }
-async function inventory(root: string): Promise<Entry[]> {
+async function inventory(root: string, managed = false, transient = false): Promise<Entry[]> {
   plainPath(root);
   const list: Entry[] = [];
   async function walk(directory: string) {
-    for (const item of await fsp.readdir(directory, { withFileTypes: true })) {
-      if (item.name === ownerFile || item.name === markerFile) continue;
+    let items;
+    try {
+      items = await fsp.readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if (transient && (error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+    for (const item of items) {
+      if (
+        item.name === ownerFile ||
+        item.name === markerFile ||
+        (managed && directory === root && ['Control', 'Runtime'].includes(item.name))
+      )
+        continue;
       const file = path.join(directory, item.name),
         info = await fsp.lstat(file);
       if (info.isSymbolicLink())
@@ -90,10 +103,11 @@ async function inventory(root: string): Promise<Entry[]> {
   if (fs.existsSync(root)) await walk(root);
   return list;
 }
-async function directoryList(root: string): Promise<string[]> {
+async function directoryList(root: string, managed = false): Promise<string[]> {
   const dirs: string[] = [];
   const walk = async (dir: string) => {
     for (const item of await fsp.readdir(dir, { withFileTypes: true })) {
+      if (managed && dir === root && ['Control', 'Runtime'].includes(item.name)) continue;
       const file = path.join(dir, item.name),
         info = await fsp.lstat(file);
       if (info.isSymbolicLink()) throw new Error('数据目录包含链接，拒绝迁移或清理');
@@ -123,10 +137,17 @@ function checkDatabase(file: string) {
   }
 }
 
-/** 位置指针和迁移日志始终保存在数据目录外；复制完成前绝不切换活动目录。 */
+/** 恢复位置前只读核验数据库，不能因为位置记录损坏而创建空配置。 */
+export function validateExistingDirectory(raw: string) {
+  const directory = plainPath(raw);
+  checkDatabase(path.join(directory, 'deploy-center.sqlite'));
+  return directory;
+}
+
+/** 控制记录独立于业务文件清单；当前应用保存在 Control，复制完成前绝不切换活动目录。 */
 export class DataDirectory {
-  readonly pointerFile: string;
-  readonly journalFile: string;
+  pointerFile: string;
+  journalFile: string;
   private pointer: Pointer;
   private controller?: AbortController;
   progress: MigrationProgress = {
@@ -138,13 +159,33 @@ export class DataDirectory {
     message: '',
   };
   constructor(
-    readonly settingsDir: string,
+    public settingsDir: string,
     readonly defaultDir: string,
     private restrictedRoots: string[] = [],
+    private managedLayout = false,
+    initialDirectory = defaultDir,
   ) {
     this.pointerFile = path.join(settingsDir, 'data-location.json');
     this.journalFile = path.join(settingsDir, 'migration.json');
-    this.pointer = { schema: 1, active: path.resolve(defaultDir) };
+    this.pointer = { schema: 1, active: path.resolve(initialDirectory) };
+  }
+  /** 活动目录切换后将控制记录落到新目录，注册表只需记录新位置。 */
+  rehome(directory: string) {
+    if (!this.managedLayout) return;
+    const control = plainPath(path.join(directory, 'Control'));
+    if (control === this.settingsDir) return;
+    const journal = this.journal();
+    transferTree(this.settingsDir, control, [
+      'data-location.json',
+      'data-location.ini',
+      'migration.json',
+    ]);
+    atomic(path.join(control, 'data-location.json'), this.pointer);
+    if (journal) atomic(path.join(control, 'migration.json'), journal);
+    this.settingsDir = control;
+    this.pointerFile = path.join(control, 'data-location.json');
+    this.journalFile = path.join(control, 'migration.json');
+    this.writeIni();
   }
   private journal(): Journal | undefined {
     if (!fs.existsSync(this.journalFile)) return;
@@ -214,11 +255,11 @@ export class DataDirectory {
         if (!journal.verified) throw new Error('缺少迁移完整性清单');
         if (
           journal.directories &&
-          JSON.stringify(await directoryList(this.pointer.pending)) !==
+          JSON.stringify(await directoryList(this.pointer.pending, this.managedLayout)) !==
             JSON.stringify(journal.directories)
         )
           throw new Error('迁移后目录结构变化');
-        const currentFiles = await inventory(this.pointer.pending);
+        const currentFiles = await inventory(this.pointer.pending, this.managedLayout);
         if (currentFiles.length !== journal.verified.length) throw new Error('迁移后文件数量变化');
         for (const entry of journal.verified) {
           const file = path.resolve(this.pointer.pending, entry.relative);
@@ -272,7 +313,7 @@ export class DataDirectory {
     this.writeIni();
   }
   async info(): Promise<DirectoryInfo> {
-    const entries = await inventory(this.pointer.active);
+    const entries = await inventory(this.pointer.active, false, this.managedLayout);
     return {
       path: this.pointer.active,
       bytes: entries.reduce((n, e) => n + e.size, 0),
@@ -410,13 +451,13 @@ export class DataDirectory {
       if (blockedAgain) throw new Error(blockedAgain);
       pause();
       paused = true;
-      const manifest = await inventory(source),
+      const manifest = await inventory(source, this.managedLayout),
         before = checkDatabase(path.join(source, 'deploy-center.sqlite'));
       // 检查后再次确认空目录，避免对话框停留期间目标发生变化。
       if (fs.existsSync(target) && (await fsp.readdir(target)).length)
         throw new Error('目标目录已变为非空，停止迁移');
       await fsp.mkdir(target, { recursive: true });
-      journal.directories = await directoryList(source);
+      journal.directories = await directoryList(source, this.managedLayout);
       await fsp.writeFile(path.join(target, markerFile), journal.id, { flag: 'wx', mode: 0o600 });
       owned = true;
       atomic(this.journalFile, journal);
@@ -467,9 +508,12 @@ export class DataDirectory {
         verifiedFiles: 0,
         message: '核对文件数量、大小、哈希及数据库',
       });
-      if (JSON.stringify(await directoryList(target)) !== JSON.stringify(journal.directories))
+      if (
+        JSON.stringify(await directoryList(target, this.managedLayout)) !==
+        JSON.stringify(journal.directories)
+      )
         throw new Error('复制后的目录结构不一致');
-      const copied = await inventory(target);
+      const copied = await inventory(target, this.managedLayout);
       if (copied.length !== manifest.length) throw new Error('复制后的文件数量不一致');
       for (const entry of manifest) {
         if (signal.aborted) throw new Error('迁移已取消');
@@ -492,7 +536,7 @@ export class DataDirectory {
       )
         throw new Error('数据库任务或加密凭据校验不一致');
       journal.manifest = manifest;
-      journal.verified = await inventory(target);
+      journal.verified = await inventory(target, this.managedLayout);
       for (const entry of journal.verified) {
         update({ currentFile: entry.relative });
         entry.hash = await digest(path.join(target, entry.relative), signal);
@@ -600,10 +644,11 @@ export class DataDirectory {
     // 持久标记来自应用；旧版默认目录无标记时仅允许迁移时记录的精确文件集。
     if (
       journal.directories &&
-      JSON.stringify(await directoryList(old)) !== JSON.stringify(journal.directories)
+      JSON.stringify(await directoryList(old, this.managedLayout)) !==
+        JSON.stringify(journal.directories)
     )
       throw new Error('旧目录结构已改变，保留并人工检查');
-    const entries = await inventory(old);
+    const entries = await inventory(old, this.managedLayout);
     const allowed = new Set(journal.files);
     if (entries.some((e) => !allowed.has(e.relative)))
       throw new Error('旧目录出现新增文件，请保留并人工检查');
@@ -621,6 +666,10 @@ export class DataDirectory {
     if ((await fsp.realpath(old)) !== old) throw new Error('旧目录已变成链接');
     // 已逐项确认根路径与文件集，禁止使用未经检查的计算路径执行递归删除。
     plainPath(old);
+    if (this.managedLayout) {
+      await inventory(old);
+      await directoryList(old);
+    }
     await fsp.rm(old, { recursive: true, force: false });
     this.savePointer({ ...this.pointer, previous: undefined });
     return true;

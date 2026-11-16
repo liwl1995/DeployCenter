@@ -106,6 +106,9 @@ export type DataUsage = {
   temporary: number;
   backups: number;
   other: number;
+  updates?: number;
+  runtime?: number;
+  installerBackups?: number;
   total: number;
   legacy: { pending: boolean; bytes: number; successBytes: number; warnings: string[] };
 };

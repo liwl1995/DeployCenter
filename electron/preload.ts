@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { DesktopAPI, DesktopEvent } from '../src/platform';
 const invoke = (name: string, ...args: unknown[]) => ipcRenderer.invoke('deploy:' + name, ...args);
 const api: DesktopAPI = {
+  openUpdateCache: () => invoke('open-update-cache'),
+  openUpdateLink: (url) => invoke('open-update-link', url),
   updateState: () => invoke('update-state'),
   checkUpdate: () => invoke('check-update'),
   downloadUpdate: () => invoke('download-update'),

@@ -114,3 +114,47 @@ it('移除页面快捷键和说明，Ctrl Enter 不再提交；Esc 和 Tab 仍�
   fireEvent.keyDown(document, { key: 'Escape' });
   expect(close).toHaveBeenCalledOnce();
 });
+
+it('Markdown 更新说明渲染标题、列表、代码和表格，阻止 HTML、远程图片及非项目链接', async () => {
+  const f = client('ready');
+  f.state.release!.notes =
+    '# 版本优化\n\n## 修复项目\n\n- **缓存恢复** 与 `setup.exe`\n\n> 保留原数据\n\n| 项目 | 状态 |\n| --- | --- |\n| 缓存 | 完成 |\n\n[版本页面](https://github.com/liwl1995/DeployCenter/releases)\n\n[恶意](javascript:alert(1)) [其他站点](https://example.com)\n\n![远端图片](https://example.com/track.png)\n\n<script>window.bad=1</script><iframe src="https://example.com"></iframe>';
+  const open = vi.fn().mockResolvedValue(undefined);
+  f.api.openUpdateLink = open;
+  render(<AppUpdateSettings api={f.api} version="1.5.6" active={false} />);
+  await waitFor(() => expect(screen.getByRole('heading', { name: '版本优化' })).toBeTruthy());
+  expect(screen.getByRole('heading', { name: '修复项目' })).toBeTruthy();
+  expect(document.querySelector('.update-notes strong')?.textContent).toBe('缓存恢复');
+  expect(document.querySelector('.update-notes code')?.textContent).toBe('setup.exe');
+  expect(screen.getByRole('table')).toBeTruthy();
+  expect(
+    document.querySelector('.update-notes script,.update-notes iframe,.update-notes img'),
+  ).toBeNull();
+  expect(screen.queryByRole('link', { name: '恶意' })).toBeNull();
+  expect(screen.queryByRole('link', { name: '其他站点' })).toBeNull();
+  fireEvent.click(screen.getByRole('link', { name: '版本页面' }));
+  await waitFor(() =>
+    expect(open).toHaveBeenCalledWith('https://github.com/liwl1995/DeployCenter/releases'),
+  );
+});
+it('缓存位置单独展示，旧版缓存先检查再复用，错误移除 IPC 包装并使用失败提示', async () => {
+  const f = client('idle');
+  f.state.stage = 'cached';
+  f.state.cacheDirectory = 'D:\\自定义 数据\\Updates';
+  f.state.installerPath = 'D:\\自定义 数据\\Updates\\update-abc\\setup.exe';
+  const open = vi.fn().mockResolvedValue(undefined);
+  f.api.openUpdateCache = open;
+  render(<AppUpdateSettings api={f.api} version="1.5.6" active={false} />);
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: '检查并复用安装包' })).toBeTruthy(),
+  );
+  expect(screen.getByText(f.state.installerPath)).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: '打开下载位置' }));
+  await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+  f.mocks.checkUpdate.mockRejectedValueOnce(
+    new Error("Error invoking remote method 'deploy:check-update': Error: 无法访问更新服务器"),
+  );
+  fireEvent.click(screen.getByRole('button', { name: '检查并复用安装包' }));
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('无法访问更新服务器'));
+  expect(screen.getByRole('alert').classList.contains('update-error')).toBe(true);
+});

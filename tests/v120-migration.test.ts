@@ -269,3 +269,116 @@ it('复制后目录被换成联接时，取消不会跟随联接删除外部文�
   expect(await fs.readFile(path.join(outside, 'keep.txt'), 'utf8')).toBe('outside');
   expect(await fs.readFile(path.join(nested, 'keep.txt'), 'utf8')).toBe('source');
 });
+
+it('托管布局复制更新缓存，运行与控制目录不破坏校验；重启后从新目录复用安装包', async () => {
+  const f = await fixture();
+  f.store.saveConfig(seed());
+  await f.store.settle();
+  const { AppUpdater, latestReleaseUrl } = await import('../electron/app-updater');
+  const payload = Buffer.from('MZ migration cache fixture'),
+    hash = (await import('node:crypto')).createHash('sha256').update(payload).digest('hex');
+  const protection = {
+    protect: async (value: string) => Buffer.from(value),
+    unprotect: async (value: Buffer) => value.toString(),
+  };
+  const options = {
+    currentVersion: '1.5.6',
+    fetch: async (url: string) =>
+      url === latestReleaseUrl
+        ? Response.json({
+            draft: false,
+            prerelease: false,
+            tag_name: 'v9.0.0',
+            html_url: 'https://github.com/liwl1995/DeployCenter/releases/tag/v9.0.0',
+            body: '# 更新',
+            assets: [
+              {
+                name: 'YOTOO-DeployCenter-9.0.0-Windows-x64-Setup.exe',
+                state: 'uploaded',
+                size: payload.length,
+                digest: 'sha256:' + hash,
+                browser_download_url:
+                  'https://github.com/liwl1995/DeployCenter/releases/download/v9.0.0/YOTOO-DeployCenter-9.0.0-Windows-x64-Setup.exe',
+              },
+            ],
+          })
+        : new Response(new Uint8Array(payload)),
+    emit: () => {},
+    installBlocked: () => undefined,
+    launch: async () => {},
+    cacheProtection: protection,
+  };
+  const updater = new AppUpdater({ ...options, directory: path.join(f.source, 'Updates') });
+  await updater.check();
+  await updater.download();
+  const control = path.join(f.source, 'Control'),
+    manager = new DataDirectory(control, f.source, [], true);
+  await manager.locate();
+  manager.markOwned(f.source);
+  await fs.mkdir(path.join(f.source, 'Runtime'), { recursive: true });
+  await fs.writeFile(path.join(f.source, 'Runtime', 'cache'), 'old');
+  await manager.migrate(
+    f.target,
+    () => undefined,
+    () => f.store.pause(),
+    () => f.store.resume(),
+    () => {},
+  );
+  await fs.mkdir(path.join(f.target, 'Runtime'), { recursive: true });
+  await fs.writeFile(path.join(f.target, 'Runtime', 'cache'), 'new');
+  const reboot = new DataDirectory(control, f.source, [], true);
+  expect((await reboot.locate()).directory).toBe(f.target);
+  reboot.rehome(f.target);
+  expect(reboot.pointerFile).toBe(path.join(f.target, 'Control', 'data-location.json'));
+  const restored = new AppUpdater({
+    ...options,
+    fetch: async () => {
+      throw new Error('离线');
+    },
+    directory: path.join(f.target, 'Updates'),
+  });
+  const state = await restored.restore();
+  expect(state.stage).toBe('ready');
+  expect(state.installerPath?.startsWith(f.target + path.sep)).toBe(true);
+  expect(await fs.readFile(state.installerPath!)).toEqual(payload);
+});
+
+it('旧版待重启迁移升级时，先核验原清单再导入旧用户目录的更新缓存', async () => {
+  const f = await fixture();
+  f.store.saveConfig(seed());
+  await f.store.settle();
+  await f.manager.migrate(
+    f.target,
+    () => undefined,
+    () => f.store.pause(),
+    () => f.store.resume(),
+    () => {},
+  );
+  await fs.writeFile(path.join(f.settings, 'Local State'), 'legacy state');
+  await fs.mkdir(path.join(f.settings, 'Updates', 'update-Old'), { recursive: true });
+  await fs.writeFile(path.join(f.settings, 'Updates', 'update-Old', 'setup.exe'), 'MZ old cache');
+  const { prepareDataHome } = await import('../electron/data-home');
+  let located: string | undefined;
+  const home = prepareDataHome(f.source, f.settings, {
+    read: () => located,
+    write: (value) => {
+      located = value;
+    },
+  });
+  expect(home.runtimeRoot).toBe(f.target);
+  home.prepareProfile();
+  expect(await fs.stat(path.join(f.target, 'Updates')).catch(() => undefined)).toBeUndefined();
+  const manager = new DataDirectory(home.paths.control, f.source, [], true);
+  expect((await manager.locate()).directory).toBe(f.target);
+  manager.rehome(f.target);
+  home.complete(f.target);
+  expect(located).toBe(f.target);
+  expect(await fs.readFile(path.join(f.target, 'Updates', 'update-Old', 'setup.exe'), 'utf8')).toBe(
+    'MZ old cache',
+  );
+  expect(
+    await fs.stat(
+      path.join(f.target, 'Control', 'legacy-startup-backup', 'profile', 'Local State'),
+    ),
+  ).toBeTruthy();
+});

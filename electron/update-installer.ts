@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { plainPath } from './managed-path';
 
 const encoded = (value: string) => Buffer.from(value, 'utf8').toString('base64');
 /** 路径作为编码参数传给独立助手，不经过 shell；助手再次校验指纹后启动向导。 */
@@ -23,6 +24,8 @@ export async function launchInstallerAfterExit(
   settings: string,
   helper: string,
 ) {
+  plainPath(settings);
+  await fs.mkdir(settings, { recursive: true });
   const log = path.join(settings, 'update-install.log');
   await fs.appendFile(log, new Date().toISOString() + ' 准备启动更新安装向导\n', 'utf8');
   const args = installerArguments(file, hash, installDir, log, process.pid);

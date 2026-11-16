@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Download, RefreshCw, Loader2, CheckCircle2 } from 'lucide-react';
 import { Card, Modal } from './ui';
+import { UpdateNotes } from './UpdateNotes';
 import type { DesktopAPI } from './platform';
 import type { AppUpdate } from './app-update';
 
@@ -43,21 +44,33 @@ export function AppUpdateSettings({
       off();
     };
   }, [api]);
-  const action = async (run: () => Promise<AppUpdate | void>) => {
+  const action = useCallback(async (run: () => Promise<AppUpdate | void>) => {
     setError('');
     try {
       const result = await run();
       if (result) setState(result);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(
+        (e instanceof Error ? e.message : String(e)).replace(
+          /^Error invoking remote method '[^']+': (?:Error: )?/,
+          '',
+        ),
+      );
     }
-  };
+  }, []);
+  const openNotesLink = useCallback(
+    (url: string) => {
+      if (api) void action(() => api.openUpdateLink(url));
+    },
+    [api, action],
+  );
   const working = ['checking', 'downloading', 'verifying', 'installing'].includes(state.stage);
   const downloading = state.stage === 'downloading';
   const hasUpdate = state.release && !['current', 'idle', 'checking'].includes(state.stage);
   const label = {
     idle: '手动检查正式版本，不会自动安装。',
     checking: '正在检查新版本…',
+    cached: '已找到上次下载的安装包，检查版本后可复用匹配的文件。',
     current: '当前已是最新版本。',
     available: '发现新版本，可以下载安装包。',
     downloading: '正在下载安装包…',
@@ -100,7 +113,8 @@ export function AppUpdateSettings({
                 disabled={working || !api}
                 onClick={() => void action(() => api!.checkUpdate())}
               >
-                {working ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}检查更新
+                {working ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+                {state.stage === 'cached' ? '检查并复用安装包' : '检查更新'}
               </button>
             )}
             {downloading && (
@@ -141,7 +155,7 @@ export function AppUpdateSettings({
             </div>
             <details>
               <summary>查看更新说明</summary>
-              <pre className="update-notes">{state.release.notes || '该版本未提供更新说明。'}</pre>
+              <UpdateNotes notes={state.release.notes} onLink={api ? openNotesLink : undefined} />
             </details>
           </div>
         )}
@@ -161,8 +175,23 @@ export function AppUpdateSettings({
             </span>
           </div>
         )}
+        {state.cacheDirectory && (
+          <div className="update-cache-location">
+            <div>
+              <span className="muted">{state.installerPath ? '已下载安装包' : '下载目录'}</span>
+              <code>{state.installerPath || state.cacheDirectory}</code>
+            </div>
+            <button
+              className="button"
+              disabled={!api}
+              onClick={() => void action(() => api!.openUpdateCache())}
+            >
+              打开下载位置
+            </button>
+          </div>
+        )}
         {(error || state.message) && (
-          <p className="notice warning" role="alert">
+          <p className="notice update-error" role="alert">
             {error || state.message}
           </p>
         )}
@@ -200,7 +229,7 @@ export function AppUpdateSettings({
           <p>沿用当前安装目录，保留服务、服务器、部署历史和用户数据。</p>
           <p className="note">安装向导中仍可取消；不会强制停止部署或远程维护操作。</p>
           {(error || state.message) && (
-            <p className="notice warning" role="alert">
+            <p className="notice update-error" role="alert">
               {error || state.message}
             </p>
           )}

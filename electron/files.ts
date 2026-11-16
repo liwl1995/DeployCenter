@@ -261,10 +261,8 @@ export async function detectJdks(): Promise<Database['jdks']> {
   const candidates = new Set<string>();
   if (process.env.JAVA_HOME) candidates.add(process.env.JAVA_HOME);
   const roots = [
-    path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Java'),
-    path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Eclipse Adoptium'),
-    path.join(process.env.USERPROFILE || '', '.jdks'),
-    'E:\\dev\\jdk',
+    ...(process.env.ProgramFiles ? [path.join(process.env.ProgramFiles, 'Java'), path.join(process.env.ProgramFiles, 'Eclipse Adoptium')] : []),
+    ...(process.env.USERPROFILE ? [path.join(process.env.USERPROFILE, '.jdks')] : []),
   ];
   for (const root of roots) {
     try {
@@ -273,6 +271,9 @@ export async function detectJdks(): Promise<Database['jdks']> {
       ))
         if (item.isDirectory()) candidates.add(path.join(root, item.name));
     } catch {}
+  }
+  for (const bin of (process.env.PATH || process.env.Path || '').split(path.delimiter)) {
+    if (path.basename(bin).toLowerCase() === 'bin' && fs.existsSync(path.join(bin, 'javac.exe'))) candidates.add(path.dirname(bin));
   }
   const result: Database['jdks'] = [];
   for (const candidate of candidates) {

@@ -3,6 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import ssh2 from 'ssh2';
 import type { AddressInfo } from 'node:net';
+import { Storage } from '../electron/storage';
 import { emptyDatabase, newService } from '../src/defaults';
 test.skip(process.platform !== 'win32', 'Windows 桌面及 .exe 验收仅在 Windows 运行');
 let app: ElectronApplication, root: string, source: string, target: string;
@@ -32,6 +33,23 @@ test.beforeEach(async () => {
   root = await fs.mkdtemp(path.join(base, 'v120-ui-'));
   source = path.join(root, '原数据');
   target = path.join(root, '迁移 后');
+  const db = emptyDatabase(),
+    service = newService();
+  service.id = 'storage-smoke';
+  service.name = '空间管理验收';
+  service.root = root;
+  db.services = [service];
+  db.lastService = service.id;
+  const seed = new Storage(source, {
+    encrypt: async () => {
+      throw new Error('夹具不保存凭据');
+    },
+    decrypt: async () => {
+      throw new Error('夹具不读取凭据');
+    },
+  });
+  seed.saveConfig(db);
+  seed.close();
   app = await launch();
   if (process.env.DEPLOY_CENTER_TEST_SCALE) {
     const page = await app.firstWindow();
@@ -40,16 +58,8 @@ test.beforeEach(async () => {
       Number(process.env.DEPLOY_CENTER_TEST_SCALE),
     );
   }
-  const page = await app.firstWindow(),
-    db = emptyDatabase(),
-    service = newService();
-  service.id = 'storage-smoke';
-  service.name = '空间管理验收';
-  service.root = root;
-  db.services = [service];
-  db.lastService = service.id;
-  await page.evaluate((value) => window.deployCenter!.save(value), db);
-  await page.reload();
+  const page = await app.firstWindow();
+  await page.getByRole('heading', { name: '准备好，发布下一版本', exact: true }).waitFor();
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByRole('tab', { name: '数据与存储', exact: true }).click();
 });
@@ -89,9 +99,11 @@ test('1.2.0 空间策略实际 IPC、三个宽度无横向溢出', async () => {
 });
 test('1.2.0 从设置迁移全部数据，重启激活且默认保留旧目录', async () => {
   let page = await app.firstWindow();
-  await page.getByRole('button', {name:'更换数据目录'}).click();
+  await page.getByRole('button', { name: '更换数据目录' }).click();
   await page.getByLabel('选择上级目录', { exact: true }).fill(target);
-  await expect(page.getByTestId('migration-final-path')).toHaveText(path.join(target,'DeployCenter'));
+  await expect(page.getByTestId('migration-final-path')).toHaveText(
+    path.join(target, 'DeployCenter'),
+  );
   await page.getByRole('button', { name: '检查并准备迁移' }).click();
   await expect(page.getByText('目录检查通过', { exact: true })).toBeVisible();
   await expect(page.getByRole('dialog')).toContainText('原目录默认保留');
@@ -103,6 +115,16 @@ test('1.2.0 从设置迁移全部数据，重启激活且默认保留旧目录',
   await expect
     .poll(async () => (await page.evaluate(() => window.deployCenter!.load())).dataDir)
     .toBe(path.join(target, 'DeployCenter'));
+  const runtime = await app.evaluate(({ app }) =>
+    Object.fromEntries(
+      ['userData', 'sessionData', 'temp', 'crashDumps', 'logs'].map((name) => [
+        name,
+        app.getPath(name as 'userData'),
+      ]),
+    ),
+  );
+  for (const value of Object.values(runtime))
+    expect(value.startsWith(path.join(target, 'DeployCenter') + path.sep)).toBe(true);
   expect((await page.evaluate(() => window.deployCenter!.load())).database.services[0].name).toBe(
     '空间管理验收',
   );
@@ -207,7 +229,9 @@ test('迁移后实际解密Windows保存凭据并认证回环SSH；导出不含�
     expect(raw).not.toContain(secret);
     expect(JSON.parse(raw).dataStorageNote).toContain('不能替代数据目录备份');
     expect(
-      (await fs.readFile(path.join(target, 'DeployCenter', 'deploy-center.sqlite'))).includes(Buffer.from(secret)),
+      (await fs.readFile(path.join(target, 'DeployCenter', 'deploy-center.sqlite'))).includes(
+        Buffer.from(secret),
+      ),
     ).toBe(false);
   } finally {
     await new Promise<void>((resolve) => ssh.close(() => resolve()));

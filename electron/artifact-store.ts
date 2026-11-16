@@ -571,6 +571,9 @@ export class ArtifactStore {
       temporary: 0,
       backups: 0,
       other: 0,
+      updates: 0,
+      runtime: 0,
+      installerBackups: 0,
       total: 0,
       legacy: { pending: false, bytes: 0, successBytes: 0, warnings: [] },
     };
@@ -581,9 +584,22 @@ export class ArtifactStore {
       );
     const known = new Set(this.objects().map((o) => o.path));
     const walk = (dir: string) => {
-      for (const name of fs.readdirSync(dir)) {
-        const file = path.join(dir, name),
+      let names: string[];
+      try {
+        names = fs.readdirSync(dir);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+        throw error;
+      }
+      for (const name of names) {
+        const file = path.join(dir, name);
+        let stat: fs.Stats;
+        try {
           stat = fs.lstatSync(file);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+          throw error;
+        }
         if (stat.isSymbolicLink()) {
           value.legacy.warnings.push(
             '已保留链接，未统计其指向内容：' + path.relative(this.dir, file),
@@ -598,18 +614,24 @@ export class ArtifactStore {
         const relative = path.relative(this.dir, file),
           top = relative.split(path.sep)[0];
         const key =
-          top === 'logs'
-            ? 'logs'
-            : top === 'artifacts'
-              ? 'artifacts'
-              : top === 'tmp'
-                ? 'temporary'
-                : top === 'backups'
-                  ? 'backups'
-                  : /^deploy-center\.sqlite(?:-wal|-shm)?$/.test(relative)
-                    ? 'database'
-                    : 'other';
-        value[key] += stat.size;
+          top === 'Updates'
+            ? 'updates'
+            : top === 'Runtime'
+              ? 'runtime'
+              : top === 'installer-backups'
+                ? 'installerBackups'
+                : top === 'logs'
+                  ? 'logs'
+                  : top === 'artifacts'
+                    ? 'artifacts'
+                    : top === 'tmp'
+                      ? 'temporary'
+                      : top === 'backups'
+                        ? 'backups'
+                        : /^deploy-center\.sqlite(?:-wal|-shm)?$/.test(relative)
+                          ? 'database'
+                          : 'other';
+        value[key] = (value[key] || 0) + stat.size;
         value.total += stat.size;
         if (top === 'artifacts' && !known.has(file)) {
           value.legacy.bytes += stat.size;

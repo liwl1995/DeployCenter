@@ -127,7 +127,10 @@ const sizes = [
 const captures = path.resolve('release/ui-simplify');
 async function size(width: number, height: number) {
   await app.evaluate(
-    ({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setContentSize(w, h),
+    ({ BrowserWindow }, [w, h]) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      window.setContentSize(w, h); window.show(); window.focus();
+    },
     [width, height],
   );
   const page = await app.firstWindow();
@@ -537,7 +540,7 @@ test('更新设置三种窗口下无溢出，按需下载、取消和校验，�
           html_url: 'https://github.com/liwl1995/DeployCenter/releases/tag/v99.0.0',
           draft: false,
           prerelease: false,
-          body: '测试更新说明\n<script>不执行</script>\n仅用于原生网络验收。',
+          body: '# 测试更新说明\n\n## 本次修复\n\n- **复用已下载的安装包**\n- 支持 `Markdown`。\n\n| 功能 | 状态 |\n| --- | --- |\n| 缓存恢复 | 完成 |\n\n<script>不执行</script>\n\n仅用于原生网络验收。',
           published_at: '2026-11-13T01:00:00Z',
           assets: [
             {
@@ -648,7 +651,24 @@ test('更新设置三种窗口下无溢出，按需下载、取消和校验，�
       await page.getByRole('button', { name: '下载更新', exact: true }).scrollIntoViewIfNeeded();
     }
     await page.getByText('查看更新说明', { exact: true }).click();
-    await expect(page.locator('.update-notes')).toContainText('<script>不执行</script>');
+    await expect(
+      page.locator('.update-notes').getByRole('heading', { name: '本次修复' }),
+    ).toBeVisible();
+    await expect(page.locator('.update-notes script')).toHaveCount(0);
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate((theme) => {
+        document.documentElement.dataset.theme = theme;
+      }, theme);
+      for (const [width, height] of sizes) {
+        await app.evaluate(
+          ({ BrowserWindow }, bounds) =>
+            BrowserWindow.getAllWindows()[0].setContentSize(bounds.width, bounds.height),
+          { width, height },
+        );
+        await boundaries();
+        await shot(`Markdown更新说明-${theme}-${width}x${height}`);
+      }
+    }
     await page.getByRole('button', { name: '下载更新', exact: true }).click();
     await expect(page.getByRole('alert')).toContainText('不受信任');
     expect(requests).not.toContain('/installer');
@@ -665,6 +685,9 @@ test('更新设置三种窗口下无溢出，按需下载、取消和校验，�
     expect(
       Number(await page.getByRole('progressbar', { name: '安装包下载进度' }).getAttribute('value')),
     ).toBeLessThan(installer.length);
+    await expect(
+      page.evaluate((path) => window.deployCenter!.migrateDirectory(path), dir + '-不能迁移'),
+    ).rejects.toThrow('正在检查或下载更新');
     await page.getByRole('button', { name: '取消下载', exact: true }).click();
     await expect(page.getByText('下载已取消或连接超时，可以重新下载。')).toBeVisible();
     await page.getByRole('button', { name: '下载更新', exact: true }).click();
@@ -703,11 +726,44 @@ test('更新设置三种窗口下无溢出，按需下载、取消和校验，�
     );
     expect((await page.evaluate(() => window.deployCenter!.updateState())).stage).toBe('ready');
     expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
+    const beforeRestart = requests.length;
+    const before = await page.evaluate(() => window.deployCenter!.updateState());
+    expect(before.installerPath?.startsWith(path.join(dir, 'Updates') + path.sep)).toBe(true);
+    expect(await fs.readFile(before.installerPath!)).toEqual(installer);
+    await app.close();
+    const reopenedEnv = { ...process.env, DEPLOY_CENTER_DATA_DIR: dir, DEPLOY_CENTER_TESTING: '1' };
+    delete reopenedEnv.ELECTRON_RUN_AS_NODE;
+    app = await electron.launch({
+      executablePath:
+        process.env.DEPLOY_CENTER_TEST_EXE ||
+        path.resolve('node_modules/electron/dist/electron.exe'),
+      args: process.env.DEPLOY_CENTER_TEST_EXE ? [] : [path.resolve('.')],
+      env: reopenedEnv,
+    });
+    const reopened = await app.firstWindow();
+    await reopened.getByRole('button', { name: '设置', exact: true }).click();
+    await reopened.getByRole('tab', { name: '配置与帮助', exact: true }).click();
+    await expect(reopened.getByRole('button', { name: '退出并安装', exact: true })).toBeVisible();
+    expect(requests.length).toBe(beforeRestart);
+    expect((await reopened.evaluate(() => window.deployCenter!.updateState())).installerPath).toBe(
+      before.installerPath,
+    );
+    await app.evaluate(({ shell }) => {
+      shell.showItemInFolder = (file) => {
+        (globalThis as unknown as { shownUpdateFile: string }).shownUpdateFile = file;
+      };
+    });
+    await reopened.getByRole('button', { name: '打开下载位置', exact: true }).click();
+    expect(
+      await app.evaluate(
+        () => (globalThis as unknown as { shownUpdateFile: string }).shownUpdateFile,
+      ),
+    ).toBe(before.installerPath);
   } finally {
     await app.evaluate(({ net }) => {
-      net.request = (
-        globalThis as unknown as { originalUpdateRequest: typeof net.request }
-      ).originalUpdateRequest;
+      const original = (globalThis as unknown as { originalUpdateRequest?: typeof net.request })
+        .originalUpdateRequest;
+      if (original) net.request = original;
     });
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) =>

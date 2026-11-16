@@ -4,6 +4,7 @@
 !include WinMessages.nsh
 !include Sections.nsh
 !include "${PROJECT_DIR}\installer\data-cleanup.nsh"
+!include "${PROJECT_DIR}\installer\data-paths.nsh"
 !ifdef BUILD_UNINSTALLER
 Var DC_DataActive
 Var DC_DataPending
@@ -81,10 +82,12 @@ Var DC_OldShortcut
 !macroend
 
 !macro customInit
+  !insertmacro customCheckAppRunning
+  Call DC_SetDataPaths
   !insertmacro DC_LoadBrandIcon
   StrCpy $DC_DesktopChoice ${BST_CHECKED}
-  CreateDirectory "$LOCALAPPDATA\DeployCenter\InstallerLogs"
-  FileOpen $DC_Log "$LOCALAPPDATA\DeployCenter\InstallerLogs\last-install.log" a
+  CreateDirectory "$DC_InstallerLogs"
+  FileOpen $DC_Log "$DC_InstallerLogs\last-install.log" a
   FileWrite $DC_Log "开始安装 ${VERSION}，目录：$INSTDIR$\r$\n"
   FileClose $DC_Log
   !insertmacro customCheckAppRunning
@@ -170,6 +173,15 @@ FunctionEnd
 !macroend
 
 !macro customHeader
+!insertmacro DC_DataCleanupVariables
+!ifdef BUILD_UNINSTALLER
+  !insertmacro DC_DataPathFunctions "un."
+!else
+  !insertmacro DC_DataPathFunctions ""
+  !define DC_DATA_CHECK_ONLY
+  !insertmacro DC_DataCleanupFunctions ""
+  !undef DC_DATA_CHECK_ONLY
+!endif
 ManifestDPIAware true
 SetFont /LANG=2052 "Microsoft YaHei" 9
 !ifdef BUILD_UNINSTALLER
@@ -237,7 +249,7 @@ Function DC_OptionsCreate
   ${EndIf}
   ${NSD_CreateLabel} 0 0 100% 24u "安装位置：$\r$\n$INSTDIR"
   Pop $0
-  ${NSD_CreateLabel} 0 35u 100% 30u "配置、历史和日志默认保存在：$\r$\n$APPDATA\DeployCenter（可在应用设置中迁移）"
+  ${NSD_CreateLabel} 0 35u 100% 30u "当前数据目录：$\r$\n$DC_DataRoot$\r$\n配置、日志、更新缓存及升级备份均跟随该目录。"
   Pop $0
   ${NSD_CreateCheckbox} 0 82u 100% 14u "创建桌面快捷方式"
   Pop $DC_Checkbox
@@ -275,11 +287,11 @@ Function .onInstFailed
       ${EndIf}
     ${EndIf}
   ${EndIf}
-  CreateDirectory "$LOCALAPPDATA\DeployCenter\InstallerLogs"
-  FileOpen $DC_Log "$LOCALAPPDATA\DeployCenter\InstallerLogs\last-install.log" a
+  CreateDirectory "$DC_InstallerLogs"
+  FileOpen $DC_Log "$DC_InstallerLogs\last-install.log" a
   FileWrite $DC_Log "安装未完成，目录：$INSTDIR。请查看向导详细信息并确认目录权限、空间和应用运行状态。$\r$\n"
   FileClose $DC_Log
-  MessageBox MB_OK|MB_ICONSTOP "YOTOO 部署中心 安装未完成。$\r$\n请检查安装目录权限、磁盘空间，以及应用是否已退出。$\r$\n安装日志：$LOCALAPPDATA\DeployCenter\InstallerLogs\last-install.log$\r$\n用户配置和部署历史不会因此被清空。" /SD IDOK
+  MessageBox MB_OK|MB_ICONSTOP "YOTOO 部署中心 安装未完成。$\r$\n请检查安装目录权限、磁盘空间，以及应用是否已退出。$\r$\n安装日志：$DC_InstallerLogs\last-install.log$\r$\n用户配置和部署历史不会因此被清空。" /SD IDOK
 FunctionEnd
 Function DC_BackupOldProgram
   ${If} $DC_Rollback != ""
@@ -305,7 +317,7 @@ Function DC_BackupOldProgram
   IfFileExists "$DESKTOP\$DC_OldShortcut.lnk" 0 +2
   StrCpy $DC_OldDesktop 1
   System::Call 'kernel32::GetTickCount() i .r0'
-  StrCpy $DC_Rollback "$LOCALAPPDATA\DeployCenter\InstallerRollback\$0"
+  StrCpy $DC_Rollback "$DC_InstallerBackups\$0"
   CreateDirectory "$DC_Rollback"
   ClearErrors
   CopyFiles /SILENT "$INSTDIR\*.*" "$DC_Rollback"
@@ -322,10 +334,15 @@ Function .onInstSuccess
   SetErrorLevel 0
   ${If} $DC_Rollback != ""
     ; 路径只由固定应用目录与 GetTickCount 生成，禁止使用用户输入作为删除目标。
-    StrLen $0 "$LOCALAPPDATA\DeployCenter\InstallerRollback\"
+    StrLen $0 "$DC_InstallerBackups\"
     StrCpy $1 $DC_Rollback $0
-    ${If} $1 == "$LOCALAPPDATA\DeployCenter\InstallerRollback\"
-      RMDir /r "$DC_Rollback"
+    ${If} $1 == "$DC_InstallerBackups\"
+      StrCpy $DC_PurgeError ""
+      Push $DC_Rollback
+      Call DC_CheckDataTree
+      ${If} $DC_PurgeError == ""
+        RMDir /r "$DC_Rollback"
+      ${EndIf}
     ${EndIf}
   ${EndIf}
 FunctionEnd
@@ -341,14 +358,15 @@ FunctionEnd
   ${If} $DC_DesktopChoice == ${BST_UNCHECKED}
     Delete "$DESKTOP\${SHORTCUT_NAME}.lnk"
   ${EndIf}
-  CreateDirectory "$LOCALAPPDATA\DeployCenter\InstallerLogs"
-  FileOpen $DC_Log "$LOCALAPPDATA\DeployCenter\InstallerLogs\last-install.log" a
+  CreateDirectory "$DC_InstallerLogs"
+  FileOpen $DC_Log "$DC_InstallerLogs\last-install.log" a
   FileWrite $DC_Log "安装成功 ${VERSION}，目录：$INSTDIR$\r$\n"
   FileClose $DC_Log
 !macroend
 
 ; 卸载组件页默认不勾选数据清理。升级时即使被传入该选项，也不执行删除。
 !macro customUnInit
+  Call un.DC_SetDataPaths
   !insertmacro DC_LoadBrandIcon
   Call un.DC_ParsePurgeOptions
 !macroend
@@ -358,17 +376,17 @@ FunctionEnd
   Section /o "un.彻底清理当前用户的配置、部署历史和日志（可选）" DC_PurgeData
     ${IfNot} ${isUpdated}
       StrCpy $DC_PurgeError ""
-      StrCpy $DC_DataActive "$APPDATA\DeployCenter"
+      StrCpy $DC_DataActive "$DC_DataRoot"
       StrCpy $DC_DataPending ""
       StrCpy $DC_DataPrevious ""
-      IfFileExists "$LOCALAPPDATA\DeployCenter\Settings\data-location.ini" DC_PurgeReadIni 0
-      IfFileExists "$LOCALAPPDATA\DeployCenter\Settings\data-location.json" 0 DC_PurgeReadDone
+      IfFileExists "$DC_ControlDirectory\data-location.ini" DC_PurgeReadIni 0
+      IfFileExists "$DC_ControlDirectory\data-location.json" 0 DC_PurgeReadDone
       StrCpy $DC_PurgeError "数据位置记录不完整，所有用户数据及位置记录已保留。"
       Goto DC_PurgeReadDone
       DC_PurgeReadIni:
-      ReadINIStr $DC_DataActive "$LOCALAPPDATA\DeployCenter\Settings\data-location.ini" "location" "active"
-      ReadINIStr $DC_DataPending "$LOCALAPPDATA\DeployCenter\Settings\data-location.ini" "location" "pending"
-      ReadINIStr $DC_DataPrevious "$LOCALAPPDATA\DeployCenter\Settings\data-location.ini" "location" "previous"
+      ReadINIStr $DC_DataActive "$DC_ControlDirectory\data-location.ini" "location" "active"
+      ReadINIStr $DC_DataPending "$DC_ControlDirectory\data-location.ini" "location" "pending"
+      ReadINIStr $DC_DataPrevious "$DC_ControlDirectory\data-location.ini" "location" "previous"
       ${If} $DC_DataActive == ""
         StrCpy $DC_PurgeError "数据位置记录无法读取，所有用户数据已保留。"
       ${EndIf}
@@ -379,14 +397,16 @@ FunctionEnd
       Call un.DC_ValidateDataRoot
       Push $DC_DataPrevious
       Call un.DC_ValidateDataRoot
-      Push "$LOCALAPPDATA\DeployCenter\Settings"
-      Call un.DC_ValidateDataRoot
+      ${If} $DC_ControlDirectory == "$LOCALAPPDATA\DeployCenter\Settings"
+        Push $DC_ControlDirectory
+        Call un.DC_ValidateDataRoot
+      ${EndIf}
       ${If} $DC_PurgeError != ""
         MessageBox MB_OK|MB_ICONEXCLAMATION "$DC_PurgeError$\r$\n程序卸载继续，未清理用户数据。" /SD IDOK
         Goto DC_PurgeDone
       ${EndIf}
       ${IfNot} ${Silent}
-        MessageBox MB_YESNO|MB_ICONEXCLAMATION "将永久删除以下数据目录中的配置、历史、凭据、日志及本地产物：$\r$\n当前：$DC_DataActive$\r$\n待切换：$DC_DataPending$\r$\n旧副本：$DC_DataPrevious$\r$\n位置设置：$LOCALAPPDATA\DeployCenter\Settings$\r$\n$\r$\n服务器文件不受影响。确定彻底清理吗？" /SD IDNO IDYES +2
+        MessageBox MB_YESNO|MB_ICONEXCLAMATION "将永久删除以下数据目录中的配置、历史、凭据、日志及本地产物：$\r$\n当前：$DC_DataActive$\r$\n待切换：$DC_DataPending$\r$\n旧副本：$DC_DataPrevious$\r$\n位置记录：$DC_ControlDirectory$\r$\n$\r$\n服务器文件不受影响。确定彻底清理吗？" /SD IDNO IDYES +2
         Goto DC_PurgeDone
       ${EndIf}
       Push $DC_DataActive
@@ -395,8 +415,13 @@ FunctionEnd
       Call un.DC_RemoveDataRoot
       Push $DC_DataPrevious
       Call un.DC_RemoveDataRoot
-      Push "$LOCALAPPDATA\DeployCenter\Settings"
-      Call un.DC_RemoveDataRoot
+      ${If} $DC_ControlDirectory == "$LOCALAPPDATA\DeployCenter\Settings"
+        Push $DC_ControlDirectory
+        Call un.DC_RemoveDataRoot
+      ${EndIf}
+      ${If} $DC_PurgeError == ""
+        DeleteRegValue HKCU "${YOTOO_LOCATION_KEY}" "DataDirectory"
+      ${EndIf}
       ${If} $DC_PurgeError != ""
         MessageBox MB_OK|MB_ICONEXCLAMATION "$DC_PurgeError$\r$\n未清理的内容与位置记录已保留，请手动核实。" /SD IDOK
       ${EndIf}

@@ -108,6 +108,9 @@ export function DataSettings({
                 ['产物快照', usage.artifacts],
                 ['临时文件', usage.temporary],
                 ['迁移与数据库备份', usage.backups],
+                ['更新安装包', usage.updates || 0],
+                ['运行缓存', usage.runtime || 0],
+                ['升级安装备份', usage.installerBackups || 0],
                 ['其他文件', usage.other],
                 ['总计', usage.total],
               ] as const

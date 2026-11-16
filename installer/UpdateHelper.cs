@@ -14,12 +14,52 @@ internal static class UpdateHelper
         return Encoding.UTF8.GetString(Convert.FromBase64String(value));
     }
 
+    private static int DirectoryLocation(string[] args)
+    {
+        if (args.Length < 2 || (args[1] != "DataDirectory" && args[1] != "DevelopmentDataDirectory"))
+            throw new ArgumentException("数据目录定位参数无效");
+        using (Microsoft.Win32.RegistryKey key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey("Software\\YOTOO\\DeployCenter"))
+        {
+            if (args[0] == "--data-directory-read" && args.Length == 2)
+            {
+                string value = key.GetValue(args[1], "") as string;
+                if (!string.IsNullOrEmpty(value)) Console.Out.WriteLine(Convert.ToBase64String(Encoding.UTF8.GetBytes(value)));
+            }
+            else if (args[0] == "--data-directory-write" && args.Length == 3)
+            {
+                string value = Decode(args[2]);
+                if (!Path.IsPathRooted(value) || value.IndexOfAny(new[] { '\0', '\r', '\n' }) >= 0)
+                    throw new ArgumentException("数据目录必须是有效的绝对路径");
+                key.SetValue(args[1], value, Microsoft.Win32.RegistryValueKind.String);
+                key.Flush();
+            }
+            else throw new ArgumentException("数据目录定位操作无效");
+        }
+        return 0;
+    }
+
+    [STAThread]
     private static int Main(string[] args)
     {
         string log = null;
         bool ready = false;
         try
         {
+            if (args.Length == 2 && args[0] == "--choose-data-directory")
+            {
+                if (MessageBox.Show("配置的数据目录无法读取，原数据不会被删除。是否重新选择已有数据目录？\n\n" + Decode(args[1]), "YOTOO 部署中心 数据目录恢复", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return 2;
+                using (FolderBrowserDialog dialog = new FolderBrowserDialog())
+                {
+                    dialog.Description = "选择包含 deploy-center.sqlite 的已有数据目录";
+                    dialog.ShowNewFolderButton = false;
+                    if (dialog.ShowDialog() != DialogResult.OK) return 2;
+                    Console.Out.WriteLine(Convert.ToBase64String(Encoding.UTF8.GetBytes(dialog.SelectedPath)));
+                    return 0;
+                }
+            }
+            // 注册表仅保存目录位置，内容经 UTF-8/Base64 传递，避免中文系统代码页差异。
+            if (args.Length > 0 && args[0].StartsWith("--data-directory-", StringComparison.Ordinal))
+                return DirectoryLocation(args);
             int pid;
             if (args.Length != 5 || !int.TryParse(args[0], out pid) || pid <= 0)
                 throw new ArgumentException("更新安装参数无效");

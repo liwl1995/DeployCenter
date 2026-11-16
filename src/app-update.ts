@@ -1,9 +1,10 @@
-/** 更新状态只在内存中流转；配置数据库和认证凭据不参与更新。 */
+/** 更新状态与已下载文件分开保存，缓存恢复不依赖配置数据库或服务器凭据。 */
 export type AppUpdate = {
   currentVersion: string;
   stage:
     | 'idle'
     | 'checking'
+    | 'cached'
     | 'current'
     | 'available'
     | 'downloading'
@@ -12,6 +13,8 @@ export type AppUpdate = {
     | 'installing'
     | 'error';
   release?: { version: string; notes: string; publishedAt: string; size: number };
+  cacheDirectory?: string;
+  installerPath?: string;
   checkedAt?: string;
   received: number;
   speed: number;

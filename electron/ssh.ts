@@ -1,4 +1,5 @@
 import { Client } from 'ssh2';
+import { windowsRoot } from './system-paths';
 import path from 'node:path';
 import { createReadStream } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -13,7 +14,7 @@ import type { TrustRequest } from '../src/platform';
 
 export const systemSsh = () =>
   process.platform === 'win32'
-    ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'OpenSSH', 'ssh.exe')
+    ? path.join(windowsRoot(), 'System32', 'OpenSSH', 'ssh.exe')
     : 'ssh';
 
 export type Channel = {

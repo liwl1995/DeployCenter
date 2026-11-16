@@ -1,7 +1,13 @@
+!macro DC_DataCleanupVariables
+!ifndef YOTOO_DATA_CLEANUP_VARIABLES
+!define YOTOO_DATA_CLEANUP_VARIABLES
+Var DC_PurgeError
+!endif
+!macroend
 ; 两阶段校验：先核对数据位置和归属，再拒绝路径祖先及目录树内的所有重解析点。
 ; 供卸载器和隔离验收程序复用；只使用 Win32/NSIS 原生能力，不启动 PowerShell。
 !macro DC_DataCleanupFunctions PREFIX
-Var DC_PurgeError
+!insertmacro DC_DataCleanupVariables
 Function ${PREFIX}DC_CheckDataTree
   Exch $0
   Push $1
@@ -123,6 +129,7 @@ Function ${PREFIX}DC_ValidateDataRoot
   Pop $0
 FunctionEnd
 
+!ifndef DC_DATA_CHECK_ONLY
 Function ${PREFIX}DC_RemoveDataRoot
   Exch $0
   Push $1
@@ -140,4 +147,5 @@ Function ${PREFIX}DC_RemoveDataRoot
   Pop $1
   Pop $0
 FunctionEnd
+!endif
 !macroend

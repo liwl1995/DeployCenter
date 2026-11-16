@@ -4,26 +4,35 @@
 
 ## 安装与启动
 
-运行 `YOTOO部署中心-1.5.6-x64-安装包.exe`，按中文向导选择目录和桌面快捷方式。开始菜单入口始终创建，完成页可选择立即运行。默认安装到当前用户的 Programs 目录；其他目录必须具备写入权限和足够空间，不自动请求管理员权限。
+运行 `YOTOO部署中心-1.5.7-x64-安装包.exe`，按中文向导选择目录和桌面快捷方式。开始菜单入口始终创建，完成页可选择立即运行。默认安装到当前用户的 Programs 目录；其他目录必须具备写入权限和足够空间，不自动请求管理员权限。
 
 正常使用不需要安装 Node.js、数据库服务，也不需要另开前端或后端。图标、界面、帮助和依赖随安装包提供。只有实际构建时才需要在应用里配置外部 JDK、Wrapper/Maven；部署时需要访问目标服务器。Maven 首次下载依赖可能需要网络。
 
-安装器拒绝覆盖正在运行的应用，不会强杀部署任务。请在应用内等待任务结束或请求安全取消，再正常退出。升级识别固定应用 ID，沿用原安装目录，不生成重复安装项。升级前备份旧程序，失败时尝试恢复；恢复备份和失败日志位于 `%LOCALAPPDATA%\DeployCenter`。
+安装器拒绝覆盖正在运行的应用，不会强杀部署任务。请在应用内等待任务结束或请求安全取消，再正常退出。升级识别固定应用 ID，沿用原安装目录，不生成重复安装项。升级前备份旧程序，失败时尝试恢复；恢复备份和失败日志跟随配置的数据目录，分别位于 `installer-backups` 和 `logs\installer`。
 
 默认卸载保留用户数据。卸载向导的可选组件可彻底清理配置、部署历史、凭据与日志，默认不勾选，并有二次确认。升级流程始终保留数据。
 
 ## 数据与权限
 
+`<数据目录>` 指「设置 → 数据与存储」实际显示的位置。已有自定义位置继续沿用；仅首次未配置时使用系统 AppData 默认目录，不假设系统盘盘符。
+
 | 内容 | 位置 |
 |---|---|
-| 正式配置与历史 | 默认 `%APPDATA%\DeployCenter\deploy-center.sqlite`；可在设置中完整迁移 |
-| 数据位置指针与迁移记录 | `%LOCALAPPDATA%\DeployCenter\Settings`，与业务目录分开 |
-| 开发数据 | `%APPDATA%\DeployCenter-Development` |
-| 完整日志 | 数据目录下 `logs\<taskId>\build.log`、`<targetId>.log` |
-| 共享产物 | 数据目录下 `artifacts\sha256\<指纹>.jar`；旧版快照经确认后整理 |
-| 构建临时文件 | 数据目录下 `tmp` |
-| 迁移前备份 | 数据目录下 `backups` |
-| 安装日志 | `%LOCALAPPDATA%\DeployCenter\InstallerLogs` |
+| 正式配置与历史 | `<数据目录>/deploy-center.sqlite` |
+| 启动定位 | 当前用户注册表 `HKCU\Software\YOTOO\DeployCenter` 的 `DataDirectory`；只记录目录位置 |
+| 迁移与恢复控制记录 | `<数据目录>/Control` |
+| Electron 会话和运行缓存 | `<数据目录>/Runtime` |
+| 已下载的安装包与受保护校验记录 | `<数据目录>/Updates/update-*/setup.exe`、`ready.bin` |
+| 完整部署日志 | `<数据目录>/logs/<taskId>/build.log`、`<targetId>.log` |
+| 应用与崩溃日志 | `<数据目录>/logs/application`、`logs/crashes` |
+| 更新助手日志 | `<数据目录>/logs/update/update-install.log` |
+| 安装日志与升级备份 | `<数据目录>/logs/installer`、`installer-backups` |
+| 共享产物 | `<数据目录>/artifacts/sha256/<指纹>.jar` |
+| 构建与系统临时文件 | `<数据目录>/tmp`，当前应用及子进程 TEMP/TMP 使用 `tmp/system`，不修改系统环境变量 |
+| 数据库、位置恢复备份 | `<数据目录>/backups` |
+| 旧版启动资料原文备份 | `<数据目录>/Control/legacy-startup-backup` |
+
+开发版使用独立的 `DevelopmentDataDirectory` 定位值和默认 `DeployCenter-Development`，验收只使用源码 `.test-data` 中的隔离目录与独立 QA 注册项，不改正式数据。
 
 应用默认普通用户运行，安装位置与用户数据独立。更新、覆盖安装与默认卸载不会清空配置。数据库带版本号，迁移前备份、事务内迁移；未知新版本拒绝打开，损坏配置保留原文，确认之前不覆盖。
 
@@ -308,3 +317,23 @@ python scripts/package-source.py --output "YOTOO部署中心-1.0.0-source.zip"
 **旧版需要手动覆盖安装一次本版。** 错误发生在旧版应用内置的交接程序，下载新的安装包不能修复仍在运行的旧代码；正常退出应用后手动运行 1.5.6 安装包，之后的更新使用新助手。已有服务、服务器、历史及用户数据继续保留。
 
 实际检查：类型检查、构建、Windows x64 NSIS 打包通过；更新专项 19 项、全量回归 277 项通过（1 项专用 sshd 集成跳过）、正式包桌面回归 25 项通过。独立助手实测 Electron 退出后继续运行及篡改拒绝安装；未覆盖升级或卸载用户当前正式安装。命令与验证边界见 `docs/verification-v1.5.6.md`。
+
+
+## v1.5.7 更新缓存、Markdown 与统一数据目录
+
+- **旧版安装交接说明**：截图显示仍运行 1.5.5，旧进程内置助手不会因下载 1.5.6 而改变。1.5.5 及更早请正常退出后手动运行本版安装包覆盖；1.5.6 起保留独立助手，部署、维护、迁移和中断任务的安装保护不变。
+- **重启复用完整安装包**：下载完成将正式发布信息封装为 Windows 保护的校验记录。重启后重新验证记录、文件大小和 SHA-256，直接恢复可安装状态，不重复下载。旧版仅有 setup.exe 的文件先检查正式版本，再按大小与指纹复用。损坏、伪造、链接、同版本或降级文件不会进入可安装状态。完整安装包不再按 24 小时删除；半成品不能冒充完整包，旧包可在下载位置手动清理。涉及 `electron/app-updater.ts`、`src/app-update.ts`、`tests/update-cache.test.ts`。
+- **下载位置可见**：「配置与帮助」显示实际下载目录或安装包完整路径，「打开下载位置」定位已下载文件；后端不接受界面传入任意路径。错误去掉 IPC 英文包装并使用失败色。涉及 `src/AppUpdateSettings.tsx`、`src/platform.ts`、`electron/preload.ts`、`electron/main.ts`。
+- **安全 Markdown**：更新说明支持标题、粗体、列表、代码、引用与 GFM 表格；禁用原始 HTML、脚本、iframe 和远程图片。只允许本仓库 HTTPS 链接交给系统浏览器，其他链接为普通文字。相同说明不会因下载进度反复解析。依赖随安装包提供，离线可渲染。涉及 `src/UpdateNotes.tsx`、`src/update-links.ts`、`src/style.css`、`tests/app-update-ui.test.tsx`。
+- **所有应用文件跟随配置目录**：统一派生控制、运行、日志、更新、临时和安装备份路径；注册表只保存目录位置。Windows 单实例改用不落磁盘的命名管道，目录切换不改变身份。旧位置原件先复制、校验后清理，原始控制与运行资料有数据目录内备份；冲突、链接或占用时保留并提示，不强删。涉及 `electron/data-paths.ts`、`electron/data-home.ts`、`electron/single-instance.ts`、`installer/UpdateHelper.cs`。
+- **迁移兼容**：兼容原位置直放数据的旧用户；活动控制和运行缓存不混入业务哈希清单，启动后迁入运行资料，业务校验激活后才导入旧更新包，控制记录随后归入新目录。下载/检查更新期间禁止迁移，迁移期间禁止更新写入。覆盖注册表提交前后崩溃、旧版待重启迁移升级及 Windows 凭据解密。旧迁移副本按此前的保留选择处理，不自动删除。涉及 `electron/data-directory.ts`、`tests/data-home.test.ts`、`tests/v120-migration.test.ts`、`smoke/data-home.spec.ts`、`smoke/v120-storage.spec.ts`。
+- **移除框架额外缓存**：electron-builder 原本会在用户目录另存整份安装器。本版打包期间仅替换这条复制指令，结束后恢复依赖模板原始字节；模板变化时停止构建；旧副本在成功启动后校验转入数据目录，已有相同安装包时按内容复用。涉及 `scripts/prepare-nsis.mjs`、`scripts/build-installer.mjs`、`tests/installer-template.test.ts`、`tests/data-home.test.ts`。
+- **安装器与统计**：安装日志、升级备份、卸载定位读取同一配置目录；保留默认卸载不删用户数据和严格路径/链接检查。存储页单独显示更新安装包、运行缓存、升级安装备份。新增独立 QA 身份的真实安装验收脚本。涉及 `installer/data-paths.nsh`、`installer/custom.nsh`、`installer/data-cleanup.nsh`、`electron/artifact-store.ts`、`src/DataSettings.tsx`、`scripts/verify-isolated-installer.ps1`。
+- **路径审计**：移除开发机专用 JDK 路径和系统盘盘符猜测，改用 JAVA_HOME、PATH、用户配置和系统环境。验收产物留在源码目录，旧安装脚本也从实际定位读取。保留的 APPDATA/LOCALAPPDATA 仅用于首次默认位置、兼容读取和安全拒绝条件，不把活动数据写回旧位置。涉及 `electron/files.ts`、`electron/system-paths.ts`、`electron/ssh.ts`、`scripts/build-update-helper.mjs`、`scripts/test-installer.ps1`。
+
+数据库结构、部署步骤、远程锁、上传校验、替换、取消与回滚规则未修改。系统安装器的短期解压由 Windows 管理；应用可控的持久数据和工作文件均使用配置的数据目录。完整命令、实际结果及未验证项见 `docs/verification-v1.5.7.md`。
+
+
+实际检查：类型检查、Vite/Electron/原生助手构建与 Windows x64 NSIS 打包通过；全量回归 308 项通过、1 项专用 sshd 集成跳过；打包程序桌面回归 26 项通过；独立 QA 的真实安装、启动、覆盖升级、默认保留数据卸载和彻底清理等 15 项检查通过，确认不再产生框架的额外缓存。详情及未验证项见 [v1.5.7 验证记录](docs/verification-v1.5.7.md)。
+
+安装包请使用 `npm run dist -- --x64` 构建。该命令通过 `scripts/build-installer.mjs` 限定替换框架自缓存指令，结束后还原；直接调用 `electron-builder` 会绕过这一兼容步骤。

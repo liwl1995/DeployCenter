@@ -1,5 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createReadStream } from 'node:fs';
+import { plainPath } from './managed-path';
 import { createHash } from 'node:crypto';
 import type { AppUpdate } from '../src/app-update';
 
@@ -16,6 +18,10 @@ type Options = {
   installBlocked: () => string | undefined;
   launch: (file: string, hash: string) => Promise<void>;
   now?: () => number;
+  cacheProtection?: {
+    protect: (value: string) => Promise<Buffer>;
+    unprotect: (value: Buffer) => Promise<string>;
+  };
 };
 /** 仅比较正式版本，避免按字符串排序把 1.10 判为旧于 1.9。 */
 export function versionParts(value: string): number[] {
@@ -99,7 +105,13 @@ export class AppUpdater {
   private now: () => number;
   constructor(private options: Options) {
     this.now = options.now || Date.now;
-    this.value = { currentVersion: options.currentVersion, stage: 'idle', received: 0, speed: 0 };
+    this.value = {
+      currentVersion: options.currentVersion,
+      stage: 'idle',
+      received: 0,
+      speed: 0,
+      cacheDirectory: path.resolve(options.directory),
+    };
   }
   state(): AppUpdate {
     return structuredClone(this.value);
@@ -108,6 +120,120 @@ export class AppUpdater {
     this.value = { ...this.value, ...change };
     this.options.emit(this.state());
     return this.state();
+  }
+  /** 重启后优先验证受 Windows 保护的下载凭据；旧缓存先提示检查版本再复用。 */
+  async restore(): Promise<AppUpdate> {
+    if (this.value.stage !== 'idle' || this.abort || this.installing) return this.state();
+    const candidates = await this.candidates();
+    for (const folder of candidates) {
+      try {
+        const receipt = path.join(folder, 'ready.bin');
+        plainPath(receipt);
+        const stat = await fs.lstat(receipt);
+        if (!this.options.cacheProtection || !stat.isFile() || stat.size > 128 * 1024) continue;
+        const saved = JSON.parse(
+          await this.options.cacheProtection.unprotect(await fs.readFile(receipt)),
+        );
+        if (saved.schema !== 1) continue;
+        const r = saved.release;
+        const release = parseRelease({
+          draft: false,
+          prerelease: false,
+          tag_name: 'v' + r.version,
+          html_url: repository + '/releases/tag/v' + r.version,
+          body: r.notes,
+          published_at: r.publishedAt,
+          assets: [
+            {
+              name: decodeURIComponent(new URL(r.url).pathname.split('/').pop()!),
+              state: 'uploaded',
+              size: r.size,
+              digest: 'sha256:' + r.hash,
+              browser_download_url: r.url,
+            },
+          ],
+        });
+        if (
+          !newerVersion(release.version, this.options.currentVersion) ||
+          !(await this.matches(folder, release))
+        )
+          continue;
+        if (this.value.stage !== 'idle' || this.abort) return this.state();
+        this.release = release;
+        this.folder = folder;
+        this.file = path.join(folder, 'setup.exe');
+        const { url: _url, hash: _hash, ...summary } = release;
+        return this.publish({
+          stage: 'ready',
+          release: summary,
+          installerPath: this.file,
+          received: release.size,
+        });
+      } catch {
+        /* 旧缓存、损坏凭据或无法解密时保留文件，联网核验后仍能复用。 */
+      }
+    }
+    if (candidates.length && this.value.stage === 'idle' && !this.abort)
+      return this.publish({
+        stage: 'cached',
+        installerPath: path.join(candidates[0], 'setup.exe'),
+      });
+    return this.state();
+  }
+  private async candidates() {
+    const root = await this.safeRoot();
+    const result: { folder: string; modified: number }[] = [];
+    for (const entry of await fs.readdir(root, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !/^update-[A-Za-z0-9]+$/.test(entry.name)) continue;
+      const folder = path.join(root, entry.name);
+      try {
+        plainPath(folder);
+        const file = path.join(folder, 'setup.exe');
+        plainPath(file);
+        const stat = await fs.lstat(file);
+        if (stat.isFile() && !stat.isSymbolicLink())
+          result.push({ folder, modified: stat.mtimeMs });
+      } catch {
+        /* 不读取目录联接或不完整文件。 */
+      }
+    }
+    return result.sort((a, b) => b.modified - a.modified).map((item) => item.folder);
+  }
+  private async matches(folder: string, release: Release) {
+    const file = plainPath(path.join(folder, 'setup.exe'));
+    const stat = await fs.lstat(file);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== release.size) return false;
+    const hash = createHash('sha256');
+    for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer);
+    plainPath(file);
+    return hash.digest('hex') === release.hash;
+  }
+  private async savedReceipt() {
+    if (!this.folder || !this.release || !this.options.cacheProtection) return;
+    try {
+      const file = plainPath(path.join(this.folder, 'ready.bin'));
+      const next = plainPath(path.join(this.folder, 'ready.next'));
+      const value = await this.options.cacheProtection.protect(
+        JSON.stringify({ schema: 1, release: this.release }),
+      );
+      await fs.writeFile(next, value, { mode: 0o600 });
+      await fs.rename(next, file);
+    } catch {
+      /* 本次已校验的安装包仍可使用；下次联网校验后复用，不重新下载。 */
+    }
+  }
+  async location() {
+    const directory = await this.safeRoot();
+    const file = this.value.installerPath;
+    if (file && path.dirname(path.dirname(file)) === directory) {
+      try {
+        plainPath(file);
+        if ((await fs.lstat(file)).isFile()) return { directory, file };
+      } catch {
+        /* 文件已被手工移走时打开下载根目录。 */
+      }
+    }
+    return { directory };
   }
   private async response(url: string, signal: AbortSignal): Promise<Response> {
     for (let i = 0; i < 6; i++) {
@@ -167,11 +293,22 @@ export class AppUpdater {
         await reader.cancel().catch(() => {});
       }
       const release = parseRelease(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-      if (this.release?.hash !== release.hash) {
-        await this.cleanup();
-        this.file = undefined;
-      }
       this.release = release;
+      this.file = undefined;
+      this.folder = undefined;
+      if (newerVersion(release.version, this.options.currentVersion))
+        for (const folder of await this.candidates()) {
+          try {
+            if (await this.matches(folder, release)) {
+              this.folder = folder;
+              this.file = path.join(folder, 'setup.exe');
+              await this.savedReceipt();
+              break;
+            }
+          } catch {
+            /* 损坏或占用的缓存保留，继续寻找其他文件。 */
+          }
+        }
       const { url: _url, hash: _hash, ...summary } = release;
       return this.publish({
         stage: newerVersion(release.version, this.options.currentVersion)
@@ -180,6 +317,7 @@ export class AppUpdater {
             : 'available'
           : 'current',
         release: summary,
+        installerPath: this.file,
         checkedAt: new Date(this.now()).toISOString(),
         received: this.file ? release.size : 0,
         speed: 0,
@@ -192,7 +330,7 @@ export class AppUpdater {
   }
   private failure(error: unknown) {
     return this.publish({
-      stage: 'error',
+      stage: this.file ? 'ready' : 'error',
       speed: 0,
       message:
         '更新未完成：' +
@@ -205,6 +343,7 @@ export class AppUpdater {
   }
   private async safeRoot() {
     const root = path.resolve(this.options.directory);
+    try { plainPath(root); } catch { throw new Error('更新缓存目录不是安全的本机目录'); }
     await fs.mkdir(root, { recursive: true });
     const stat = await fs.lstat(root);
     if (
@@ -226,7 +365,9 @@ export class AppUpdater {
         const stat = await fs.lstat(folder);
         if (stat.isSymbolicLink() || this.now() - stat.mtimeMs < 24 * 3600 * 1000) continue;
         const names = await fs.readdir(folder);
-        if (names.some((name) => !['setup.exe', 'setup.partial'].includes(name))) continue;
+        if (names.includes('setup.exe')) continue; // 完整安装包必须保留，不能因重启或超过一天而删除。
+        if (names.some((name) => !['setup.partial', 'ready.bin', 'ready.next'].includes(name)))
+          continue;
         const files = await Promise.all(names.map((name) => fs.lstat(path.join(folder, name))));
         if (files.some((file) => !file.isFile() || file.isSymbolicLink())) continue;
         for (const name of names) await fs.unlink(path.join(folder, name));
@@ -245,7 +386,7 @@ export class AppUpdater {
     try {
       await this.safeRoot();
       if ((await fs.lstat(folder)).isSymbolicLink()) return;
-      for (const name of ['setup.partial', 'setup.exe']) {
+      for (const name of ['setup.partial', 'setup.exe', 'ready.bin', 'ready.next']) {
         const file = path.join(folder, name);
         const stat = await fs.lstat(file).catch(() => undefined);
         if (stat?.isFile() && !stat.isSymbolicLink()) await fs.unlink(file);
@@ -313,9 +454,11 @@ export class AppUpdater {
       }
       this.file = path.join(this.folder, 'setup.exe');
       await fs.rename(partial, this.file);
-      return this.publish({ stage: 'ready' });
+      await this.savedReceipt();
+      return this.publish({ stage: 'ready', installerPath: this.file });
     } catch (error) {
       this.file = undefined;
+      this.publish({ installerPath: undefined });
       await this.cleanup();
       return controller.signal.aborted
         ? this.publish({
@@ -361,6 +504,7 @@ export class AppUpdater {
       }
       if (size !== this.release.size || hash.digest('hex') !== this.release.hash) {
         this.file = undefined;
+        this.publish({ installerPath: undefined });
         await this.cleanup();
         throw new Error('安装包校验失败，请重新下载');
       }
@@ -376,6 +520,9 @@ export class AppUpdater {
       });
       throw error;
     }
+  }
+  isBusy() {
+    return !!this.abort || this.installing;
   }
   isInstalling() {
     return this.installing;

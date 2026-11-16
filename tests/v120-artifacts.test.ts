@@ -437,3 +437,20 @@ it('确认旧版后超过保护期的重复副本合并，两个任务仍可重�
   expect(store.task(a.id)!.artifact.path).toBe(store.task(b.id)!.artifact.path);
   expect([fs.existsSync(first), fs.existsSync(second)].filter(Boolean)).toHaveLength(1);
 });
+
+it('更新包、运行缓存和升级安装备份分别统计且计入总占用', async () => {
+  const f = await fixture();
+  for (const [dir, size] of [
+    ['Updates', 11],
+    ['Runtime', 13],
+    ['installer-backups', 17],
+  ] as const) {
+    await fsp.mkdir(path.join(f.dir, dir), { recursive: true });
+    await fsp.writeFile(path.join(f.dir, dir, 'fixture'), Buffer.alloc(size));
+  }
+  const usage = f.store.artifacts.usage();
+  expect(usage.updates).toBe(11);
+  expect(usage.runtime).toBe(13);
+  expect(usage.installerBackups).toBe(17);
+  expect(usage.total).toBeGreaterThanOrEqual(41);
+});

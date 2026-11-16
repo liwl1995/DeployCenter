@@ -15,12 +15,18 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { z } from 'zod';
 import { LogSessions, observeTask } from './observation';
 import { Storage } from './storage';
 import { AppUpdater } from './app-updater';
 import { createUpdateFetch } from './update-network';
 import { launchInstallerAfterExit } from './update-installer';
+import { dataPaths, DirectoryLocator } from './data-paths';
+import { allowedProjectLink } from '../src/update-links';
+import { prepareDataHome, recoverDataHome, testLocator } from './data-home';
+import { singleInstance } from './single-instance';
+import { windowsRoot } from './system-paths';
 import { migrationDestination, DataDirectory } from './data-directory';
 import { BackupManager } from './backup-manager';
 import { WorkbenchRecovery } from './workbench-recovery';
@@ -48,29 +54,119 @@ import type { WorkerMessage } from './contracts';
 
 app.setName('YOTOO 部署中心');
 if (process.platform === 'win32') app.setAppUserModelId('local.deploycenter.desktop');
-let dataDir = path.resolve(
+const defaultDataDir = path.resolve(
   process.env.DEPLOY_CENTER_DATA_DIR ||
     path.join(app.getPath('appData'), app.isPackaged ? 'DeployCenter' : 'DeployCenter-Development'),
 );
-const settingsDir = process.env.DEPLOY_CENTER_DATA_DIR
+const legacySettingsDir = process.env.DEPLOY_CENTER_DATA_DIR
   ? path.resolve(
       process.env.DEPLOY_CENTER_SETTINGS_DIR ||
-        path.join(path.dirname(dataDir), 'settings-' + path.basename(dataDir)),
+        path.join(path.dirname(defaultDataDir), 'settings-' + path.basename(defaultDataDir)),
     )
   : path.join(
       process.env.LOCALAPPDATA || app.getPath('appData'),
       app.isPackaged ? 'DeployCenter' : 'DeployCenter-Development',
       'Settings',
     );
-const directories = new DataDirectory(settingsDir, dataDir, [
-  process.env.SystemRoot || 'C:\\Windows',
-  process.env.ProgramFiles || 'C:\\Program Files',
-  process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)',
-  path.dirname(app.getPath('exe')),
-]);
-fs.mkdirSync(settingsDir, { recursive: true });
-// 单实例锁使用稳定的控制目录，不随用户数据迁移改变身份。
-app.setPath('userData', settingsDir);
+const nativeHelper = path.join(
+  app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'dist-electron'),
+  'update-helper.exe',
+);
+const isolated = process.env.DEPLOY_CENTER_TESTING === '1' || process.platform !== 'win32';
+const locator = isolated
+  ? testLocator(legacySettingsDir)
+  : new DirectoryLocator(nativeHelper, !app.isPackaged);
+const home = (() => {
+  while (true) {
+    try {
+      const value = prepareDataHome(
+        defaultDataDir,
+        legacySettingsDir,
+        locator,
+        isolated
+          ? []
+          : [
+              {
+                source: path.join(path.dirname(legacySettingsDir), 'InstallerLogs'),
+                target: path.join('logs', 'installer', 'legacy'),
+              },
+              {
+                source: path.join(path.dirname(legacySettingsDir), 'InstallerRollback'),
+                target: path.join('installer-backups', 'legacy'),
+              },
+              ...(app.isPackaged
+                ? [
+                    {
+                      source: path.join(
+                        process.env.LOCALAPPDATA || app.getPath('appData'),
+                        'deploy-center-updater',
+                      ),
+                      target: 'Updates',
+                      installerCache: true,
+                    },
+                  ]
+                : []),
+            ],
+      );
+      if (
+        value.configured &&
+        !fs.existsSync(path.join(value.directory, 'deploy-center.sqlite')) &&
+        !fs.existsSync(path.join(value.runtimeRoot, 'deploy-center.sqlite'))
+      )
+        throw new Error('指定目录不可访问或缺少已有数据库：' + value.directory);
+      for (const dir of [
+        dataPaths(value.runtimeRoot).runtime,
+        dataPaths(value.runtimeRoot).temp,
+        dataPaths(value.runtimeRoot).crashes,
+      ])
+        fs.mkdirSync(dir, { recursive: true });
+      return value;
+    } catch (error) {
+      if (isolated) throw error;
+      const selected = spawnSync(
+        nativeHelper,
+        ['--choose-data-directory', Buffer.from(String(error), 'utf8').toString('base64')],
+        { windowsHide: true, encoding: 'utf8' },
+      );
+      if (selected.status !== 0) {
+        app.exit(selected.status === 2 ? 0 : 1);
+        throw error;
+      }
+      try {
+        locator.write(
+          recoverDataHome(Buffer.from(selected.stdout.trim(), 'base64').toString('utf8')),
+        );
+      } catch (recoveryError) {
+        dialog.showErrorBox('所选目录无法恢复，原数据已保留', String(recoveryError));
+      }
+    }
+  }
+})();
+let dataDir = home.directory;
+const directories = new DataDirectory(
+  home.paths.control,
+  defaultDataDir,
+  [
+    ...(process.platform === 'win32' ? [windowsRoot()] : []),
+    ...[process.env.ProgramFiles, process.env['ProgramFiles(x86)']].filter(
+      (value): value is string => !!value,
+    ),
+    path.dirname(app.getPath('exe')),
+  ],
+  true,
+  home.directory,
+);
+const runtimePaths = dataPaths(home.runtimeRoot);
+for (const directory of [runtimePaths.runtime, runtimePaths.temp, runtimePaths.crashes])
+  fs.mkdirSync(directory, { recursive: true });
+app.setPath('userData', runtimePaths.runtime);
+app.setPath('sessionData', runtimePaths.runtime);
+app.setPath('temp', runtimePaths.temp);
+app.setPath('crashDumps', runtimePaths.crashes);
+app.setAppLogsPath(runtimePaths.applicationLogs);
+// 只修改当前进程环境，子进程临时文件跟随数据目录，不修改系统环境变量。
+process.env.TEMP = runtimePaths.temp;
+process.env.TMP = runtimePaths.temp;
 let migrating = false,
   pendingRestart = false,
   dataNotice: string | undefined;
@@ -87,16 +183,45 @@ const readOnlyDuringMigration = new Set([
   'help',
   'about',
   'update-state',
-  'check-update',
-  'download-update',
+  'open-update-cache',
+  'open-update-link',
   'cancel-update',
 ]);
-const lock = app.requestSingleInstanceLock();
-if (!lock) {
+let instance: Awaited<ReturnType<typeof singleInstance>> | undefined;
+const activate = () => {
+  win?.show();
+  win?.focus();
+};
+const startup = async () => {
+  if (process.platform === 'win32') {
+    instance = await singleInstance(
+      process.env.DEPLOY_CENTER_TESTING === '1'
+        ? legacySettingsDir
+        : app.isPackaged
+          ? 'production'
+          : 'development',
+      activate,
+    );
+    if (!instance.primary) {
+      app.quit();
+      return;
+    }
+  } else if (!app.requestSingleInstanceLock()) {
+    app.quit();
+    return;
+  }
+  home.prepareProfile();
+  await boot();
+};
+void startup().catch(async (error) => {
+  await app.whenReady();
+  await dialog.showMessageBox({
+    type: 'error',
+    message: '数据目录无法初始化，原数据已保留',
+    detail: String(error),
+  });
   app.quit();
-} else {
-  void boot();
-}
+});
 let win: BrowserWindow | undefined, storage: Storage, controller: Controller;
 let updater: AppUpdater | undefined;
 let backups: BackupManager;
@@ -205,6 +330,13 @@ async function boot() {
         }
       }
     }
+    if (dataDir !== home.runtimeRoot) {
+      // 恢复对话框选择了其他位置，须重新启动后再初始化浏览器会话，避免写回旧目录。
+      directories.rehome(dataDir);
+      locator.write(dataDir);
+      app.relaunch(); app.quit(); return;
+    }
+    directories.rehome(dataDir);
     storage = new Storage(dataDir, {
       async encrypt(value) {
         if (!(await safeStorage.isAsyncEncryptionAvailable()))
@@ -220,6 +352,7 @@ async function boot() {
       },
     });
     directories.markOwned(dataDir);
+    dataNotice = [dataNotice, home.complete(dataDir)].filter(Boolean).join('；') || undefined;
     storage.markInterrupted();
     await storage.maintainStartup();
     await fsp.mkdir(path.join(dataDir, 'tmp'), { recursive: true });
@@ -350,8 +483,16 @@ async function boot() {
       });
     updater = new AppUpdater({
       currentVersion: app.getVersion(),
-      directory: path.join(settingsDir, 'Updates'),
+      directory: dataPaths(dataDir).updates,
       fetch: createUpdateFetch((options) => net.request(options)),
+      cacheProtection: {
+        protect: async (value) => {
+          if (!(await safeStorage.isAsyncEncryptionAvailable()))
+            throw new Error('无法保存下载校验记录');
+          return safeStorage.encryptStringAsync(value);
+        },
+        unprotect: async (value) => (await safeStorage.decryptStringAsync(value)).result,
+      },
       emit: (update) => emit({ kind: 'update', update }),
       installBlocked: () => {
         if (!app.isPackaged || process.platform !== 'win32' || process.arch !== 'x64')
@@ -368,17 +509,28 @@ async function boot() {
           file,
           hash,
           path.dirname(app.getPath('exe')),
-          settingsDir,
-          path.join(
-            app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'dist-electron'),
-            'update-helper.exe',
-          ),
+          dataPaths(dataDir).updateLogs,
+          nativeHelper,
         );
         // 助手已持有本进程句柄，只会在正常退出后启动安装器。
         setImmediate(() => app.quit());
       },
     });
-    handle('update-state', () => updater!.state());
+    await fsp.mkdir(dataPaths(dataDir).updates, { recursive: true });
+    handle('update-state', () => updater!.restore());
+    handle('open-update-cache', async () => {
+      const location = await updater!.location();
+      if (location.file) shell.showItemInFolder(location.file);
+      else {
+        const error = await shell.openPath(location.directory);
+        if (error) throw new Error(error);
+      }
+    });
+    handle('open-update-link', async (value) => {
+      const url = text(value, 4096);
+      if (!allowedProjectLink(url)) throw new Error('更新说明链接不属于本项目');
+      await shell.openExternal(url);
+    });
     handle('check-update', () => updater!.check());
     handle('download-update', () => updater!.download());
     handle('cancel-update', () => updater!.cancel());
@@ -1036,6 +1188,7 @@ async function boot() {
     });
     handle('migrate-directory', async (value) => {
       if (migrating || pendingRestart) throw new Error('已有迁移或待重启切换');
+      if (updater?.isBusy()) throw new Error('正在检查或下载更新，请完成或取消后再迁移数据目录');
       migrating = true;
       migrationCancelled = false;
       try {
@@ -1188,6 +1341,7 @@ async function boot() {
 }
 app.on('window-all-closed', () => app.quit());
 app.on('will-quit', () => {
+  instance?.close();
   updater?.dispose();
   void historySearch.stop();
   backups?.close();
