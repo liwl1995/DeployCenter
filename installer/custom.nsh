@@ -12,7 +12,7 @@ Var DC_DataPending
 Var DC_DataPrevious
 !endif
 
-; 品牌图形沿用应用的深蓝和绿色；向导只使用简体中文。
+; 品牌图形沿用应用的墨绿色与回旋标识；向导只使用简体中文。
 !define MUI_WELCOMEPAGE_TITLE "欢迎安装 YOTOO 部署中心"
 !define MUI_WELCOMEPAGE_TEXT "在本机管理 Java 服务的构建、部署与回滚。$\r$\n$\r$\n向导将帮助您选择安装目录和快捷方式。配置、部署历史与日志独立保存在当前用户的数据目录，升级不会清空。$\r$\n$\r$\n安装前请正常退出 YOTOO 部署中心；有部署任务时请等待结束或安全取消。"
 !define MUI_DIRECTORYPAGE_TEXT_TOP "选择 YOTOO 部署中心 的安装文件夹。您可以直接输入路径，或点击浏览选择其他磁盘和目录。"
@@ -105,7 +105,7 @@ Function ${PREFIX}DC_BrandPanel
   ${NSD_CreateLabel} 0u 0u 109u 193u ""
   Pop $0
   System::Call 'user32::SetWindowPos(p r0,p0,i0,i0,i0,i0,i0x13)'
-  SetCtlColors $0 "FFFFFF" "153B66"
+  SetCtlColors $0 "FFFFFF" "176B51"
   SendMessage $0 ${WM_SETTEXT} 0 "STR:"
   System::Call 'user32::SetWindowPos(p r0,p1,i0,i0,i0,i0,i0x13)'
   ${If} $DC_FontBrand == ""
@@ -129,26 +129,26 @@ Function ${PREFIX}DC_BrandPanel
   ${NSD_CreateLabel} 12u 69u 92u 24u "YOTOO"
   Pop $0
   System::Call 'user32::SetWindowPos(p r0,p0,i0,i0,i0,i0,i0x13)'
-  SetCtlColors $0 "FFFFFF" "153B66"
+  SetCtlColors $0 "FFFFFF" "176B51"
   SendMessage $0 ${WM_SETFONT} $DC_FontBrand 1
   ${NSD_CreateLabel} 12u 91u 92u 24u "部署中心"
   Pop $0
   System::Call 'user32::SetWindowPos(p r0,p0,i0,i0,i0,i0,i0x13)'
-  SetCtlColors $0 "FFFFFF" "153B66"
+  SetCtlColors $0 "FFFFFF" "176B51"
   SendMessage $0 ${WM_SETFONT} $DC_FontBrandCn 1
   ${NSD_CreateLabel} 12u 122u 22u 2u ""
   Pop $0
   System::Call 'user32::SetWindowPos(p r0,p0,i0,i0,i0,i0,i0x13)'
-  SetCtlColors $0 "5BDFC5" "5BDFC5"
+  SetCtlColors $0 "9CE8C9" "9CE8C9"
   ${NSD_CreateLabel} 12u 140u 92u 18u "构建 · 部署 · 回滚"
   Pop $0
   System::Call 'user32::SetWindowPos(p r0,p0,i0,i0,i0,i0,i0x13)'
-  SetCtlColors $0 "DCE8F3" "153B66"
+  SetCtlColors $0 "E2F2E9" "176B51"
   SendMessage $0 ${WM_SETFONT} $DC_FontSmall 1
   ${NSD_CreateLabel} 12u 171u 92u 14u "本地部署工作台"
   Pop $0
   System::Call 'user32::SetWindowPos(p r0,p0,i0,i0,i0,i0,i0x13)'
-  SetCtlColors $0 "B5C9DF" "153B66"
+  SetCtlColors $0 "B9DCCD" "176B51"
   SendMessage $0 ${WM_SETFONT} $DC_FontFoot 1
 FunctionEnd
 
