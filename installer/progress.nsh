@@ -1,5 +1,6 @@
 ; 安装阶段单独显示，不让解压插件对原生进度条的重置影响总体进度。
 !ifndef BUILD_UNINSTALLER
+!include Win\WinUser.nsh
 Var DC_TimerDialog
 Var DC_StageBar
 Var DC_DetailToggle
@@ -28,6 +29,7 @@ Function DC_UpdateInstallStage
     FileClose $0
     ${If} $DC_StageBar != ""
       SendMessage $DC_StageBar 0x402 $DC_Stage 0
+      System::Call 'user32::RedrawWindow(p $DC_StageBar,p0,p0,i0x101)'
       !insertmacro MUI_HEADER_TEXT "正在安装 YOTOO 部署中心" "阶段 $DC_Stage/4 · $DC_StageText"
     ${EndIf}
   ${EndIf}
@@ -66,6 +68,8 @@ Function DC_ShowInstallProgress
   IntOp $4 $4 - $2
   System::Call 'user32::CreateWindowExW(i0,w "msctls_progress32",w "安装阶段进度",i0x50000001,ir1,ir2,ir3,ir4,p $mui.InstFilesPage,p1990,p0,p0)p.s'
   Pop $DC_StageBar
+  ; 阶段只跳四次，禁用该控件的系统缓动，避免完成时画面仍落后于真实阶段。
+  System::Call 'uxtheme::SetWindowTheme(p $DC_StageBar,w "",w "")'
   SendMessage $DC_StageBar 0x406 0 4
   ShowWindow $mui.InstFilesPage.ProgressBar ${SW_HIDE}
   System::Call 'user32::GetWindowRect(p $mui.InstFilesPage.ShowLogButton,p r0)'
@@ -93,10 +97,19 @@ Function DC_ShowInstallProgress
   SendMessage $DC_DetailToggle ${BM_SETCHECK} ${BST_CHECKED} 0
   StrCpy $DC_DetailVisible -1
   Call DC_InstallDetailsTick
-  ; nsDialogs 需要一个有效的宿主窗口来分发定时回调，宿主保持隐藏，不占用页面。
+  ; 只借用隐藏窗口承载计时器，不把它当作向导页面。
+  ; Create 会接管主窗口回调，而这里不调用 Show 来恢复它，必须立即还原。
+  ; 否则下一张 nsDialogs 完成页会形成回调递归，安装完成后异常退出。
+  System::Call 'user32::GetWindowLong(p $HWNDPARENT,i${DWLP_DLGPROC})p.r5'
   nsDialogs::Create 1018
   Pop $DC_TimerDialog
-  ${NSD_CreateTimer} DC_InstallDetailsTick 100
+  System::Call 'user32::SetWindowLong(p $HWNDPARENT,i${DWLP_DLGPROC},pr5)'
+  ${If} $DC_TimerDialog != "error"
+    ${NSD_CreateTimer} DC_InstallDetailsTick 100
+  ${Else}
+    StrCpy $DC_TimerDialog ""
+    ShowWindow $DC_DetailToggle ${SW_HIDE}
+  ${EndIf}
   !insertmacro DC_InstallStage 1 "准备安装；覆盖升级会保留用户数据"
   System::Free $0
   Pop $5
@@ -108,8 +121,11 @@ Function DC_ShowInstallProgress
 FunctionEnd
 
 Function DC_CloseInstallProgress
-  ${NSD_KillTimer} DC_InstallDetailsTick
-  System::Call 'user32::DestroyWindow(p $DC_TimerDialog)'
+  ${If} $DC_TimerDialog != ""
+    ${NSD_KillTimer} DC_InstallDetailsTick
+    System::Call 'user32::DestroyWindow(p $DC_TimerDialog)'
+    StrCpy $DC_TimerDialog ""
+  ${EndIf}
 FunctionEnd
 !macroend
 !endif
