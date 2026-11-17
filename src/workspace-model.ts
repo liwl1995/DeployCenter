@@ -3,6 +3,7 @@ import type { DesktopAPI } from './platform';
 export const workspacePages = [
   { page: 'deploy', name: '一键部署', group: '操作' },
   { page: 'task', name: '当前任务', group: '操作' },
+  { page: 'schedules', name: '发布计划', group: '操作' },
   { page: 'history', name: '部署历史', group: '操作' },
   { page: 'services', name: '服务管理', group: '配置' },
   { page: 'targets', name: '部署目标', group: '配置' },

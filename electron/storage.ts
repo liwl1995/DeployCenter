@@ -9,6 +9,7 @@ import {
   type Task,
 } from '../src/model';
 import { recordTask, pruneHistory } from '../src/records';
+import type { ReleaseSchedule } from '../src/schedules';
 import type { Pin } from './contracts';
 import type { TaskSummary } from '../src/platform';
 import { summarizeTask, importedSummaries } from '../src/history-model';
@@ -25,7 +26,7 @@ export type Cryptography = {
   encrypt(value: string): Promise<Buffer>;
   decrypt(value: Buffer): Promise<string>;
 };
-export const databaseVersion = 5;
+export const databaseVersion = 6;
 export const productionSeed = emptyDatabase;
 export class Storage {
   private sql!: Sqlite.Database;
@@ -87,6 +88,7 @@ export class Storage {
           this.sql.exec(
             'CREATE TABLE IF NOT EXISTS workbench_receipts (scope TEXT NOT NULL, owner TEXT NOT NULL, json TEXT NOT NULL, PRIMARY KEY (scope,owner));',
           );
+          this.sql.exec('CREATE TABLE IF NOT EXISTS release_schedules (id TEXT PRIMARY KEY, json TEXT NOT NULL);');
           this.sql.pragma('user_version = ' + databaseVersion);
         })();
       }
@@ -235,6 +237,31 @@ export class Storage {
     );
     return destination;
   }
+  private scheduleCache: ReleaseSchedule[] = [];
+  isOpen() {
+    return this.sql.open;
+  }
+  schedules(): ReleaseSchedule[] {
+    if (!this.sql.open) return structuredClone(this.scheduleCache);
+    this.scheduleCache = (
+      this.sql.prepare('SELECT json FROM release_schedules ORDER BY id').all() as { json: string }[]
+    ).map((row) => JSON.parse(row.json) as ReleaseSchedule);
+    return structuredClone(this.scheduleCache);
+  }
+  saveSchedule(schedule: ReleaseSchedule) {
+    this.sql
+      .prepare(
+        'INSERT INTO release_schedules VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json',
+      )
+      .run(schedule.id, JSON.stringify(schedule));
+  }
+  /** 认领和任务保存必须同时提交，崩溃后禁止创建第二个发布任务。 */
+  claimSchedule(schedule: ReleaseSchedule, task: Task) {
+    this.sql.transaction(() => {
+      this.saveSchedule(schedule);
+      this.saveTask(task);
+    })();
+  }
   saveTask(task: Task) {
     this.artifacts.register(task);
     this.remoteBackups.register(task);
@@ -328,7 +355,7 @@ export class Storage {
     // 任务结果、目标版本与历史在同一事务提交，崩溃不能留下“成功但版本未更新”。
     this.sql.transaction(() => {
       this.saveTask(task);
-      if (!task.dryRun) this.state = recordTask(this.state, task, updateTargets);
+      if (!task.dryRun && !task.preparation) this.state = recordTask(this.state, task, updateTargets);
       for (const h of this.state.history) h.logs = [];
       for (const r of Object.values(this.state.taskHistory)) r.buildLogs = [];
       this.writeState();
@@ -393,6 +420,11 @@ export class Storage {
     this.state.history = this.state.history.filter((h) => Date.parse(h.time) >= cutoff);
     this.state = pruneHistory(this.state);
     const referenced = new Set(this.state.history.map((h) => h.taskId));
+    for (const plan of this.schedules()) {
+      // 计划详情和确认记录依赖准备日志；活动计划还需保护产物引用。
+      referenced.add(plan.preparationId);
+      if (plan.taskId) referenced.add(plan.taskId);
+    }
     const rows = this.sql
       .prepare('SELECT id,json,updated,active FROM tasks ORDER BY updated DESC')
       .all() as { id: string; json: string; updated: number; active: number }[];
@@ -456,10 +488,10 @@ export class Storage {
     return this.allTasks()[0];
   }
   unfinished(): Task[] {
-    return this.allTasks().filter((t) => t.status === 'interrupted');
+    return this.allTasks().filter((t) => t.status === 'interrupted' && !t.preparation);
   }
   summaries(): TaskSummary[] {
-    const actual = this.allTasks().slice(0, 10000).map(summarizeTask);
+    const actual = this.allTasks().filter((t) => !t.preparation).slice(0, 10000).map(summarizeTask);
     const maintenance = this.remoteBackups
       .audits()
       .map(
@@ -519,6 +551,7 @@ export class Storage {
         continue;
       }
       task.status = 'interrupted';
+      if (task.preparation) task.endedAt = Date.now();
       for (const r of task.targets)
         if (
           ['running', 'rollingback'].includes(r.status) ||
@@ -674,6 +707,7 @@ export class Storage {
     };
   }
   pause() {
+    this.schedules();
     if (this.artifacts.isBusy()) throw new Error('产物清理尚未结束');
     this.artifacts.setPaused(true);
     this.sql.pragma('wal_checkpoint(TRUNCATE)');

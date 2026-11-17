@@ -1,3 +1,5 @@
+import { ReleaseSchedules } from './ReleaseSchedules';
+import type { ReleaseSchedule } from './schedules';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Rocket,
@@ -119,7 +121,7 @@ type Dialog =
   | { kind: 'server'; value: Server }
   | { kind: 'target'; value: Target; initialTab?: '健康检查' }
   | { kind: 'picker' }
-  | { kind: 'confirm'; task: Task; token?: string; returnFocus?: HTMLElement }
+  | { kind: 'confirm'; task: Task; token?: string; returnFocus?: HTMLElement; schedule?: boolean; plan?: ReleaseSchedule; reschedule?: boolean }
   | { kind: 'cancel' }
   | { kind: 'history'; value: History }
   | { kind: 'delete'; entity: 'service' | 'target' | 'server' | 'jdk'; id: string }
@@ -266,6 +268,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   const [infoRefresh, setInfoRefresh] = useState(0);
   const [preflight, setPreflight] = useState<LocalPrecheck | null>(null);
   const [preflightBusy, setPreflightBusy] = useState(false);
+  const [schedules, setSchedules] = useState<ReleaseSchedule[]>([]);
   const [deployNote, setDeployNote] = useState<string>();
   const [taskReturnPage, setTaskReturnPage] = useState<Page>('deploy');
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -365,6 +368,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     if (!desktop) return;
     const refresh = () => {
       void desktop!.listTasks().then(setTaskRows);
+      void desktop!.listSchedules().then(setSchedules);
       void desktop!.load().then((value) => {
         setSaved(value.savedCredentials);
         setUnfinished(value.unfinished);
@@ -373,6 +377,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     };
     refresh();
     return desktop!.onEvent((event) => {
+      if (event.kind === 'schedules') setSchedules(event.schedules);
+      if (event.kind === 'open-schedules') setPage('schedules');
       if (event.kind === 'maintenance') refresh();
       if (event.kind === 'task') {
         setTask(event.task);
@@ -576,7 +582,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       lastTargets: next.filter((id) => !db.targets.find((t) => t.id === id)?.production),
     }));
   }
-  async function launch(targetList = chosen, rollback?: History, dryRun = false) {
+  async function launch(targetList = chosen, rollback?: History, dryRun = false, schedule = false) {
     if (isActive(task)) {
       if (page !== 'task') setTaskReturnPage(page);
       setPage('task');
@@ -614,7 +620,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               ? retrySource.id
               : undefined,
         });
-        setDialog({ kind: 'confirm', ...result, returnFocus });
+        setDialog({ kind: 'confirm', ...result, returnFocus, schedule });
       } catch (e) {
         setNativeDialog({ title: '部署准备失败', content: String(e) });
       } finally {
@@ -1221,6 +1227,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
             <HistoryIcon size={18} />
             部署历史
           </button>
+          {desktop && <button className={page === 'schedules' ? 'selected' : ''} onClick={() => setPage('schedules')}><HistoryIcon size={18} />发布计划</button>}
           <span className="nav-heading">配置</span>
           {nav
             .filter((n) => !['deploy', 'history'].includes(n.page))
@@ -1884,6 +1891,15 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                         <button
                           className="button"
                           disabled={busy || isActive(task) || !!blockReason || !chosen.length}
+                          onClick={() => void launch(chosen, undefined, false, true)}
+                        >
+                          定时发布
+                        </button>
+                      )}
+                      {desktop && (
+                        <button
+                          className="button"
+                          disabled={busy || isActive(task) || !!blockReason || !chosen.length}
                           onClick={() => void launch(chosen, undefined, true)}
                         >
                           试运行（远程只读）
@@ -1908,6 +1924,56 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 {presetShelf()}
               </Disclosure>
             </>
+          )}
+          {page === 'schedules' && desktop && (
+            <ReleaseSchedules
+              plans={schedules}
+              busy={busy || isActive(task)}
+              onOpen={(id) =>
+                void nativeAction(async () => {
+                  const value = await desktop!.readTask(id);
+                  setTask(value);
+                  setTaskReturnPage('schedules');
+                  setInspected(-1);
+                  setPage('task');
+                })
+              }
+              onCancel={(id) => void nativeAction(() => desktop!.cancelSchedule(id))}
+              onChange={(plan) =>
+                setDialog({
+                  kind: 'confirm',
+                  task: plan.task,
+                  schedule: true,
+                  plan,
+                  reschedule: true,
+                })
+              }
+              onPrepare={(plan) =>
+                void nativeAction(async () => {
+                  await desktop!.save(db);
+                  let jarPath: string | undefined;
+                  if (plan.task.build === 'existing') {
+                    const snapshot = await desktop!.snapshotAvailability(plan.preparationId);
+                    jarPath = snapshot.available
+                      ? snapshot.path
+                      : (await desktop!.choose('jar')) || undefined;
+                    if (!jarPath) return;
+                  }
+                  const prepared = await desktop!.prepare({
+                    serviceId: plan.task.service.id,
+                    targetIds: plan.task.targets.map((r) => r.target.id),
+                    build: plan.task.build,
+                    jarPath,
+                    overrides: Object.fromEntries(
+                      plan.task.targets.map((r) => [r.target.id, r.backup]),
+                    ),
+                    failurePolicy: plan.task.failurePolicy,
+                    note: plan.task.note,
+                  });
+                  setDialog({ kind: 'confirm', ...prepared, schedule: true, plan });
+                })
+              }
+            />
           )}
           {page === 'services' && (
             <>
@@ -2646,7 +2712,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                       description: '检查软件更新、备份配置或查看使用说明。',
                       content: (
                         <div className="help-settings">
-                          <AppUpdateSettings api={desktop} version={boot?.version || '1.6.1'} active={isActive(task)} />
+                          <AppUpdateSettings api={desktop} version={boot?.version || '1.7.0'} active={isActive(task)} />
                           <Card className="help-settings-section">
                             <div className="help-section-row">
                               <div>
@@ -2967,13 +3033,13 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                   task={task}
                   inspected={viewedTarget}
                   setInspected={setInspected}
-                  backLabel={taskReturnPage === 'history' ? '返回部署历史' : taskReturnPage === 'deploy' ? '返回部署' : '返回'}
+                  backLabel={taskReturnPage === 'schedules' ? '返回发布计划' : taskReturnPage === 'history' ? '返回部署历史' : taskReturnPage === 'deploy' ? '返回部署' : '返回'}
                   onBack={() => setPage(taskReturnPage)}
                   onHealth={db.targets.some((target) => target.id === task.targets[viewedTarget]?.target.id) ? () => {
                     const target = db.targets.find((target) => target.id === task.targets[viewedTarget].target.id)!;
                     setDialog({ kind: 'target', value: target, initialTab: '健康检查' });
                   } : undefined}
-                  onRecover={desktop && unfinished.some((entry) => entry.id === task.id) ? () =>
+                  onRecover={desktop && !task.preparation && unfinished.some((entry) => entry.id === task.id) ? () =>
                     setNativeDialog({ title: '核实中断任务', recover: task }) : undefined}
                   onObserve={observations.some((entry) => entry.active && entry.targetId === task.targets[viewedTarget]?.target.id) ? () => {
                     const entry = observations.find((entry) => entry.active && entry.targetId === task.targets[viewedTarget].target.id)!;
@@ -3055,7 +3121,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         </main>
         <footer className="workspace-footer" aria-label="应用状态">
           <span className="footer-version">
-            {desktop ? 'v' + (boot?.version || '1.6.1') : '界面原型 v0.3'}
+            {desktop ? 'v' + (boot?.version || '1.7.0') : '界面原型 v0.3'}
           </span>
           <button
             className="footer-directory"
@@ -3224,11 +3290,30 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       {dialog?.kind === 'confirm' && (
         <Confirm
           task={dialog.task}
+          schedule={dialog.schedule}
+          scheduledAt={dialog.plan?.scheduledAt}
           onCopy={(value) => void copy(value)}
           returnFocus={dialog.returnFocus}
           onClose={() => setDialog(null)}
           saved={saved}
-          onStart={async (t, values, approval) => {
+          onStart={async (t, values, approval, scheduledAt) => {
+            if (desktop && dialog.schedule) {
+              if (!scheduledAt) throw new Error('请选择发布时间');
+              if (dialog.reschedule)
+                await desktop.reschedule(dialog.plan!.id, scheduledAt, approval);
+              else
+                await desktop.createSchedule(
+                  dialog.token!,
+                  values,
+                  approval,
+                  scheduledAt,
+                  dialog.plan?.id,
+                );
+              setSchedules(await desktop.listSchedules());
+              setDialog(null);
+              setPage('schedules');
+              return;
+            }
             if (desktop) {
               const started = await desktop!.start(dialog.token!, values, approval);
               setTask(started);
@@ -3543,7 +3628,11 @@ function Confirm({
   onClose,
   returnFocus,
   saved = [],
+  schedule = false,
+  scheduledAt,
 }: {
+  schedule?: boolean;
+  scheduledAt?: number;
   onCopy: (value: string) => void;
   saved?: string[];
   task: Task;
@@ -3551,10 +3640,17 @@ function Confirm({
     t: Task,
     credentials: Record<string, string>,
     approval: Approval,
+    scheduledAt?: number,
   ) => void | Promise<void>;
   onClose: () => void;
   returnFocus?: HTMLElement;
 }) {
+  const [scheduleTime, setScheduleTime] = useState(() => {
+    const date = new Date(
+      scheduledAt && scheduledAt > Date.now() ? scheduledAt : Date.now() + 3600000,
+    );
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  });
   const [names, setNames] = useState<Record<string, string>>({});
   const [word, setWord] = useState(''),
     [fallback, setFallback] = useState(false),
@@ -3567,14 +3663,15 @@ function Confirm({
     degraded =
       !initial.dryRun && initial.targets.some((r) => r.target.hashPolicy === 'size-confirm');
   const needsPassword = (s: (typeof servers)[number]) =>
-    s.auth === 'password' &&
-    !(desktop && s.credentialMode === 'windows' && saved.includes(s.id));
+    s.auth === 'password' && !(desktop && s.credentialMode === 'windows' && saved.includes(s.id));
   const firstPassword = servers.find(needsPassword);
-  const title = initial.dryRun
-    ? '确认试运行（远程只读）'
-    : initial.operation === 'rollback'
-      ? '确认回滚'
-      : '确认部署';
+  const title = schedule
+    ? '确认定时发布'
+    : initial.dryRun
+      ? '确认试运行（远程只读）'
+      : initial.operation === 'rollback'
+        ? '确认回滚'
+        : '确认部署';
   const actions = (
     <>
       {error && (
@@ -3615,12 +3712,20 @@ function Confirm({
               });
             }
             try {
-              await onStart(task, credentials, {
-                productionWord: word,
-                productionNames: names,
-                allowWeak: fallback,
-                protectCurrent: protect,
-              });
+              const at = new Date(scheduleTime).getTime();
+              if (schedule && (!Number.isFinite(at) || at <= Date.now()))
+                throw new Error('请选择未来的发布时间');
+              await onStart(
+                task,
+                credentials,
+                {
+                  productionWord: word,
+                  productionNames: names,
+                  allowWeak: fallback,
+                  protectCurrent: protect,
+                },
+                schedule ? at : undefined,
+              );
               setCredentials({});
             } catch (e) {
               setError(String(e));
@@ -3630,13 +3735,39 @@ function Confirm({
           }}
         >
           <Rocket size={17} />
-          {initial.dryRun ? '开始试运行' : initial.operation === 'rollback' ? '回滚' : '部署'}
+          {schedule
+            ? '确认计划'
+            : initial.dryRun
+              ? '开始试运行'
+              : initial.operation === 'rollback'
+                ? '回滚'
+                : '部署'}
         </button>
       </div>
     </>
   );
   return (
     <Modal title={title} onClose={onClose} wide footer={actions} returnFocus={returnFocus}>
+      {schedule && (
+        <>
+          <Field label="发布时间">
+            <input
+              aria-label="发布时间"
+              type="datetime-local"
+              value={scheduleTime}
+              onChange={(e) => setScheduleTime(e.target.value)}
+            />
+          </Field>
+          <p className="note">
+            时区：{Intl.DateTimeFormat().resolvedOptions().timeZone}
+            。现在完成构建、连接测试和产物校验，到点上传部署；最晚延后 15
+            分钟开始。电脑须开机且应用保持运行，退出或休眠错过时间不补发。
+          </p>
+          <p className="note">
+            口令认证须配置 Windows 加密保存。配置、信任或线上版本变化后需要重新确认。
+          </p>
+        </>
+      )}
       <div className="confirm-header">
         <h3>{initial.service.name}</h3>
         <Badge>
@@ -3839,11 +3970,7 @@ function Confirm({
         <p className="branch">
           <GitBranch size={15} />
           {initial.service.git.branch}
-          <HashValue
-            label="Git 提交"
-            value={initial.service.git.commit}
-            onCopy={onCopy}
-          />
+          <HashValue label="Git 提交" value={initial.service.git.commit} onCopy={onCopy} />
         </p>
       </Disclosure>
     </Modal>

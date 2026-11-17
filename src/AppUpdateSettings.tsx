@@ -114,7 +114,7 @@ export function AppUpdateSettings({
                 onClick={() => void action(() => api!.checkUpdate())}
               >
                 {working ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
-                {state.stage === 'cached' ? '检查并复用安装包' : '检查更新'}
+                检查更新
               </button>
             )}
             {downloading && (

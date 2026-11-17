@@ -146,7 +146,7 @@ it('缓存位置单独展示，旧版缓存先检查再复用，错误移除 IPC
   f.api.openUpdateCache = open;
   render(<AppUpdateSettings api={f.api} version="1.5.6" active={false} />);
   await waitFor(() =>
-    expect(screen.getByRole('button', { name: '检查并复用安装包' })).toBeTruthy(),
+    expect(screen.getByRole('button', { name: '检查更新' })).toBeTruthy(),
   );
   expect(screen.getByText(f.state.installerPath)).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: '打开下载位置' }));
@@ -154,7 +154,7 @@ it('缓存位置单独展示，旧版缓存先检查再复用，错误移除 IPC
   f.mocks.checkUpdate.mockRejectedValueOnce(
     new Error("Error invoking remote method 'deploy:check-update': Error: 无法访问更新服务器"),
   );
-  fireEvent.click(screen.getByRole('button', { name: '检查并复用安装包' }));
+  fireEvent.click(screen.getByRole('button', { name: '检查更新' }));
   await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('无法访问更新服务器'));
   expect(screen.getByRole('alert').classList.contains('update-error')).toBe(true);
 });

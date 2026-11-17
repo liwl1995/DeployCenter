@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type Sqlite from 'better-sqlite3';
+import { pendingSchedule, type ReleaseSchedule } from '../src/schedules';
 import type { ArtifactPolicy, Task } from '../src/model';
 import type {
   CleanupKind,
@@ -53,7 +54,9 @@ type InternalPlan = {
   signature: string;
 };
 const protectedTask = (task: Task) =>
-  ['running', 'cancelling', 'interrupted'].includes(task.status);
+  ['running', 'cancelling'].includes(task.status) ||
+  (task.status === 'interrupted' && !task.preparation) ||
+  !!(task as Task & { scheduleProtected?: boolean }).scheduleProtected;
 const succeeded = (task: Task) =>
   !protectedTask(task) &&
   task.targets.length > 0 &&
@@ -76,6 +79,7 @@ export class ArtifactStore {
     private now: () => number = Date.now,
   ) {}
   static initialize(sql: Sqlite.Database) {
+    sql.exec('CREATE TABLE IF NOT EXISTS release_schedules (id TEXT PRIMARY KEY, json TEXT NOT NULL);');
     sql.exec(
       'CREATE TABLE IF NOT EXISTS artifact_objects (path TEXT PRIMARY KEY, hash TEXT NOT NULL, size INTEGER NOT NULL, used INTEGER NOT NULL, legacy INTEGER NOT NULL, approved INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS artifact_refs (task_id TEXT PRIMARY KEY, path TEXT NOT NULL); CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);',
     );
@@ -89,6 +93,15 @@ export class ArtifactStore {
       .get() as { value: string } | undefined;
     return Math.max(task.endedAt || this.now(), object.legacy ? Number(reviewed?.value || 0) : 0);
   }
+  private scheduledTaskIds() {
+    const rows = this.sql().prepare('SELECT json FROM release_schedules').all() as { json: string }[];
+    const ids = new Set<string>();
+    for (const row of rows) {
+      const plan = JSON.parse(row.json) as ReleaseSchedule;
+      if (pendingSchedule(plan) || plan.state === 'executing') ids.add(plan.preparationId);
+    }
+    return ids;
+  }
   private tasks(): Task[] {
     const tasks: Task[] = [];
     this.unreadable.clear();
@@ -101,6 +114,8 @@ export class ArtifactStore {
       } catch {
         this.unreadable.add(row.id);
       }
+    const scheduled = this.scheduledTaskIds();
+    for (const task of tasks) if (scheduled.has(task.id)) Object.assign(task, { scheduleProtected: true });
     return tasks;
   }
   register(task: Task) {

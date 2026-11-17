@@ -52,6 +52,14 @@ function stageOf(step: Step) {
 }
 
 function resultFor(task: Task, run?: RunTarget): { tone: Status; text: string } {
+  if (task.preparation)
+    return {
+      tone: task.status === 'success' ? 'success' : 'warning',
+      text:
+        task.status === 'success'
+          ? '定时发布准备完成，尚未上传或修改远端。请在发布计划中查看时间。'
+          : '定时发布准备尚未完成，请查看日志并在发布计划中处理。',
+    };
   if (task.status === 'cancelled')
     return { tone: 'skipped', text: '任务已取消。请查看已完成目标的结果。' };
   if (task.status === 'interrupted')
@@ -141,7 +149,7 @@ export function TaskView({
   const run = task.targets[inspected];
   const active = task.status === 'running' || task.status === 'cancelling';
   const result = resultFor(task, run);
-  const groups = stageNames.map((name, index) => ({
+  const groups = (task.preparation ? ['产物准备', '只读检查'] : stageNames).map((name, index) => ({
     name,
     steps: index === 0 ? task.buildSteps : (run?.steps || []).filter((s) => stageOf(s) === index),
   }));
@@ -252,7 +260,7 @@ export function TaskView({
     ['failed', 'rolledback'].includes(entry.status),
   );
   const canRetry =
-    !active && !task.dryRun && task.status !== 'interrupted' && task.operation === 'deploy';
+    !active && !task.dryRun && !task.preparation && task.status !== 'interrupted' && task.operation === 'deploy';
   const openLogs = () => onLog('模拟容器日志 · 服务初始化中…');
   const more: MenuAction[] = [];
   if (run?.target.mode === 'docker') more.push({ label: '查看容器日志', onClick: openLogs });
@@ -327,14 +335,14 @@ export function TaskView({
             {task.targets.length > 1
               ? task.targets.length + ' 个环境'
               : run?.target.name || '本机构建'}{' '}
-            · {operationLabel(task)}
+            · {task.preparation ? '定时发布准备' : operationLabel(task)}
           </h1>
         </div>
         <Badge kind={active ? '' : result.tone === 'success' ? 'good' : 'warn'}>
           {task.status === 'cancelling'
             ? '安全取消中'
             : task.status === 'success' && result.tone === 'success'
-              ? task.dryRun
+              ? task.preparation ? '产物准备完成' : task.dryRun
                 ? '试运行通过'
                 : task.operation === 'rollback'
                   ? '已回滚成功'
@@ -358,7 +366,8 @@ export function TaskView({
           {!!more.length && <MoreMenu label="更多任务操作" actions={more} />}
         </div>
       </header>
-      {!active && result.tone !== 'success' && (
+      {task.preparation && <p className="note">{result.text}</p>}
+      {!active && result.tone !== 'success' && !task.preparation && (
         <div className={'task-result-banner task-tone-' + result.tone} role="status">
           <strong>{result.text}</strong>
           {bannerAction && (

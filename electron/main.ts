@@ -7,6 +7,7 @@ import {
   Menu,
   net,
   Notification,
+  powerMonitor,
   safeStorage,
   shell,
   utilityProcess,
@@ -32,6 +33,10 @@ import { migrationDestination, DataDirectory } from './data-directory';
 import { BackupManager } from './backup-manager';
 import { WorkbenchRecovery } from './workbench-recovery';
 import { workbenchHeader, workbenchPath } from './workbench';
+import { ReleaseScheduler, validScheduleTime, scheduleConfiguration, schedulePins } from './scheduler';
+import { pendingSchedule } from '../src/schedules';
+import { confirmProduction } from '../src/presentation';
+import { parseApproval } from './validate';
 import { Controller } from './controller';
 import { detectJdks, inspectJar, checkJdk, resolveBuild, serviceInfo } from './files';
 import { runBatch, runProcess } from './process';
@@ -178,6 +183,7 @@ const readOnlyDuringMigration = new Set([
   'cancel-migration',
   'restart',
   'read-task',
+  'list-schedules',
   'list-tasks',
   'read-logs',
   'open-data-dir',
@@ -225,6 +231,8 @@ void startup().catch(async (error) => {
   app.quit();
 });
 let win: BrowserWindow | undefined, storage: Storage, controller: Controller;
+let confirmedScheduleExit = false;
+let scheduler: ReleaseScheduler | undefined;
 let updater: AppUpdater | undefined;
 let backups: BackupManager;
 let workbench: WorkbenchRecovery;
@@ -237,7 +245,11 @@ const pendingLocks = new Map<
 let observeAfter:
   | ((task: import('../src/model').Task, credentials: Record<string, string>) => void)
   | undefined;
+let onSchedulesChanged: (() => void) | undefined;
 const emit = (event: DesktopEvent) => {
+  if (event.kind === 'schedules') {
+    try { onSchedulesChanged?.(); } catch { /* 系统通知失败不能改变已保存的计划或部署结果。 */ }
+  }
   if (win && !win.isDestroyed()) {
     if (event.kind === 'task') {
       win.setTitle(taskWindowTitle(event.task));
@@ -403,6 +415,66 @@ async function boot() {
       }),
       () => !controller.active() && !backups.isBusy() && !storage.artifacts.isBusy(),
     );
+    const scheduleNotices = new Map<string, string>();
+    const scheduleChanged = () => {
+      const plans = storage.schedules();
+      for (const plan of plans) {
+        const previous = scheduleNotices.get(plan.id);
+        scheduleNotices.set(plan.id, plan.state);
+        if (
+          previous &&
+          previous !== plan.state &&
+          ['failed', 'missed', 'confirmation', 'ready'].includes(plan.state) &&
+          process.env.DEPLOY_CENTER_TESTING !== '1' &&
+          storage.database().settings.notifications !== false &&
+          Notification.isSupported()
+        ) {
+          const notification = new Notification({
+            title: 'YOTOO 部署中心',
+            body:
+              plan.state === 'ready'
+                ? '定时发布产物已准备完成'
+                : '定时发布需要处理，请查看发布计划',
+            silent: storage.database().settings.notificationSound === false,
+          });
+          notification.on('click', () => {
+            activate();
+            emit({ kind: 'open-schedules' });
+          });
+          notification.show();
+        }
+      }
+    };
+    onSchedulesChanged = scheduleChanged;
+    const publishSchedules = () => emit({ kind: 'schedules', schedules: storage.schedules() });
+    const confirmScheduleExit = async () => {
+      if (confirmedScheduleExit || !storage.schedules().some(pendingSchedule)) return true;
+      const choice = await dialog.showMessageBox(win!, {
+        type: 'warning',
+        message: '仍有待发布计划',
+        detail: '退出或重启后暂停定时调度，错过时间不会自动补发。',
+        buttons: ['继续运行', '退出或重启'],
+        defaultId: 0,
+        cancelId: 0,
+      });
+      confirmedScheduleExit = choice.response === 1;
+      return confirmedScheduleExit;
+    };
+    scheduler = new ReleaseScheduler(
+      storage,
+      controller,
+      () =>
+        migrating ||
+        pendingRestart ||
+        !!updater?.isInstalling() ||
+        backups.isBusy() ||
+        workbench.isBusy() ||
+        storage.artifacts.isBusy(),
+      publishSchedules,
+    );
+    scheduler.start();
+    powerMonitor.on('suspend', () => scheduler?.suspend());
+    powerMonitor.on('resume', () => scheduler?.resume());
     const page = path.join(__dirname, '..', 'dist', 'index.html');
     const url = pathToFileURL(page).href;
     const smoke = process.argv.includes('--smoke');
@@ -456,13 +528,13 @@ async function boot() {
               ? '数据迁移已完成，请先重启后再修改配置或部署。'
               : '正在迁移数据，暂时不能执行其他操作。',
           );
-        if (storage.artifacts.isBusy() && ['prepare', 'start', 'recover'].includes(name))
+        if (storage.artifacts.isBusy() && ['prepare', 'start', 'recover', 'create-schedule', 'reschedule'].includes(name))
           throw new Error('正在整理本地产物，请完成后重新准备部署');
         if (
           workbench?.isBusy() &&
           ['save', 'prepare', 'start', 'recover', 'takeover-lock', 'import-config',
             'migrate-directory', 'restart', 'remove-old-data', 'apply-cleanup',
-            'apply-backups', 'reconcile-backup'].includes(name)
+            'apply-backups', 'reconcile-backup', 'create-schedule', 'reschedule'].includes(name)
         )
           throw new Error('正在核实远程工作台，请等待结果后再操作');
         if (
@@ -471,6 +543,8 @@ async function boot() {
             'save',
             'prepare',
             'start',
+            'create-schedule',
+            'reschedule',
             'recover',
             'takeover-lock',
             'import-config',
@@ -481,6 +555,8 @@ async function boot() {
           ].includes(name)
         )
           throw new Error('正在处理远程备份，请等待结果后再操作');
+        if (scheduler?.isDispatching() && !readOnlyDuringMigration.has(name) && !['trust', 'cancel', 'cancel-schedule'].includes(name))
+          throw new Error('定时发布正在启动，请稍后再操作');
         return fn(...args);
       });
     handle('copy-text', (value) => {
@@ -512,13 +588,19 @@ async function boot() {
         return undefined;
       },
       launch: async (file, hash) => {
-        await launchInstallerAfterExit(
-          file,
-          hash,
-          path.dirname(app.getPath('exe')),
-          dataPaths(dataDir).updateLogs,
-          nativeHelper,
-        );
+        if (!(await confirmScheduleExit())) throw new Error('已取消安装更新，继续等待发布计划');
+        try {
+          await launchInstallerAfterExit(
+            file,
+            hash,
+            path.dirname(app.getPath('exe')),
+            dataPaths(dataDir).updateLogs,
+            nativeHelper,
+          );
+        } catch (error) {
+          confirmedScheduleExit = false;
+          throw error;
+        }
         // 助手已持有本进程句柄，只会在正常退出后启动安装器。
         setImmediate(() => app.quit());
       },
@@ -577,6 +659,60 @@ async function boot() {
     handle('start', (token, values, approval) =>
       controller.start(text(token, 100), values, approval),
     );
+    handle('list-schedules', () => storage.schedules());
+    handle('create-schedule', async (token, values, approval, at, replaces) => {
+      const task = await controller.start(text(token, 100), values, approval, {
+        at: z.number().int().parse(at),
+        replaces: replaces === undefined ? undefined : id(replaces),
+      });
+      return storage.schedules().find((p) => p.id === task.scheduleId)!;
+    });
+    handle('cancel-schedule', (value) => {
+      const plan = storage.schedules().find((p) => p.id === id(value));
+      if (!plan) throw new Error('计划不存在');
+      if (plan.state === 'executing') throw new Error('请在关联部署任务中请求安全取消');
+      if (plan.state === 'preparing') controller.cancel(plan.preparationId);
+      plan.state = 'cancelled';
+      plan.reason = '用户已取消计划';
+      storage.saveSchedule(plan);
+      publishSchedules();
+    });
+    handle('reschedule', async (value, at, rawApproval) => {
+      const scheduledAt = z.number().int().parse(at);
+      validScheduleTime(scheduledAt);
+      const plan = storage.schedules().find((p) => p.id === id(value));
+      if (!plan || ['executing', 'preparing'].includes(plan.state))
+        throw new Error('请等待当前准备或部署结束');
+      const approval = parseApproval(rawApproval);
+      if (
+        !confirmProduction(plan.task, approval.productionNames || {}) ||
+        (plan.task.targets.some((r) => r.target.hashPolicy === 'size-confirm') &&
+          !approval.allowWeak)
+      )
+        throw new Error('请重新确认正式环境及弱校验策略');
+      if (
+        scheduleConfiguration(storage.database(), plan.task) !== plan.configuration ||
+        schedulePins(plan.task, storage.pins()) !== plan.pins ||
+        plan.state === 'confirmation'
+      )
+        throw new Error('配置、信任或线上基线需要重新核实，请使用重新准备并确认');
+      const artifact = await inspectJar(plan.task.artifact.path);
+      if (artifact.sha256 !== plan.task.artifact.sha256 || !plan.task.scheduleBaselines)
+        throw new Error('没有有效的准备产物，请重新准备');
+      // 校验期间计划可能已被触发或取消，禁止覆盖新的状态。
+      const current = storage.schedules().find((p) => p.id === plan.id);
+      if (!current || JSON.stringify(current) !== JSON.stringify(plan))
+        throw new Error('计划状态已变化，请刷新后重试');
+      plan.scheduledAt = scheduledAt;
+      plan.approval = approval;
+      plan.state = 'ready';
+      plan.reason = '已重新确认发布时间';
+      // 已有真实部署结果不能重用任务身份，再次发布请创建新计划。
+      if (plan.taskId && !storage.task(plan.taskId)?.preparation)
+        throw new Error('此计划已执行，请重新创建计划');
+      storage.saveSchedule(plan);
+      publishSchedules();
+    });
     handle('cancel', (value) => controller.cancel(id(value)));
     handle('recover', (value, creds) => controller.recover(id(value), creds));
     const backupCredential = async (targetId: string, supplied: unknown) => {
@@ -1256,8 +1392,9 @@ async function boot() {
         pendingRestart = directories.progress.state === 'pending';
       }
     });
-    handle('restart', () => {
+    handle('restart', async () => {
       if (migrating || controller.active()) throw new Error('请等待任务或迁移结束');
+      if (!(await confirmScheduleExit())) return;
       app.relaunch();
       app.quit();
     });
@@ -1283,6 +1420,11 @@ async function boot() {
           detail: '请等待迁移结束，或在设置页取消迁移后再关闭。',
           buttons: ['返回'],
         });
+        return;
+      }
+      if (!controller.active() && !confirmedScheduleExit && storage.schedules().some(pendingSchedule)) {
+        event.preventDefault();
+        void confirmScheduleExit().then((confirmed) => { if (confirmed) app.quit(); });
         return;
       }
       if (controller.active()) {
@@ -1348,6 +1490,7 @@ async function boot() {
 }
 app.on('window-all-closed', () => app.quit());
 app.on('will-quit', () => {
+  scheduler?.close();
   instance?.close();
   updater?.dispose();
   void historySearch.stop();

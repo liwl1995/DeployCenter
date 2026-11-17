@@ -29,7 +29,16 @@ check_cancel() { if [ "$critical" = 0 ] && [ -f "$JOB/cancel" ]; then event STAT
 step() { check_cancel; current="$1"; shift; event STEP "$current" START; "$@"; event STEP "$current" OK; }
 skip() { check_cancel; current="$1"; event STEP "$current" SKIP; }
 run_custom() { timeout "$COMMAND_TIMEOUT" bash -c "$1"; }
-stop_service() { stopped=1; if [ "$MODE" = docker ]; then timeout "$COMMAND_TIMEOUT" docker stop --time 30 "$CONTAINER"; elif [ "$old_exists" = 1 ] && [ -n "$STOP_CMD" ]; then if run_custom "$STOP_CMD"; then :; elif [ "$STOP_WARNING" = 1 ]; then printf '停止命令非零，按配置记录警告并继续\n'; else return 1; fi; fi; stopped=1; }
+verify_schedule_baseline() {
+  if [ -n "${SCHEDULE_BASELINE:-}" ]; then
+    actual=absent
+    if [ -f "$JAR" ]; then actual="$(hash_file "$JAR")"; fi
+    [ "$actual" = "$SCHEDULE_BASELINE" ] || { printf 'SCHEDULE_CHANGED: 停服前线上版本已变化，已阻止切换\n' >&2; return 1; }
+  fi
+}
+stop_service() {
+  verify_schedule_baseline
+  stopped=1; if [ "$MODE" = docker ]; then timeout "$COMMAND_TIMEOUT" docker stop --time 30 "$CONTAINER"; elif [ "$old_exists" = 1 ] && [ -n "$STOP_CMD" ]; then if run_custom "$STOP_CMD"; then :; elif [ "$STOP_WARNING" = 1 ]; then printf '停止命令非零，按配置记录警告并继续\n'; else return 1; fi; fi; stopped=1; }
 start_service() { if [ "$MODE" = docker ]; then timeout "$COMMAND_TIMEOUT" docker start "$CONTAINER"; restart_baseline="$(timeout "$COMMAND_TIMEOUT" docker inspect -f '{{.RestartCount}}' "$CONTAINER")"; else run_custom "${RESTART_CMD:-$START_CMD}"; fi; }
 container_hash() { local expected="$1" actual; actual="$(timeout "$COMMAND_TIMEOUT" docker exec "$CONTAINER" sh -c 'command -v sha256sum >/dev/null || { printf "容器内缺少 sha256sum，不能完成最终校验\n" >&2; exit 1; }; sha256sum -- "$1"' _ "$CONTAINER_JAR" | awk '{print $1}')" || return 1; [ "$actual" = "$expected" ] || { printf '容器内 JAR 哈希不一致：expected=%s actual=%s\n' "$expected" "$actual" >&2; return 1; }; }
 stability() {
@@ -145,6 +154,7 @@ if [ "$old_exists" = 1 ]; then
 else chmod 644 "$STAGE"; fi
 }
 step permissions prepare_metadata
+verify_schedule_baseline
 check_cancel; critical=1
 if [ "$MODE" = jar ] && [ "$old_exists" = 0 ]; then skip stop; else step stop stop_service; fi
 current=replace; event STEP replace START; mv -f -- "$STAGE" "$JAR"; replaced=1; event STEP replace OK

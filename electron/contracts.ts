@@ -3,7 +3,8 @@ import type { TrustRequest } from '../src/platform';
 import type { Receipt } from './workbench';
 export type Pin = { key: string; fingerprint: string };
 export type WorkerInput = {
-  kind: 'deploy' | 'recover';
+  kind: 'deploy' | 'recover' | 'schedule-prepare' | 'schedule-deploy';
+  scheduleDeadline?: number;
   task: Task;
   dataDir: string;
   jdks: Database['jdks'];
@@ -15,6 +16,7 @@ export type WorkerInput = {
   artifactSources?: import('./files').SnapshotSource[];
 };
 export type WorkerMessage =
+  | { kind: 'schedule-dispatch'; task: Task }
   | { kind: 'snapshot'; task: Task }
   | {
       kind: 'log';
@@ -29,6 +31,7 @@ export type WorkerMessage =
   | { kind: 'done'; task: Task }
   | { kind: 'fatal'; error: string };
 export type ControlMessage =
+  | { kind: 'schedule-dispatch-result'; error?: string }
   | { kind: 'begin'; value: WorkerInput }
   | { kind: 'cancel' }
   | { kind: 'handoff-result'; owner: string; error?: string }

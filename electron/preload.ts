@@ -2,6 +2,10 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { DesktopAPI, DesktopEvent } from '../src/platform';
 const invoke = (name: string, ...args: unknown[]) => ipcRenderer.invoke('deploy:' + name, ...args);
 const api: DesktopAPI = {
+  listSchedules: () => invoke('list-schedules'),
+  createSchedule: (token, credentials, approval, at, replaces) => invoke('create-schedule', token, credentials, approval, at, replaces),
+  cancelSchedule: (id) => invoke('cancel-schedule', id),
+  reschedule: (id, at, approval) => invoke('reschedule', id, at, approval),
   copyText: (value) => invoke('copy-text', value),
   openUpdateCache: () => invoke('open-update-cache'),
   openUpdateLink: (url) => invoke('open-update-link', url),

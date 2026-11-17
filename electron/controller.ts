@@ -1,11 +1,14 @@
+import { scheduleConfiguration, schedulePins, validScheduleTime } from './scheduler';
+import type { ReleaseSchedule } from '../src/schedules';
+import { scheduleWindow } from '../src/schedules';
 import { workbenchPath, workbenchScope } from './workbench';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { createTask, startTask, targetSteps } from '../src/engine';
 import { confirmProduction } from '../src/presentation';
 import { canRollback } from '../src/records';
-import { localJar, type Artifact, type Task } from '../src/model';
+import { backupPath, localJar, type Artifact, type Task } from '../src/model';
 import type { Approval, DesktopEvent, TrustRequest } from '../src/platform';
 import { inspectJar, resolveBuild, gitInfo } from './files';
 import { Storage } from './storage';
@@ -59,7 +62,13 @@ export class TrustBroker {
 export class Controller {
   private prepared = new Map<
     string,
-    { task: Task; until: number; jdks: { name: string; path: string }[]; compatibility: boolean }
+    {
+      task: Task;
+      until: number;
+      jdks: { name: string; path: string }[];
+      compatibility: boolean;
+      configuration: string;
+    }
   >();
   private worker?: WorkerHandle;
   private current?: Task;
@@ -247,6 +256,7 @@ export class Controller {
       until: Date.now() + 15 * 60000,
       jdks: structuredClone(db.jdks),
       compatibility: db.settings.allowMavenNonzero,
+      configuration: scheduleConfiguration(db, task),
     });
     for (const [key, value] of this.prepared)
       if (value.until < Date.now()) this.prepared.delete(key);
@@ -269,7 +279,13 @@ export class Controller {
     }
     return result;
   }
-  async start(token: string, values: unknown, rawApproval: unknown) {
+  async start(
+    token: string,
+    values: unknown,
+    rawApproval: unknown,
+    schedule?: { at: number; replaces?: string },
+  ) {
+    if (schedule) validScheduleTime(schedule.at);
     if (this.active()) throw new Error('已有任务正在执行');
     const pending = this.prepared.get(token);
     if (!pending || pending.until < Date.now()) throw new Error('确认已过期，请重新检查部署概要');
@@ -309,11 +325,64 @@ export class Controller {
         pending.jdks,
         path.join(this.storage.dataDir, 'tmp'),
       );
-    this.activeCredentials = await this.credentials(task, values);
+    if (schedule) {
+      const current = this.storage.database();
+      if (scheduleConfiguration(current, task) !== pending.configuration)
+        throw new Error('确认期间关键配置已变化，请重新准备');
+      if (task.dryRun || task.operation !== 'deploy') throw new Error('只能为正式部署创建定时计划');
+      for (const r of task.targets) {
+        if (r.server.auth !== 'alias' && r.server.credentialMode !== 'windows')
+          throw new Error('定时发布请先将服务器认证改为 Windows 加密保存，再重新确认');
+      }
+      if (schedule.replaces) {
+        const previous = this.storage.schedules().find((p) => p.id === schedule.replaces);
+        if (!previous || ['preparing', 'executing'].includes(previous.state))
+          throw new Error('原计划正在执行或不存在');
+      }
+    }
+    const credentials = await this.credentials(task, values);
+    // 读取凭据期间配置可能被另一请求更新，不能发布未经确认的新配置。
+    if (this.active()) throw new Error('已有任务正在执行');
+    if (schedule && scheduleConfiguration(this.storage.database(), task) !== pending.configuration)
+      throw new Error('确认期间关键配置已变化，请重新准备');
+    this.activeCredentials = credentials;
     this.prepared.delete(token);
     const started = startTask(task);
+    if (schedule) {
+      started.preparation = true;
+      for (const run of started.targets)
+        run.steps = [
+          {
+            key: 'connect',
+            label: '只读检查连接、权限、空间和线上版本',
+            status: 'pending',
+            elapsed: 0,
+          },
+        ];
+      started.scheduleId = 'SP-' + randomUUID();
+      const plan: ReleaseSchedule = {
+        id: started.scheduleId,
+        createdAt: Date.now(),
+        scheduledAt: schedule.at,
+        state: 'preparing',
+        reason: '正在检查连接并准备固定产物',
+        preparationId: started.id,
+        task: structuredClone(started),
+        approval,
+        configuration: pending.configuration,
+        pins: '',
+      };
+      this.storage.claimSchedule(plan, started);
+      if (schedule.replaces) {
+        const previous = this.storage.schedules().find((p) => p.id === schedule.replaces)!;
+        previous.state = 'cancelled';
+        previous.reason = '已由新确认的计划替代';
+        this.storage.saveSchedule(previous);
+      }
+      this.emit({ kind: 'schedules', schedules: this.storage.schedules() });
+    }
     this.launch({
-      kind: 'deploy',
+      kind: schedule ? 'schedule-prepare' : 'deploy',
       task: started,
       dataDir: this.storage.dataDir,
       jdks: pending.jdks,
@@ -324,9 +393,105 @@ export class Controller {
     });
     return started;
   }
+  /** 计划只引用准备好的快照，到点不再解析构建环境或读取原始 JAR。 */
+  async startScheduled(plan: ReleaseSchedule) {
+    if (this.active()) throw new Error('已有任务正在执行');
+    if (this.storage.recovery || this.storage.hasUnreadableTasks())
+      throw new Error('请先核实本地恢复记录');
+    if (scheduleConfiguration(this.storage.database(), plan.task) !== plan.configuration)
+      throw new Error('计划配置已变化');
+    const task = createTask(
+      this.storage.database(),
+      plan.task.service,
+      plan.task.targets.map((r) => r.target),
+      Object.fromEntries(plan.task.targets.map((r) => [r.target.id, r.backup])),
+      'existing',
+      plan.task.artifact,
+    );
+    task.targets.forEach((r, i) => {
+      r.server = structuredClone(plan.task.targets[i].server);
+    });
+    if (plan.taskId) task.id = plan.taskId;
+    for (const r of task.targets)
+      r.plannedBackupPath = backupPath(r.target, r.backup, task.id, new Date(task.startedAt));
+    task.note = plan.task.note;
+    task.failurePolicy = plan.task.failurePolicy;
+    task.deployedVersion = plan.task.deployedVersion;
+    task.deployedCommit = plan.task.deployedCommit;
+    task.scheduleBaselines = structuredClone(plan.task.scheduleBaselines);
+    task.scheduleAliases = structuredClone(plan.task.scheduleAliases);
+    task.scheduleAliasKeys = structuredClone(plan.task.scheduleAliasKeys);
+    task.preparation = true;
+    task.scheduleId = plan.id;
+    const credentials = await this.credentials(task, {});
+    if (this.active()) throw new Error('已有任务正在执行');
+    if (
+      scheduleConfiguration(this.storage.database(), plan.task) !== plan.configuration ||
+      schedulePins(plan.task, this.storage.pins()) !== plan.pins
+    )
+      throw new Error('计划配置或主机信任已变化');
+    const current = this.storage.schedules().find((p) => p.id === plan.id);
+    if (!current || !['ready', 'waiting'].includes(current.state)) return;
+    if (Date.now() > current.scheduledAt + scheduleWindow) return;
+    this.activeCredentials = credentials;
+    plan.taskId = task.id;
+    plan.state = 'executing';
+    plan.reason = '正在重新预检，即将上传部署';
+    this.storage.claimSchedule(plan, task);
+    this.launch({
+      kind: 'schedule-deploy',
+      task,
+      scheduleDeadline: plan.scheduledAt + scheduleWindow,
+      dataDir: this.storage.dataDir,
+      jdks: [],
+      allowMavenNonzero: false,
+      credentials,
+      pins: this.storage.pins(),
+      allowWeak: plan.approval.allowWeak,
+    });
+  }
+  private finishSchedule(task: Task) {
+    if (!task.scheduleId) return;
+    const plan = this.storage.schedules().find((p) => p.id === task.scheduleId);
+    if (!plan || ['cancelled', 'missed', 'confirmation'].includes(plan.state)) return;
+    if (task.id === plan.preparationId) {
+      if (task.status === 'success') {
+        plan.task = structuredClone(task);
+        plan.pins = schedulePins(task, this.storage.pins());
+        plan.state = 'ready';
+        plan.reason = '产物已固定，等待发布时间';
+      } else {
+        plan.state = task.status === 'cancelled' ? 'cancelled' : 'failed';
+        plan.reason = '准备未完成，请查看准备日志并重新准备';
+      }
+    } else if (task.preparation && task.scheduleCheck === 'expired') {
+      plan.state = 'missed';
+      plan.reason = '执行前检查超过最晚启动时间，未上传或切换';
+    } else if (task.preparation && task.scheduleCheck === 'locked') {
+      plan.state = Date.now() <= plan.scheduledAt + scheduleWindow ? 'waiting' : 'missed';
+      plan.nextAttemptAt = Date.now() + 10000;
+      plan.reason = '目标有远端任务锁，窗口内稍后重试；不会接管锁';
+    } else if (task.preparation && task.scheduleCheck === 'changed') {
+      plan.state = 'confirmation';
+      plan.reason = '线上版本、连接配置或主机身份已变化，请查看日志并重新准备确认';
+    } else {
+      plan.state =
+        task.status === 'success' || task.status === 'partial'
+          ? 'completed'
+          : task.status === 'cancelled'
+            ? 'cancelled'
+            : 'failed';
+      plan.reason = task.preparation
+        ? '执行前检查失败，请查看任务日志；不会自动重试认证'
+        : '请查看关联部署任务结果';
+    }
+    this.storage.saveSchedule(plan);
+    this.emit({ kind: 'schedules', schedules: this.storage.schedules() });
+  }
   async recover(taskId: string, values: unknown) {
     if (this.active()) throw new Error('请先结束当前任务');
     const task = this.storage.task(taskId);
+    if (task?.preparation) throw new Error('准备任务未执行远端部署，请在发布计划中重新准备');
     if (!task || task.status !== 'interrupted') throw new Error('没有对应的中断任务');
     const db = this.storage.database();
     for (const r of task.targets.filter((r) => r.remote && r.remote.phase !== 'complete')) {
@@ -351,6 +516,7 @@ export class Controller {
       task.endedAt = Date.now();
       for (const r of task.targets)
         if (r.status === 'pending' || r.status === 'running') r.status = 'skipped';
+      this.finishSchedule(task);
       this.storage.complete(task);
       this.emit({ kind: 'task', task });
       return task;
@@ -374,7 +540,7 @@ export class Controller {
   }
   private launch(input: WorkerInput) {
     input.artifactSources = this.storage.artifacts.sources();
-    if (input.kind === 'deploy' && !input.task.dryRun)
+    if (['deploy', 'schedule-deploy'].includes(input.kind) && !input.task.dryRun)
       input.workbenchReceipts = this.storage.workbenchReceipts(
         new Set(input.task.targets.map((run) => workbenchScope(run.target, run.server))),
       );
@@ -387,9 +553,10 @@ export class Controller {
       this.worker = undefined;
       this.current = task;
       this.trust.cancel();
+      this.finishSchedule(task);
       this.storage.complete(task);
       try {
-        this.options.onFinished?.(task, this.activeCredentials);
+        if (!task.preparation) this.options.onFinished?.(task, this.activeCredentials);
       } catch {
         /* 系统通知和观察失败不能改变已经提交的部署结果。 */
       } finally {
@@ -401,7 +568,25 @@ export class Controller {
     };
     this.worker = this.factory(
       (message) => {
-        if (message.kind === 'snapshot') {
+        if (message.kind === 'schedule-dispatch') {
+          let error: string | undefined;
+          try {
+            if (
+              input.kind !== 'schedule-deploy' ||
+              message.task.id !== input.task.id ||
+              message.task.scheduleId !== input.task.scheduleId ||
+              message.task.preparation
+            )
+              throw new Error('计划任务身份不符');
+            if (logWriteFailed) throw new Error('准备日志写入失败');
+            this.storage.saveTask(message.task);
+            this.current = message.task;
+            this.emit({ kind: 'task', task: message.task });
+          } catch {
+            error = '本机未能保存发布启动状态，未授权上传或执行远端命令';
+          }
+          this.worker?.send({ kind: 'schedule-dispatch-result', error });
+        } else if (message.kind === 'snapshot') {
           this.current = message.task;
           if (!logWriteFailed) this.storage.saveTask(message.task);
           this.emit({ kind: 'task', task: message.task });
@@ -443,6 +628,8 @@ export class Controller {
           } catch {
             // 远端已清理；保留本机确认仍可在下一次连接时安全核实。
           }
+        } else if (message.kind === 'trust' && input.kind === 'schedule-deploy') {
+          this.worker?.send({ kind: 'trust-result', id: message.request.id, accepted: false });
         } else if (message.kind === 'trust')
           void this.trust
             .request(message.request, message.key)

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { scheduleCheckScript } from './schedule-remote';
 import { LogBatcher } from './log-batcher';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
@@ -10,7 +12,7 @@ import type { EngineDependencies } from './capabilities';
 import { applyRemoteJournal, targetOutcome } from './remote-events';
 import { stepNames } from '../src/step-names';
 import { localHealth } from './health';
-import { mustExec, type Transport } from './ssh';
+import { mustExec, systemSsh, type Transport } from './ssh';
 import {
   inspectDocker,
   preflightScript,
@@ -51,6 +53,7 @@ export class Deployment {
     private trust: (request: TrustRequest, key: string) => Promise<boolean>,
     private deps: EngineDependencies = nativeCapabilities(input.credentials, input.artifactSources),
     private persist?: (task: Task, targetId: string, receipt: Receipt) => Promise<void>,
+    private authorizeSchedule?: (task: Task) => Promise<void>,
   ) {
     this.task = structuredClone(input.task);
   }
@@ -58,6 +61,7 @@ export class Deployment {
     return this.deps.credentials.redact(text);
   }
   private log(text: string, r?: RunTarget, flush = false, contextStep?: Step) {
+    if (this.task.scheduleId && text.includes('SCHEDULE_CHANGED:')) this.task.scheduleCheck = 'changed';
     const id = r?.target.id || 'build';
     const pending = (this.pendingLogs.get(id) || '') + text;
     const cut = flush ? pending.length : pending.lastIndexOf('\n') + 1;
@@ -159,7 +163,13 @@ export class Deployment {
       credential: this.deps.credentials.get(r.server.id),
       signal: cleanup ? undefined : this.controller.signal,
       pins: this.input.pins,
-      trust: this.trust,
+      trust: async (request, key) => {
+        if (this.input.kind === 'schedule-deploy') {
+          this.task.scheduleCheck = 'changed';
+          return false;
+        }
+        return this.trust(request, key);
+      },
     });
   }
   async cancel() {
@@ -187,7 +197,42 @@ export class Deployment {
       if (this.task.dryRun) await this.dryRun();
       else if (this.input.kind === 'recover') await this.recover();
       else {
-        await this.build();
+        if (this.input.kind === 'schedule-prepare') {
+          await this.checkScheduledTargets(false);
+          await this.build();
+          // 构建后的真实大小参与空间预检，准备期间仍只读。
+          await this.checkScheduledTargets(false);
+        } else if (this.input.kind === 'schedule-deploy') {
+          await this.checkScheduledTargets(true);
+          const expected = this.task.artifact.sha256;
+          const checked = await this.deps.files.snapshot(
+            this.task.artifact.path,
+            this.task.id,
+            this.input.dataDir,
+            this.controller.signal,
+          );
+          if (!expected || checked.sha256 !== expected)
+            throw new Error('定时发布产物已变化或无法校验，请重新准备');
+          if (this.input.scheduleDeadline && this.deps.clock.now() > this.input.scheduleDeadline) {
+            this.task.scheduleCheck = 'expired';
+            throw new Error('已超过最晚启动时间');
+          }
+          this.task.buildPhase = 3;
+          for (const step of this.task.buildSteps) {
+            step.status = 'skipped';
+            step.label = '使用已准备的固定产物，不重新构建';
+          }
+          if (!this.authorizeSchedule) throw new Error('定时发布启动确认通道不可用');
+          this.task.preparation = false;
+          try {
+            // 主进程先持久化实际发布状态再应答；崩溃后即使尚未收到远端快照也能进入中断核实。
+            await this.authorizeSchedule(structuredClone(this.task));
+          } catch (error) {
+            this.task.preparation = true;
+            throw error;
+          }
+          this.emit(true);
+        } else await this.build();
         for (let i = 0; i < this.task.targets.length; i++) {
           this.task.active = i;
           const r = this.task.targets[i];
@@ -195,9 +240,14 @@ export class Deployment {
             r.status = 'skipped';
             continue;
           }
+          if (this.input.kind === 'schedule-prepare') {
+            r.status = 'success';
+            continue;
+          }
           await this.deployTarget(r);
           if (
             this.task.status === 'interrupted' ||
+            this.task.scheduleCheck === 'changed' ||
             this.cancelled ||
             ((r.status === 'failed' || r.status === 'rolledback') &&
               this.task.failurePolicy === 'stop')
@@ -210,7 +260,7 @@ export class Deployment {
       }
     } catch (e) {
       this.log(errorText(e) + '\n', undefined, true);
-      if (this.task.buildPhase < 3) {
+      if (this.task.buildPhase < 3 || this.task.preparation) {
         const current = this.task.buildSteps[this.task.buildPhase];
         if (current) this.finish(current, this.cancelled ? 'skipped' : 'failed');
         for (const r of this.task.targets) if (r.status === 'pending') r.status = 'skipped';
@@ -253,6 +303,116 @@ export class Deployment {
       this.send({ kind: 'done', task: this.task });
       this.input.credentials = {};
       this.deps.credentials.clear();
+    }
+  }
+  private async checkScheduledTargets(compare: boolean) {
+    const baselines: Record<string, string> = {};
+    const aliases: Record<string, string> = {};
+    const aliasKeys: Record<string, string> = {};
+    for (const r of this.task.targets) {
+      if (this.cancelled) throw new Error('准备已取消');
+      if (r.server.auth === 'alias') {
+        const resolved = await this.deps.commands.run(
+          systemSsh(),
+          [
+            ...(r.server.sshConfigFile ? ['-F', r.server.sshConfigFile] : []),
+            '-G',
+            '--',
+            r.server.alias,
+          ],
+          { timeout: 15000, signal: this.controller.signal },
+        );
+        if (resolved.code || !resolved.stdout.trim())
+          throw new Error('无法核实 SSH 别名的有效配置');
+        const identity = createHash('sha256')
+          .update(resolved.stdout.replace(/\r\n/g, '\n'))
+          .digest('hex');
+        if (compare && this.task.scheduleAliases?.[r.server.id] !== identity) {
+          this.task.scheduleCheck = 'changed';
+          throw new Error('SSH 别名有效配置已变化，请重新准备并确认');
+        }
+        aliases[r.server.id] = identity;
+        // 由系统 OpenSSH 核实 known_hosts；同时固定实际主机指纹，避免等待期间信任文件被改写。
+        const connected = await this.deps.commands.run(
+          systemSsh(),
+          [
+            ...(r.server.sshConfigFile ? ['-F', r.server.sshConfigFile] : []),
+            '-T',
+            '-v',
+            '-o',
+            'BatchMode=yes',
+            '-o',
+            'StrictHostKeyChecking=yes',
+            '-o',
+            'UpdateHostKeys=no',
+            '-o',
+            'ConnectTimeout=10',
+            '--',
+            r.server.alias,
+            'printf DEPLOY_CENTER_SCHEDULE_IDENTITY',
+          ],
+          { timeout: 30000, signal: this.controller.signal },
+        );
+        if (
+          compare &&
+          /REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/i.test(
+            connected.stderr,
+          )
+        ) {
+          this.task.scheduleCheck = 'changed';
+          throw new Error('SSH 别名主机信任已变化，请重新准备并确认');
+        }
+        const fingerprints = connected.stderr.match(/Server host key: [^\r\n]+/g);
+        if (connected.code || !fingerprints?.length)
+          throw new Error('无法核实 SSH 别名的实际主机指纹');
+        const keys = createHash('sha256').update(fingerprints.join('\n')).digest('hex');
+        if (compare && this.task.scheduleAliasKeys?.[r.server.id] !== keys) {
+          this.task.scheduleCheck = 'changed';
+          throw new Error('SSH 别名主机指纹已变化，请重新准备并确认');
+        }
+        aliasKeys[r.server.id] = keys;
+      }
+      this.transport = this.makeTransport(r);
+      try {
+        await this.transport.connect();
+        const result = await this.transport.exec('bash -s', {
+          input: scheduleCheckScript(this.task, r),
+          timeout: 120000,
+        });
+        this.log(result.stdout + result.stderr, r, true);
+        if (result.code) {
+          if ((result.stdout + result.stderr).includes('SCHEDULE_LOCKED:'))
+            this.task.scheduleCheck = 'locked';
+          throw new Error('定时发布只读预检失败：' + result.stderr);
+        }
+        if (r.target.mode === 'docker') await inspectDocker(this.transport, r);
+        const baseline = result.stdout
+          .match(/(?:^|\n)DC_BASELINE=(absent|[a-fA-F0-9]{64})(?:\n|$)/)?.[1]
+          .toLowerCase();
+        if (!baseline) throw new Error('无法读取可靠的线上 JAR 指纹');
+        if (compare && baseline !== this.task.scheduleBaselines?.[r.target.id]) {
+          this.task.scheduleCheck = 'changed';
+          throw new Error('线上版本已变化，请重新准备并确认');
+        }
+        baselines[r.target.id] = baseline;
+        if (this.input.kind === 'schedule-prepare') {
+          r.steps[0].status = 'success';
+          r.status = 'success';
+        }
+      } catch (error) {
+        r.error = this.redact(errorText(error));
+        r.status = this.cancelled ? 'cancelled' : 'failed';
+        if (this.input.kind === 'schedule-prepare') r.steps[0].status = 'failed';
+        throw error;
+      } finally {
+        this.transport.close();
+      }
+      this.emit(true);
+    }
+    if (!compare) {
+      this.task.scheduleBaselines = baselines;
+      this.task.scheduleAliases = aliases;
+      this.task.scheduleAliasKeys = aliasKeys;
     }
   }
   private async dryRun() {
@@ -465,12 +625,25 @@ export class Deployment {
         timeout: 120000,
       });
       this.log(checked.stdout + checked.stderr, r, true);
-      if (checked.code) throw new Error('远端预检失败：' + checked.stderr.trim());
+      if (checked.code) {
+        if (this.input.kind === 'schedule-deploy' && this.task.active === 0 && checked.stderr.includes('目标已有任务锁')) {
+          this.task.preparation = true;
+          this.task.scheduleCheck = 'locked';
+        }
+        throw new Error('远端预检失败：' + checked.stderr.trim());
+      }
       const metadata = (
         await mustExec(this.transport, 'cat -- ' + q(r.remote.jobDir + '/preflight'))
       ).split('\n');
       const fields = Object.fromEntries(metadata.filter(Boolean).map((line) => line.split('=', 2)));
       r.target.hasOldJar = fields.old_exists === '1';
+      if (this.input.kind === 'schedule-deploy') {
+        const actual = fields.old_exists === '1' ? fields.old_hash.toLowerCase() : 'absent';
+        if (actual !== this.task.scheduleBaselines?.[r.target.id]) {
+          this.task.scheduleCheck = 'changed';
+          throw new Error('取得部署锁后发现线上版本已变化，已阻止上传和切换');
+        }
+      }
       if (r.target.mode === 'docker')
         await this.phase(r, 'mount', async () => {
           docker = await inspectDocker(this.transport!, r);

@@ -726,6 +726,22 @@ function rebaseDatabase(file: string, source: string, target: string) {
         artifact(task);
         sql.prepare('UPDATE tasks SET json=? WHERE id=?').run(JSON.stringify(task), row.id);
       }
+      if (
+        sql
+          .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='release_schedules'")
+          .get()
+      ) {
+        for (const row of sql.prepare('SELECT id,json FROM release_schedules').all() as {
+          id: string;
+          json: string;
+        }[]) {
+          const plan = JSON.parse(row.json);
+          artifact(plan.task);
+          sql
+            .prepare('UPDATE release_schedules SET json=? WHERE id=?')
+            .run(JSON.stringify(plan), row.id);
+        }
+      }
     })();
     sql.pragma('wal_checkpoint(TRUNCATE)');
   } finally {

@@ -89,6 +89,8 @@ export type Startup = {
   dataLocation?: { previous?: string; pending?: string; previousKept?: boolean };
 };
 export type DesktopEvent =
+  | { kind: 'open-schedules' }
+  | { kind: 'schedules'; schedules: import('./schedules').ReleaseSchedule[] }
   | {
       kind: 'log';
       taskId: string;
@@ -123,6 +125,10 @@ export type DesktopEvent =
   | { kind: 'open-task'; taskId: string }
   | { kind: 'update'; update: import('./app-update').AppUpdate };
 export interface DesktopAPI {
+  listSchedules(): Promise<import('./schedules').ReleaseSchedule[]>;
+  createSchedule(token: string, credentials: Record<string, string>, approval: Approval, scheduledAt: number, replaces?: string): Promise<import('./schedules').ReleaseSchedule>;
+  cancelSchedule(id: string): Promise<void>;
+  reschedule(id: string, scheduledAt: number, approval: Approval): Promise<void>;
   copyText(value: string): Promise<void>;
   openUpdateCache(): Promise<void>;
   openUpdateLink(url: string): Promise<void>;

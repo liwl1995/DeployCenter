@@ -214,6 +214,14 @@ export type RunTarget = {
   cleanupWarning?: string;
 };
 export type Task = {
+  /** 定时计划的准备任务不会生成部署历史或更新线上版本。 */
+  preparation?: boolean;
+  scheduleId?: string;
+  scheduleCheck?: 'locked' | 'changed' | 'expired';
+  scheduleBaselines?: Record<string, string>;
+  scheduleAliases?: Record<string, string>;
+  scheduleAliasKeys?: Record<string, string>;
+
   id: string;
   operation: 'deploy' | 'rollback';
   service: Service;

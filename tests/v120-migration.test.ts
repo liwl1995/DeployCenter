@@ -58,6 +58,9 @@ describe('1.2.0 数据目录迁移（隔离真实文件与 SQLite）', () => {
     await fs.mkdir(path.join(f.source, 'backups'), { recursive: true });
     await fs.writeFile(path.join(f.source, 'backups', 'fixture'), 'backup');
     await fs.mkdir(path.join(f.source, '空目录', '子目录'), { recursive: true });
+    f.store.saveSchedule({ id: 'SP-migration', createdAt: Date.now(), scheduledAt: Date.now() + 3600000,
+      state: 'ready', reason: '', preparationId: task.id, task, configuration: '', pins: '',
+      approval: { productionWord: '', allowWeak: false, protectCurrent: true } });
     const expectedHistory = f.store.database().history;
     const result = await f.manager.migrate(
       f.target,
@@ -81,6 +84,7 @@ describe('1.2.0 数据目录迁移（隔离真实文件与 SQLite）', () => {
     expect(moved.task(task.id)!.artifact.path).toBe(
       path.join(f.target, 'artifacts', task.id, 'app.jar'),
     );
+    expect(moved.schedules()[0].task.artifact.path).toBe(path.join(f.target, 'artifacts', task.id, 'app.jar'));
     expect(await fs.readFile(path.join(f.target, 'tmp', '临时文件'), 'utf8')).toBe('temp');
     expect(await fs.readdir(path.join(f.target, '空目录', '子目录'))).toEqual([]);
     expect((await next.info()).previous).toBe(f.source);

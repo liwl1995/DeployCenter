@@ -5,6 +5,7 @@ import { errorText, type ControlMessage, type WorkerMessage } from './contracts'
 import type { Receipt } from './workbench';
 import type { Task } from '../src/model';
 import type { TrustRequest } from '../src/platform';
+let dispatch: ((error?: string) => void) | undefined;
 const port = process.parentPort;
 let deployment: Deployment | undefined;
 let secrets = new MemoryCredentials({});
@@ -19,6 +20,21 @@ function ask(request: TrustRequest, key: string) {
   return new Promise<boolean>((resolve) => {
     trust.set(request.id, resolve);
     send({ kind: 'trust', request, key });
+  });
+}
+function authorizeSchedule(task: Task) {
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      dispatch = undefined;
+      reject(new Error('定时发布启动保存超时'));
+    }, 60000);
+    dispatch = (error) => {
+      clearTimeout(timer);
+      dispatch = undefined;
+      if (error) reject(new Error(error));
+      else resolve();
+    };
+    send({ kind: 'schedule-dispatch', task });
   });
 }
 function persist(task: Task, targetId: string, receipt: Receipt) {
@@ -40,8 +56,10 @@ port?.on('message', (event) => {
   const message = event.data as ControlMessage;
   if (message.kind === 'begin') {
     secrets = new MemoryCredentials(message.value.credentials);
-    deployment = new Deployment(message.value, send, ask, undefined, persist);
+    deployment = new Deployment(message.value, send, ask, undefined, persist, authorizeSchedule);
     void deployment.run().catch((e) => send({ kind: 'fatal', error: errorText(e) }));
+  } else if (message.kind === 'schedule-dispatch-result') {
+    dispatch?.(message.error);
   } else if (message.kind === 'handoff-result') {
     handoffs.get(message.owner)?.(message.error);
   } else if (message.kind === 'cancel') {

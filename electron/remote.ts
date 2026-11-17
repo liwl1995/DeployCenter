@@ -101,6 +101,7 @@ export function header(task: Task, r: RunTarget, allowWeak: boolean, docker?: Do
       commit: task.deployedCommit,
       backupPath: r.backup.enabled ? r.plannedBackupPath : undefined,
     }),
+    SCHEDULE_BASELINE: task.scheduleBaselines?.[target.id] || '',
     NEW_SIZE: String(task.artifact.size),
     NEW_HASH: task.artifact.sha256 || '',
     BACKUP: r.plannedBackupPath,

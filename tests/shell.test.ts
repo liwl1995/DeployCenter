@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { scheduleCheckScript } from '../electron/schedule-remote';
 import { describe, expect, it } from 'vitest';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -495,4 +496,42 @@ describe.skipIf(!available)('隔离 Linux Bash 执行远程部署和收尾（Doc
       expect(await run('test ! -e ' + q(job) + ' && printf YES')).toBe('YES');
     });
   }, 90000);
+});
+
+
+describe.skipIf(!available)('定时发布的真实 Linux 只读准备与切换保护', () => {
+  it('读取完整线上指纹，不创建锁或工作台；锁占用可明确识别', async () => fixture(async (dir) => {
+    const { task, r } = makeRun(dir);
+    await run(setFile(dir + '/service.jar', 'online fixture'));
+    const result = await shell(scheduleCheckScript(task, r));
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toContain('DC_BASELINE=' + createHash('sha256').update('online fixture').digest('hex'));
+    await run('test ! -e ' + q(dir + '/.deploy-center') + ' && test ! -e ' + q(dir + '/.deploy-center.lock'));
+    await run('mkdir -- ' + q(dir + '/.deploy-center.lock'));
+    const locked = await shell(scheduleCheckScript(task, r));
+    expect(locked.code).not.toBe(0); expect(locked.stdout).toContain('SCHEDULE_LOCKED:');
+  }), 30000);
+  it('读取不存在状态时不创建已允许创建的目录', async () => fixture(async (dir) => {
+    const { task, r } = makeRun(dir + '/future', { first: true }); r.target.createDirectory = true;
+    const result = await shell(scheduleCheckScript(task, r));
+    expect(result.code, result.stderr).toBe(0); expect(result.stdout).toContain('DC_BASELINE=absent');
+    await run('test ! -e ' + q(r.target.directory));
+  }), 30000);
+  it.each([false, true])('停服前发现线上变化时不执行命令或替换（首次部署=%s）', async (first) => fixture(async (dir) => {
+    const { task, r, next, owner } = makeRun(dir, { first });
+    if (!first) await run(setFile(dir + '/service.jar', 'old fixture'));
+    task.scheduleBaselines = { [r.target.id]: first ? 'absent' : createHash('sha256').update('old fixture').digest('hex') };
+    const checked = await shell(preflightScript(task, r, false)); expect(checked.code, checked.stderr).toBe(0);
+    const job = r.remote!.jobDir;
+    const script = runnerScript(task, r, false);
+    // 在 runner 已核验旧版本后、进入停服前模拟外部换包。
+    const altered = script.replace('verify_schedule_baseline\ncheck_cancel; critical=1',
+      'printf external > "$JAR"\nverify_schedule_baseline\ncheck_cancel; critical=1');
+    const result = await shell(setFile(job + '/upload.jar', next) + setFile(job + '/runner.sh', altered) + launchRunner(r, owner) + '\nwait "$!"\n');
+    expect(result.code, result.stderr).toBe(0);
+    expect(await run('cat -- ' + q(job + '/state'))).toBe('FAILED');
+    expect(await run('cat -- ' + q(dir + '/service.jar'))).toBe('external');
+    await run('test ! -e ' + q(dir + '/commands.log'));
+    expect(await run('cat -- ' + q(job + '/output.log'))).toContain('SCHEDULE_CHANGED:');
+  }), 30000);
 });
