@@ -82,7 +82,6 @@ export function header(task: Task, r: RunTarget, allowWeak: boolean, docker?: Do
     STAGE: job.stagePath,
     LOCK: job.lockDir,
     OWNER: task.id + '-' + target.id,
-    RESTORE: job.jobDir + '/restore.jar',
     TASK_INFO: JSON.stringify({
       id: task.id,
       targetId: target.id,
@@ -106,7 +105,6 @@ export function header(task: Task, r: RunTarget, allowWeak: boolean, docker?: Do
     NEW_HASH: task.artifact.sha256 || '',
     BACKUP: r.plannedBackupPath,
     BACKUP_ENABLED: r.backup.enabled ? '1' : '0',
-    AUTO_ROLLBACK: r.backup.autoRollback ? '1' : '0',
     MODE: target.mode,
     CREATE_DIR: target.createDirectory ? '1' : '0',
     ALLOW_WEAK: allowWeak && target.hashPolicy === 'size-confirm' ? '1' : '0',
@@ -119,7 +117,6 @@ export function header(task: Task, r: RunTarget, allowWeak: boolean, docker?: Do
     CONTAINER_JAR: target.containerJar,
     CONTAINER_ID: docker?.id || '',
     INITIAL_RESTARTS: String(docker?.restarts || 0),
-    ORIGINAL_RUNNING: docker?.running ? 'true' : 'false',
     COMMAND_TIMEOUT: String(target.commandTimeout || 120),
     STABILITY_SECONDS: String(target.stabilitySeconds || 5),
     HEALTH_TYPE: health.type,

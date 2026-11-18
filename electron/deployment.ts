@@ -829,7 +829,7 @@ export class Deployment {
     } else if (state === 'ROLLEDBACK') r.recovery = '已恢复旧 JAR，并按目标配置重新启动和检查。';
     else if (state === 'FAILED')
       r.recovery = r.backupCreated
-        ? '存在备份，但未成功自动恢复。请查看日志或发起历史回滚。'
+        ? '已保留有效备份。如需恢复，请发起回滚并确认。'
         : '无本次有效备份，请查看日志和排查命令，必要时选择更早的历史备份。';
     if (['success', 'unverified'].includes(r.status)) r.phase = r.steps.length;
     this.log(

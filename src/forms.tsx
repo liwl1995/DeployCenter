@@ -394,12 +394,7 @@ export function BackupFields({
               />
             </Field>
           </div>
-          <Switch
-            label="失败自动回滚"
-            description="有有效备份时恢复旧版本；首次部署无旧文件时跳过备份"
-            checked={value.autoRollback}
-            onChange={(autoRollback) => onChange({ ...value, autoRollback })}
-          />
+          <p className="note">恢复备份前，需要在回滚确认页确认。</p>
         </>
       )}
     </>
@@ -702,6 +697,7 @@ export function TargetForm({ initial, db, onSave, onClose, initialTab }: SavePro
                       ? 'TCP 地址（host:port）'
                       : '检查命令（退出码 0 为通过）'
                 }
+                hint={v.health.type === 'http' ? '发送 GET 请求，仅 HTTP 2xx 通过。请选择支持 GET 的健康检查接口。' : undefined}
                 wide
               >
                 <input value={v.health.value} onChange={(e) => health('value', e.target.value)} />

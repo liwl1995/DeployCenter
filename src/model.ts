@@ -15,6 +15,7 @@ export type Backup = {
   enabled: boolean;
   directory: string;
   template: string;
+  /** 兼容旧版配置。部署失败后须由用户确认回滚。 */
   autoRollback: boolean;
   keepLast?: number;
 };

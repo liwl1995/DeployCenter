@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { localHealth } from '../electron/health';
@@ -46,6 +46,28 @@ function clock() {
   };
 }
 describe('1.1.0 启动就绪窗口', () => {
+  it.each([[204, true], [405, false]] as const)(
+    '本机 HTTP 健康检查以 GET 返回的 %i 判断，并记录状态码',
+    async (code, expected) => {
+      const fetch = vi.fn(async () => new Response(null, { status: code }));
+      vi.stubGlobal('fetch', fetch);
+      try {
+        const logs: string[] = [];
+        const passed = await localHealth(
+          health({ maxWait: undefined }),
+          clock(),
+          new AbortController().signal,
+          (line) => logs.push(line),
+        );
+        expect(passed).toBe(expected);
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(fetch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ method: 'GET' }));
+        expect(logs.join('')).toContain('HTTP GET 返回 ' + code);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    },
+  );
   it('先静默等待，慢启动超过旧重试次数仍可在窗口内成功', async () => {
     const c = clock(),
       times: number[] = [];
@@ -168,7 +190,7 @@ describe('1.1.0 启动就绪窗口', () => {
       );
       const script =
         `set -e\n${functions}\nMODE=jar; HEALTH_LOCATION=remote; HEALTH_TYPE=http; HEALTH_VALUE=fixture; HEALTH_TIMEOUT=10; HEALTH_RETRIES=1; HEALTH_INTERVAL=5; HEALTH_DELAY=30; HEALTH_WINDOW=300; HEALTH_BY_WINDOW=1\n` +
-        `date(){ cat "$FIXTURE_ROOT/clock"; }\nsleep(){ n=$(cat "$FIXTURE_ROOT/clock"); printf '%s' "$((n + $1))" > "$FIXTURE_ROOT/clock"; }\ncurl(){ n=$(cat "$FIXTURE_ROOT/clock"); if [ "$n" -ge 210 ]; then printf 200; else printf 503; fi; }\nprintf 0 > "$FIXTURE_ROOT/clock"\nhealth_check\n[ "$(cat "$FIXTURE_ROOT/clock")" = 210 ]\nHEALTH_DELAY=0; HEALTH_WINDOW=18; printf 0 > "$FIXTURE_ROOT/clock"\ncurl(){ printf 503; }\nif health_check; then exit 7; fi\n[ "$(cat "$FIXTURE_ROOT/clock")" = 18 ]\nprintf 'window-ok\\n'\n`;
+        `date(){ cat "$FIXTURE_ROOT/clock"; }\nsleep(){ n=$(cat "$FIXTURE_ROOT/clock"); printf '%s' "$((n + $1))" > "$FIXTURE_ROOT/clock"; }\ncurl(){ n=$(cat "$FIXTURE_ROOT/clock"); if [ "$n" -ge 210 ]; then printf 200; else printf 503; fi; }\nprintf 0 > "$FIXTURE_ROOT/clock"\nhealth_check\n[ "$(cat "$FIXTURE_ROOT/clock")" = 210 ]\nHEALTH_DELAY=0; HEALTH_WINDOW=18; printf 0 > "$FIXTURE_ROOT/clock"\ncurl(){ printf 405; }\nif health_check; then exit 7; fi\n[ "$(cat "$FIXTURE_ROOT/clock")" = 18 ]\nprintf 'window-ok\\n'\n`;
       const file = path.join(dir, 'health.sh');
       await fs.writeFile(file, script);
       const result = await runProcess(
@@ -181,6 +203,7 @@ describe('1.1.0 启动就绪窗口', () => {
       );
       expect(result.code, result.stderr).toBe(0);
       expect(result.stdout).toContain('window-ok');
+      expect(result.stdout).toContain('HTTP GET 返回 405');
       // 复用实际稳定性与健康函数，验证 Docker starting 不会提前使启动失败。
       const stability = runner.slice(runner.indexOf('stability() {'), runner.indexOf('# 应用健康'));
       const dockerScenario =

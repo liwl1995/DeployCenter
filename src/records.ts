@@ -53,7 +53,10 @@ export function recordTask(db: Database, task: Task, updateTargets = true): Data
       : db.taskHistory,
     targets: db.targets.map((t) => {
       const r = task.targets.find((r) => r.target.id === t.id);
-      return updateTargets && r && ['success', 'unverified', 'rolledback'].includes(r.status)
+      const replacedBeforeFailure =
+        r?.status === 'failed' &&
+        r.steps.some((step) => step.key === 'replace' && step.status === 'success');
+      return updateTargets && r && (replacedBeforeFailure || ['success', 'unverified', 'rolledback'].includes(r.status))
         ? {
             ...t,
             version:
@@ -70,9 +73,13 @@ export function recordTask(db: Database, task: Task, updateTargets = true): Data
                 : task.deployedCommit || knownCommit(task.deployedVersion, task.artifact.sha256),
             lastDeploy: new Date(task.started).toISOString(),
             healthState:
-              r.status === 'unverified' || r.target.health.type === 'none'
-                ? '未配置健康检查'
-                : '上次检查通过',
+              replacedBeforeFailure
+                ? r.steps.some((step) => step.key === 'health' && step.status === 'failed')
+                  ? '上次健康检查失败'
+                  : '部署失败，运行状态待核实'
+                : r.status === 'unverified' || r.target.health.type === 'none'
+                  ? '未配置健康检查'
+                  : '上次检查通过',
           }
         : t;
     }),

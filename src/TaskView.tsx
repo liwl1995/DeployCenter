@@ -96,7 +96,11 @@ function resultFor(task: Task, run?: RunTarget): { tone: Status; text: string } 
   const reason = failed
     ? (names[failed.key] || failed.label) + '失败'
     : failureAdvice(run?.error || '').reason;
-  return { tone: 'failed', text: reason + '。请查看失败位置。' };
+  const replaced = run.steps.some((step) => step.key === 'replace' && step.status === 'success');
+  return {
+    tone: 'failed',
+    text: reason + (replaced ? '。部署文件已替换，请核实服务状态。' : '。请查看失败位置。'),
+  };
 }
 
 export function TaskView({
@@ -372,6 +376,11 @@ export function TaskView({
       {!active && result.tone !== 'success' && !task.preparation && (
         <div className={'task-result-banner task-tone-' + result.tone} role="status">
           <strong>{result.text}</strong>
+          {!active && result.tone === 'failed' && task.operation === 'deploy' && onRollback && (
+            <Button variant="neutral" size="compact" onClick={onRollback}>
+              回滚到本次部署之前
+            </Button>
+          )}
           {bannerAction && (
             <Button variant="link" size="compact" onClick={bannerAction.action}>
               {bannerAction.label}

@@ -371,7 +371,17 @@ test('日志优先任务页的八种状态与连续输出在三个尺寸下可�
           .getByRole('group', { name: '部署阶段' })
           .getByRole('button', { name: /上传与校验/ });
         await upload.click();
-        await expect(taskPage.getByRole('progressbar', { name: '文件上传进度' })).toBeVisible();
+        const progress = taskPage.getByRole('progressbar', { name: '文件上传进度' });
+        await expect(progress).toBeVisible();
+        const spacing = await progress.evaluate((bar) => {
+          const fields = Array.from(bar.children, (field) => field.getBoundingClientRect());
+          return fields.slice(1).map((field, index) =>
+            Math.abs(field.top - fields[index].top) < 1 ? field.left - fields[index].right : null,
+          );
+        });
+        expect(spacing.length).toBeGreaterThanOrEqual(3);
+        expect(spacing.filter((gap) => gap !== null).length).toBeGreaterThan(0);
+        expect(spacing.every((gap) => gap === null || gap >= 4)).toBe(true);
         await expect(page.locator('.sidebar-task .spin, .task-step-row .spin')).toHaveCount(0);
         await expect(taskPage.locator('.task-stage .spin')).toHaveCount(1);
         await expect

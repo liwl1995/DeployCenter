@@ -252,7 +252,8 @@ hr {
 .desktop-shell :is(.desktop-page-header, .task-page-header) {
   padding-right: var(--window-inset);
 }
-.desktop-shell :is(.desktop-page-header, .task-page-header, .sidebar-brand) {
+/* Electron 的窗口拖拽区域不受弹窗层级遮挡，弹窗打开时暂停拖拽。 */
+:root:not(:has(.overlay)) .desktop-shell :is(.desktop-page-header, .task-page-header, .sidebar-brand) {
   -webkit-app-region: drag;
 }
 .desktop-shell
@@ -1688,9 +1689,15 @@ th {
   font-size: var(--fs-caption);
 }
 .terminal-upload {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
   color: var(--direct-text);
   margin: 6px 8px;
-  white-space: pre-wrap;
+}
+.terminal-upload > * {
+  white-space: nowrap;
 }
 .log-load-actions {
   padding: 4px 10px;

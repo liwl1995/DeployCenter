@@ -132,6 +132,7 @@ type Case = {
   docker?: boolean;
   badHash?: boolean;
   cancel?: boolean;
+  health405?: boolean;
   mount?: 'file' | 'directory';
   extra?: boolean;
   foreign?: boolean;
@@ -161,8 +162,10 @@ function makeRun(directory: string, options: Case = {}) {
     mode: options.docker ? 'docker' : 'jar',
     start: 'if grep -q fail service.jar; then exit 1; fi; printf started >> commands.log',
     stop: 'printf stopped >> commands.log',
-    health: { type: 'none', value: '', timeout: 1, retries: 1, interval: 1 },
-    backup: { ...db.targets[3].backup, enabled: options.backup !== false },
+    health: options.health405
+      ? { type: 'http', value: 'http://127.0.0.1:1/health', timeout: 1, retries: 1, interval: 1 }
+      : { type: 'none', value: '', timeout: 1, retries: 1, interval: 1 },
+    backup: { ...db.targets[3].backup, enabled: options.backup !== false, autoRollback: true },
     stabilitySeconds: 1,
   };
   if (options.docker) {
@@ -234,6 +237,9 @@ describe.skipIf(!available)('隔离 Linux Bash 执行远程部署和收尾（Doc
           'chmod +x -- ' +
           q(dir + '/docker') +
           '\n' +
+          (options.health405
+            ? setFile(dir + '/curl', '#!/bin/bash\nprintf 405\n') + 'chmod +x -- ' + q(dir + '/curl') + '\n'
+            : '') +
           (options.badHash ? setFile(dir + '/bad-hash', '1') : '') +
           (!options.first ? setFile(dir + '/service.jar', 'old fixture') : '') +
           preflightScript(task, r, false, docker),
@@ -373,11 +379,21 @@ describe.skipIf(!available)('隔离 Linux Bash 执行远程部署和收尾（Doc
     expect(r.commands).toBe('started');
     expect(r.journal).not.toContain('BACKUP');
   }, 90000);
-  it('启动失败后恢复真实备份并重新启动旧服务', async () => {
+  it('启动失败后保留真实备份，不自动恢复或启动旧服务', async () => {
     const r = await scenario({ fail: true });
-    expect(r.state).toBe('ROLLEDBACK');
-    expect(r.contents).toBe('old fixture');
-    expect(r.journal).toContain('rollback\tOK');
+    expect(r.state).toBe('FAILED');
+    expect(r.contents).toBe('fail fixture');
+    expect(r.journal).toContain('BACKUP');
+    expect(r.journal).not.toContain('rollback\tSTART');
+  }, 90000);
+  it('健康检查收到 405 后保留新文件和旧备份，等待用户确认回滚', async () => {
+    const r = await scenario({ health405: true });
+    expect(r.state).toBe('FAILED');
+    expect(r.contents).toBe('new fixture');
+    expect(r.commands).toBe('stoppedstarted');
+    expect(r.output).toContain('HTTP GET 返回 405');
+    expect(r.journal).toContain('BACKUP');
+    expect(r.journal).not.toContain('rollback\tSTART');
   }, 90000);
   it('无备份失败明确 FAILED，不假装回滚成功', async () => {
     const r = await scenario({ fail: true, backup: false });
@@ -402,13 +418,13 @@ describe.skipIf(!available)('隔离 Linux Bash 执行远程部署和收尾（Doc
   );
   it('Docker 失败收尾的最后一行日志已进入校验；未知链接保持原样', async () => {
     const r = await scenario({ docker: true, badHash: true, extra: true });
-    expect(r.state).toBe('ROLLBACK_FAILED');
-    expect(r.contents).toBe('old fixture');
+    expect(r.state).toBe('FAILED');
+    expect(r.contents).toBe('new fixture');
     expect(r.output).toContain('最后一行容器日志');
   }, 90000);
   it('另一台电脑补存终态和日志；清理掉线后重启只补清理，不重复写历史', async () => {
     const result = await scenario({ docker: true, badHash: true, foreign: true });
-    expect(result.state).toBe('ROLLBACK_FAILED');
+    expect(result.state).toBe('FAILED');
   }, 90000);
   it('旧版任务和备份审计只在确认归档后移开，保留原内容', async () => {
     await fixture(async (dir) => {

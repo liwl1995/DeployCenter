@@ -332,6 +332,28 @@ test('服务工作台在桌面窗口中可切换、筛选、打开任务和设�
     const states = window.locator('.entity-record .entity-state');
     expect((await states.first().boundingBox())!.x).toBe((await states.last().boundingBox())!.x);
     await window.screenshot({ path: path.join(captures, '服务管理-浅色.png') });
+
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(900, 600));
+    await expectViewport(window, 900, 600);
+    await nav.getByRole('button', { name: '服务器', exact: true }).click();
+    const header = window.locator('.desktop-page-header');
+    const dragRegion = () => header.evaluate((item) => getComputedStyle(item).getPropertyValue('-webkit-app-region'));
+    expect(await dragRegion()).toBe('drag');
+    const add = window.getByRole('button', { name: '添加服务器' });
+    for (const fraction of [0.15, 0.5, 0.85]) {
+      await add.click();
+      const dialog = window.getByRole('dialog', { name: '服务器配置' });
+      await expect(dialog).toBeVisible();
+      expect(await dragRegion()).not.toBe('drag');
+      const close = dialog.getByRole('button', { name: '关闭弹窗' });
+      const size = (await close.boundingBox())!;
+      const titleBarHeight = (await header.boundingBox())!.height;
+      expect(size.y).toBeLessThan(titleBarHeight);
+      await close.click({ position: { x: size.width / 2, y: size.height * fraction } });
+      await expect(dialog).toHaveCount(0);
+      await expect(add).toBeFocused();
+      expect(await dragRegion()).toBe('drag');
+    }
   } finally {
     await app.close();
     if (!path.resolve(dir).startsWith(root + path.sep)) throw new Error('测试目录越界');

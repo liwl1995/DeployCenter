@@ -17,7 +17,7 @@ const backup = (): Backup => ({
   enabled: true,
   directory: 'backups',
   template: '{name}-{yyyyMMdd-HHmmss}-{task}.jar.bak',
-  autoRollback: true,
+  autoRollback: false,
 });
 const http = (): Health => ({
   type: 'http',
@@ -193,7 +193,7 @@ export const seed = (): Database => {
       elapsed: 58,
       backupCreated: false,
       steps: [],
-      logs: ['[示例] 新版本启动失败', '[示例] 本次未备份，无法自动回滚'],
+      logs: ['[示例] 新版本启动失败', '[示例] 本次未备份，无法使用本次备份回滚'],
       error: '启动命令返回非零退出码',
     },
   ];

@@ -51,10 +51,12 @@ describe('目标与部署引擎', () => {
     expect(done.buildLogs.filter((l) => l.includes('Maven 构建成功'))).toHaveLength(1);
     expect(toHistory(done)).toHaveLength(3);
   });
-  it('失败默认回滚并停止后续目标', () => {
+  it('失败保留备份并停止后续目标，即使旧配置启用了自动回滚', () => {
     const { task } = prepare();
+    task.targets[0].backup.autoRollback = true;
     const done = run(requestFailure(task));
-    expect(done.targets.map((t) => t.status)).toEqual(['rolledback', 'skipped', 'skipped']);
+    expect(done.targets.map((t) => t.status)).toEqual(['failed', 'skipped', 'skipped']);
+    expect(done.targets[0].steps.some((step) => step.key === 'rollback')).toBe(false);
     expect(done.status).toBe('failed');
     expect(toHistory(done)[0].backupPath).toContain('backups');
   });
@@ -62,7 +64,7 @@ describe('目标与部署引擎', () => {
     const { task } = prepare();
     task.failurePolicy = 'continue';
     const done = run(requestFailure(task));
-    expect(done.targets.map((t) => t.status)).toEqual(['rolledback', 'unverified', 'success']);
+    expect(done.targets.map((t) => t.status)).toEqual(['failed', 'unverified', 'success']);
     expect(done.status).toBe('partial');
   });
   it('禁用备份时失败不可自动回滚，也不能生成备份记录', () => {

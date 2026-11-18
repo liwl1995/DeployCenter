@@ -203,7 +203,7 @@ describe('v0.3 B8 / C9 / D10 / E12–14', () => {
       expect(keys.indexOf('start')).toBeLessThan(keys.indexOf('containerHash'));
     },
   );
-  it('D10 容器内哈希不一致触发失败，并按有效备份回滚', () => {
+  it('D10 容器内哈希不一致触发失败，保留备份等待确认', () => {
     const db = setup();
     const done = finish(
       requestFailure(
@@ -212,7 +212,12 @@ describe('v0.3 B8 / C9 / D10 / E12–14', () => {
       ),
     );
     expect(done.targets[0].error).toContain('容器内 JAR 哈希不一致');
-    expect(done.targets[0].status).toBe('rolledback');
+    expect(done.targets[0].status).toBe('failed');
+    expect(done.targets[0].backupCreated).toBe(true);
+    const written = recordTask(db, done);
+    expect(written.targets.find((target) => target.id === done.targets[0].target.id)?.healthState)
+      .toBe('部署失败，运行状态待核实');
+    expect(canRollback(written, toHistory(done)[0])).toBe(true);
     expect(done.targets[0].steps.find((s) => s.key === 'containerHash')!.status).toBe('failed');
   });
   it('E12 完整构建上下文包含 Maven / Wrapper、Profile、工作目录和 JDK', () => {

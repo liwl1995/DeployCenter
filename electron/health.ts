@@ -7,13 +7,16 @@ export type HealthProbe = (
   health: Health,
   timeoutMs: number,
   signal: AbortSignal,
+  log: (s: string) => void,
 ) => Promise<boolean>;
-const probeHealth: HealthProbe = async (health, timeoutMs, signal) => {
+const probeHealth: HealthProbe = async (health, timeoutMs, signal, log) => {
   if (health.type === 'http') {
     const response = await fetch(health.value, {
+      method: 'GET',
       signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
       redirect: 'follow',
     });
+    log('HTTP GET 返回 ' + response.status + '（仅 2xx 通过）\n');
     const ok = response.status >= 200 && response.status < 300;
     await response.body?.cancel();
     return ok;
@@ -70,6 +73,7 @@ export async function localHealth(
         health,
         Math.max(1, Math.floor(Math.min(health.timeout * 1000, remaining))),
         signal,
+        log,
       );
     } catch {
       ok = false;

@@ -17,7 +17,7 @@ dc_file "$JOB/preflight"
 dc_file "$JOB/pid"
 printf '%s %s %s\n' "$$" "$(dc_proc "$$")" "$(cat /proc/sys/kernel/random/boot_id)" >> "$JOB/pid"
 source "$JOB/preflight"
-critical=0; replaced=0; restart_baseline="$INITIAL_RESTARTS"; stopped=0; backup_created=0; current=verify
+critical=0; restart_baseline="$INITIAL_RESTARTS"; current=verify
 now_ms() { local value; value="$(date +%s%3N 2>/dev/null || true)"; if [[ "$value" =~ ^[0-9]{13}$ ]]; then printf '%s' "$value"; else printf '%s000' "$(date +%s)"; fi; }
 event() { printf '%s\t%s\t%s\t%s\n' "$(now_ms)" "$1" "$2" "$3" >> "$JOB/journal"; }
 state() { (set -C; printf '%s' "$1" > "$JOB/state.next") && mv -f -- "$JOB/state.next" "$JOB/state"; }
@@ -38,7 +38,7 @@ verify_schedule_baseline() {
 }
 stop_service() {
   verify_schedule_baseline
-  stopped=1; if [ "$MODE" = docker ]; then timeout "$COMMAND_TIMEOUT" docker stop --time 30 "$CONTAINER"; elif [ "$old_exists" = 1 ] && [ -n "$STOP_CMD" ]; then if run_custom "$STOP_CMD"; then :; elif [ "$STOP_WARNING" = 1 ]; then printf '停止命令非零，按配置记录警告并继续\n'; else return 1; fi; fi; stopped=1; }
+  if [ "$MODE" = docker ]; then timeout "$COMMAND_TIMEOUT" docker stop --time 30 "$CONTAINER"; elif [ "$old_exists" = 1 ] && [ -n "$STOP_CMD" ]; then if run_custom "$STOP_CMD"; then :; elif [ "$STOP_WARNING" = 1 ]; then printf '停止命令非零，按配置记录警告并继续\n'; else return 1; fi; fi; }
 start_service() { if [ "$MODE" = docker ]; then timeout "$COMMAND_TIMEOUT" docker start "$CONTAINER"; restart_baseline="$(timeout "$COMMAND_TIMEOUT" docker inspect -f '{{.RestartCount}}' "$CONTAINER")"; else run_custom "${RESTART_CMD:-$START_CMD}"; fi; }
 container_hash() { local expected="$1" actual; actual="$(timeout "$COMMAND_TIMEOUT" docker exec "$CONTAINER" sh -c 'command -v sha256sum >/dev/null || { printf "容器内缺少 sha256sum，不能完成最终校验\n" >&2; exit 1; }; sha256sum -- "$1"' _ "$CONTAINER_JAR" | awk '{print $1}')" || return 1; [ "$actual" = "$expected" ] || { printf '容器内 JAR 哈希不一致：expected=%s actual=%s\n' "$expected" "$actual" >&2; return 1; }; }
 stability() {
@@ -84,7 +84,10 @@ health_check() {
     [ "$remaining" -gt 0 ] || break
     [ "$remaining" -ge "$limit" ] || limit="$remaining"
     if [ "$HEALTH_TYPE" = http ]; then
-      if code="$(curl --silent --show-error --max-time "$limit" -o /dev/null -w '%{http_code}' "$HEALTH_VALUE")" && [[ "$code" =~ ^2[0-9][0-9]$ ]] && container_ready; then return 0; fi
+      if code="$(curl --request GET --silent --show-error --max-time "$limit" -o /dev/null -w '%{http_code}' "$HEALTH_VALUE")"; then
+        printf 'HTTP GET 返回 %s（仅 2xx 通过）\n' "$code"
+        if [[ "$code" =~ ^2[0-9][0-9]$ ]] && container_ready; then return 0; fi
+      fi
     elif [ "$HEALTH_TYPE" = tcp ]; then
       if timeout "$limit" bash -c 'exec 3<>"/dev/tcp/$1/$2"' _ "$TCP_HOST" "$TCP_PORT" && container_ready; then return 0; fi
     elif [ "$HEALTH_TYPE" = command ]; then
@@ -102,35 +105,14 @@ backup_old() {
   [ ! -e "$BACKUP" ] && [ ! -L "$BACKUP" ] || return 1
   cp -p -- "$JAR" "$BACKUP" || return 1
   verify_file "$BACKUP" "$old_size" "$old_hash" || return 1
-  backup_created=1; event BACKUP "$old_size" "${old_hash:-none}"
-}
-restore_old() {
-  if [ "$MODE" = docker ]; then timeout "$COMMAND_TIMEOUT" docker stop --time 30 "$CONTAINER" || return 1; elif [ -n "$STOP_CMD" ]; then run_custom "$STOP_CMD" || true; fi
-  verify_file "$BACKUP" "$old_size" "$old_hash" || return 1
-  [ ! -e "$RESTORE" ] && [ ! -L "$RESTORE" ] || return 1
-  cp -p -- "$BACKUP" "$RESTORE" || return 1
-  mv -f -- "$RESTORE" "$JAR" || return 1
-  printf '旧 JAR 已恢复\n'
-  if [ "$MODE" = docker ] && [ "$ORIGINAL_RUNNING" = false ]; then printf '已恢复旧 JAR，原容器为停止状态，保持停止\n'; return 0; fi
-  start_service || return 1
-  printf '旧服务启动命令成功\n'
-  if [ "$MODE" = docker ]; then container_hash "$old_hash" || return 1; stability || return 1; fi
-  if [ "$HEALTH_TYPE" != none ]; then health_check || return 1; fi
+  event BACKUP "$old_size" "${old_hash:-none}"
 }
 failure() {
   local code="$1"; trap - ERR; set +e
   event STEP "$current" FAIL; printf '步骤 %s 执行失败（退出码 %s）\n' "$current" "$code" >&2
-  if [ "$replaced" = 1 ] && [ "$backup_created" = 1 ] && [ "$AUTO_ROLLBACK" = 1 ]; then
-    event STEP rollback START
-    if restore_old; then event STEP rollback OK; result=ROLLEDBACK; else event STEP rollback FAIL; result=ROLLBACK_FAILED; fi
-  else
-    if [ "$replaced" = 0 ] && [ "$stopped" = 1 ] && [ "$old_exists" = 1 ]; then
-      printf '旧文件未被替换，尝试重新启动原服务\n'; if ! start_service; then printf '原服务恢复启动失败\n' >&2; fi
-    fi
-    result=FAILED
-  fi
+  printf '未自动回滚。请核实运行状态；如需恢复备份，请在部署中心确认回滚。\n'
   if [ "$MODE" = docker ]; then printf '\n=== 失败时容器最近 200 行 ===\n'; timeout "$COMMAND_TIMEOUT" docker logs --tail 200 "$CONTAINER" 2>&1 || true; fi
-  finish "$result"
+  finish FAILED
   exit 0
 }
 trap 'failure "$?"' ERR
@@ -157,7 +139,7 @@ step permissions prepare_metadata
 verify_schedule_baseline
 check_cancel; critical=1
 if [ "$MODE" = jar ] && [ "$old_exists" = 0 ]; then skip stop; else step stop stop_service; fi
-current=replace; event STEP replace START; mv -f -- "$STAGE" "$JAR"; replaced=1; event STEP replace OK
+current=replace; event STEP replace START; mv -f -- "$STAGE" "$JAR"; event STEP replace OK
 if [ "$MODE" = jar ] && [ "$CHMOD_EXECUTABLE" = 1 ]; then step chmod chmod +x "$JAR"; fi
 step start start_service
 if [ "$MODE" = docker ]; then step containerHash container_hash "$NEW_HASH"; step stability stability; fi

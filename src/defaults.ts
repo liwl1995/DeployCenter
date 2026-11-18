@@ -52,7 +52,7 @@ export function newTargetTemplate(serviceId: string, serverId: string): Target {
       enabled: true,
       directory: 'backups',
       template: '{jarName}.{yyyyMMdd-HHmmss}.{task}.bak',
-      autoRollback: true,
+      autoRollback: false,
     },
     createDirectory: false,
     hashPolicy: 'required',

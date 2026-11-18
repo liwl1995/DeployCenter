@@ -237,18 +237,7 @@ export function tick(input: Task, clock: Clock = Date.now): Task {
   r.elapsed = (now - r.startedAt!) / 1000;
   const step = r.steps[r.phase];
   step.elapsed = (now - (step.startedAt ?? now)) / 1000;
-  if (r.status === 'rollingback') {
-    endStep(step, now);
-    r.phase++;
-    r.status = 'rolledback';
-    r.recovery = '已恢复备份，按原配置重新启动并执行检查';
-    r.logs.push(
-      '[回滚] 恢复已校验备份，旧版本启动' +
-        (r.target.health.type === 'none' ? '成功；未配置应用健康检查。' : '并通过配置的健康检查。'),
-    );
-    return advance(t, true, now);
-  }
-  // 服务切换期间不强制中断，完成检查或恢复后再停止后续目标。
+  // 服务切换期间不强制中断，完成检查后再停止后续目标。
   if (t.status === 'cancelling' && !step.critical) {
     endStep(step, now, 'skipped');
     r.status = 'cancelled';
@@ -275,16 +264,10 @@ export function tick(input: Task, clock: Clock = Date.now): Task {
           : '模拟故障：新版本健康检查超时';
     r.logs.push('[错误] ' + r.error);
     r.steps.slice(r.phase + 1).forEach((s) => (s.status = 'skipped'));
-    if (r.backupCreated && r.backupPath && r.backup.autoRollback) {
-      r.status = 'rollingback';
-      r.logs.push('[回滚] 开始恢复本次已验证备份。');
-      r.steps.push({ key: 'rollback', label: '恢复备份并重新启动、检查', critical: true });
-      r.phase = r.steps.length - 1;
-      startStep(r.steps[r.phase], now);
-      return t;
-    }
     r.status = 'failed';
-    r.recovery = '未自动回滚。请查看日志、复制排查命令，或选择其他有效历史备份恢复。';
+    r.recovery = r.backupCreated
+      ? '已保留有效备份。如需恢复，请发起回滚并确认。'
+      : '无本次有效备份，请查看失败日志或选择更早的历史备份。';
     return advance(t, true, now);
   }
   if (step.key === 'upload') {

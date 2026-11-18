@@ -15,7 +15,7 @@ export function UploadProgress({ upload }: { upload: NonNullable<RunTarget['uplo
       <span>
         上传 [{'='.repeat(done)}
         {'-'.repeat(20 - done)}]
-      </span>{' '}
+      </span>
       <b>{percent}%</b>
       <span>
         {(upload.bytes / 1048576).toFixed(1)} / {(upload.total / 1048576).toFixed(1)} MB

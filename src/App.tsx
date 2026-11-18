@@ -1592,7 +1592,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                               <HashValue label="Git 提交" value={t.currentCommit || knownCommit(t.version, t.currentHash)} onCopy={(value) => void copy(value)} />
                             </div>
                             <div className="target-health">
-                              <CompactStatus label={t.healthState} tone={/通过/.test(t.healthState) ? 'good' : t.health.type === 'none' ? 'neutral' : /失败/.test(t.healthState) ? 'bad' : 'warn'} />
+                              <CompactStatus label={t.healthState} tone={/失败/.test(t.healthState) ? 'bad' : /通过/.test(t.healthState) ? 'good' : t.health.type === 'none' ? 'neutral' : 'warn'} />
                               <time>{cardTime(t.lastDeploy)}</time>
                             </div>
                             <div className="target-backup" title={overrides[t.id] ? '本次覆盖' : '目标默认'}>
@@ -1861,7 +1861,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               onDensity={setDensity}
               migrationBlock={isActive(task) ? '任务执行或取消中，不能迁移数据目录。' : unfinished.length ? '有未处理的中断任务，请先核实结果再迁移。' : undefined}
               busy={isActive(task)}
-              version={boot?.version || '2.0.0'}
+              version={boot?.version || '2.0.1'}
               showDemo={fixture}
               onImport={() => {
                 if (desktop) void importNative();
@@ -2172,7 +2172,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           <p className="warning">
             {task.buildPhase >= 3 &&
             task.targets[task.active]?.steps[task.targets[task.active].phase]?.critical
-              ? '已经进入服务切换阶段。请求取消后会完成当前目标的检查或回滚，再停止后续目标，不会强制中断替换。'
+              ? '已经进入服务切换阶段。请求取消后会完成当前目标的检查，再停止后续目标，不会强制中断替换。'
               : '将在下一个安全边界停止，清理本任务临时上传文件。当前运行版本保持不变。'}
           </p>
           <footer className="modal-actions">
@@ -2655,13 +2655,11 @@ function Confirm({
               (r.backup.enabled ? (
                 <p className="muted">
                   {r.target.hasOldJar
-                    ? r.backup.autoRollback
-                      ? '备份并自动回滚'
-                      : '备份，失败后手动恢复'
+                    ? '保留备份，回滚前需要确认'
                     : '首次部署无旧 JAR，跳过备份'}
                 </p>
               ) : (
-                <p className="warning">不备份：无法依赖本次备份自动恢复。</p>
+                <p className="warning">不备份：无法使用本次备份回滚。</p>
               ))}
             {r.target.health.type === 'none' && (
               <p className="muted">未配置健康检查，结果将标记健康未验证</p>
