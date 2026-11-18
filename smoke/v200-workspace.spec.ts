@@ -154,6 +154,13 @@ test('服务工作台在桌面窗口中可切换、筛选、打开任务和设�
 
     if (process.env.DEPLOY_CENTER_TEST_SCALE)
       await expect.poll(() => window.evaluate(() => devicePixelRatio)).toBe(scale);
+    const failurePolicy = actions.getByRole('combobox', { name: '某个目标失败后' });
+    const defaultPolicyBox = await failurePolicy.boundingBox();
+    await failurePolicy.selectOption('continue');
+    await expect(actions.getByRole('button', { name: '恢复默认' })).toBeVisible();
+    expect(await failurePolicy.boundingBox()).toEqual(defaultPolicyBox);
+    await actions.getByRole('button', { name: '恢复默认' }).click();
+    await expect(failurePolicy).toHaveValue('stop');
     const sizes = [[900, 600], [1000, 620], [1280, 800], ...(scale === 1 ? [[1600, 900]] : [])];
     for (const theme of ['dark', 'light']) {
       await window.getByRole('button', { name: '设置', exact: true }).click();
@@ -170,6 +177,13 @@ test('服务工作台在桌面窗口中可切换、筛选、打开任务和设�
         await expectViewport(window, width, height);
         await expect(actions).toBeInViewport({ ratio: 1 });
         await expect(window.locator('.deployment-target').last()).toBeInViewport({ ratio: 1 });
+        expect(await window.locator('.sidebar-brand-mark').evaluate((element) =>
+          getComputedStyle(element).backgroundColor,
+        )).toBe(theme === 'dark' ? 'rgb(251, 146, 60)' : 'rgb(194, 65, 12)');
+        for (const selector of ['.target-artifact', '.target-health', '.target-backup']) {
+          const column = window.locator('.deployment-target-main ' + selector);
+          expect((await column.first().boundingBox())!.x).toBe((await column.last().boundingBox())!.x);
+        }
         await expect(window.locator('.service-sidebar')).toHaveAttribute(
           'data-collapsed',
           String(width < 960),
@@ -230,6 +244,27 @@ test('服务工作台在桌面窗口中可切换、筛选、打开任务和设�
     await window.keyboard.press('ArrowRight');
     await expect(releaseTabs.getByRole('tab', { name: '发布记录' })).toBeFocused();
     await expect(window.getByText('桌面验收任务', { exact: true })).toBeAttached();
+    for (const [width, height] of sizes) {
+      await app.evaluate(
+        ({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setContentSize(w, h),
+        [width, height],
+      );
+      await expectViewport(window, width, height);
+      const assertMenuContained = async () => {
+        const table = window.getByRole('table', { name: '部署历史列表' });
+        const menu = table.getByRole('button', { name: /更多任务/ }).first();
+        const [tableBox, menuBox] = await Promise.all([table.boundingBox(), menu.boundingBox()]);
+        expect(menuBox!.x + menuBox!.width).toBeLessThanOrEqual(tableBox!.x + tableBox!.width);
+        await menu.click();
+        await expect(window.getByRole('menu', { name: /更多任务/ })).toBeInViewport({ ratio: 1 });
+        await window.keyboard.press('Escape');
+      };
+      await assertMenuContained();
+      await nav.getByRole('button', { name: '部署历史', exact: true }).click();
+      await assertMenuContained();
+      await nav.getByRole('button', { name: service.name, exact: true }).click();
+      await releaseTabs.getByRole('tab', { name: '发布记录' }).click();
+    }
     await window.getByRole('button', { name: '筛选部署历史' }).click();
     await expect(window.getByRole('dialog', { name: '筛选部署历史' })).toBeInViewport({ ratio: 1 });
     await window.keyboard.press('Escape');
@@ -273,6 +308,20 @@ test('服务工作台在桌面窗口中可切换、筛选、打开任务和设�
     await window.getByRole('button', { name: '设置', exact: true }).click();
     await window.getByRole('tab', { name: '配置与帮助' }).click();
     await expect(window.getByRole('heading', { name: '软件更新' })).toBeVisible();
+    await app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0].webContents.send('deploy:event', {
+        kind: 'update',
+        update: { currentVersion: '2.0.0', stage: 'current', received: 0, speed: 0 },
+      });
+    });
+    const updateStatus = window.locator('.update-status');
+    await expect(updateStatus).toHaveText('当前已是最新版本。');
+    const [updateIcon, updateText] = await Promise.all([
+      updateStatus.locator('svg').boundingBox(),
+      updateStatus.locator('span').boundingBox(),
+    ]);
+    expect(updateIcon!.x + updateIcon!.width).toBeLessThan(updateText!.x);
+    expect(Math.abs(updateIcon!.y - updateText!.y)).toBeLessThanOrEqual(4);
     await window.screenshot({ path: path.join(captures, '配置与帮助.png') });
     await window.getByRole('tab', { name: '外观与提醒' }).click();
     await window.getByLabel('界面主题').selectOption('light');
@@ -280,6 +329,8 @@ test('服务工作台在桌面窗口中可切换、筛选、打开任务和设�
     await window.getByRole('button', { name: '返回应用' }).click();
     await window.getByRole('button', { name: '服务管理', exact: true }).click();
     await expect(window.locator('.entity-record')).toHaveCount(2);
+    const states = window.locator('.entity-record .entity-state');
+    expect((await states.first().boundingBox())!.x).toBe((await states.last().boundingBox())!.x);
     await window.screenshot({ path: path.join(captures, '服务管理-浅色.png') });
   } finally {
     await app.close();

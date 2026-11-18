@@ -12,23 +12,25 @@ Var DC_DataPending
 Var DC_DataPrevious
 !endif
 
-; 品牌图形沿用应用的墨绿色与回旋标识；向导只使用简体中文。
-!define MUI_WELCOMEPAGE_TITLE "欢迎安装 YOTOO 部署中心"
-!define MUI_WELCOMEPAGE_TEXT "在本机管理 Java 服务的构建、部署与回滚。$\r$\n$\r$\n向导将帮助您选择安装目录和快捷方式。配置、部署历史与日志独立保存在当前用户的数据目录，升级不会清空。$\r$\n$\r$\n安装前请正常退出 YOTOO 部署中心；有部署任务时请等待结束或安全取消。"
-!define MUI_DIRECTORYPAGE_TEXT_TOP "选择 YOTOO 部署中心 的安装文件夹。您可以直接输入路径，或点击浏览选择其他磁盘和目录。"
-!define MUI_DIRECTORYPAGE_TEXT_DESTINATION "安装目录"
-!define MUI_FINISHPAGE_TITLE "YOTOO 部署中心 已安装"
-!define MUI_FINISHPAGE_TEXT "应用已安装完成，可从开始菜单或 Windows 搜索启动。$\r$\n$\r$\n首次启动请添加服务和服务器配置，部署前建议先执行试运行。"
+; 原生向导跟随 2.0 的浅色表面和橙色品牌。图形与文字分别绘制，避免缩放时拉伸文字。
+!define MUI_BGCOLOR "FFFDFB"
+!define DC_BRAND_INK "211F1E"
+!define DC_BRAND_MUTED "605A56"
+!define DC_WELCOME_TITLE "安装 YOTOO 部署中心"
+!define MUI_WELCOMEPAGE_TITLE "${DC_WELCOME_TITLE}"
+!define MUI_WELCOMEPAGE_TEXT "在本机管理 Java 服务的构建、部署与回滚。$\r$\n$\r$\n继续后可选择安装位置与快捷方式。覆盖安装会保留配置、部署历史与日志。$\r$\n$\r$\n安装前请等待正在执行的任务结束，然后正常退出应用。"
+!define MUI_FINISHPAGE_TITLE "安装完成"
+!define MUI_FINISHPAGE_TEXT "已安装 YOTOO 部署中心 v${VERSION}。$\r$\n$\r$\n可立即打开应用，也可稍后从开始菜单或 Windows 搜索启动。原有用户数据可继续使用。"
 !define MUI_FINISHPAGE_RUN_TEXT "立即运行 YOTOO 部署中心"
 !define MUI_UNFINISHPAGE_TITLE "YOTOO 部署中心 已卸载"
 !define MUI_UNFINISHPAGE_TEXT "程序与快捷方式已移除。$\r$\n$\r$\n默认保留用户配置、部署历史和日志，重新安装可继续使用。只有主动选择彻底清理时才删除用户数据。"
 !define removeDefaultUninstallWelcomePage
-Var DC_FontBrand
-Var DC_FontBrandCn
+!ifndef BUILD_UNINSTALLER
 Var DC_FontSmall
-Var DC_FontFoot
 Var DC_FontTitle
+Var DC_FontCheck
 Var DC_LogoHandle
+!endif
 
 !macro DC_LoadBrandIcon
   InitPluginsDir
@@ -37,6 +39,11 @@ Var DC_LogoHandle
 
 !ifndef BUILD_UNINSTALLER
 Var DC_ChosenDir
+Var DC_PreviousDir
+Var DC_BackupSource
+Var DC_PathInput
+Var DC_SpaceLabel
+Var DC_RequiredMB
 Var DC_DesktopChoice
 Var DC_Checkbox
 Var DC_Dialog
@@ -85,7 +92,17 @@ Var DC_OldShortcut
 !macro customInit
   !insertmacro customCheckAppRunning
   Call DC_SetDataPaths
-  !insertmacro DC_LoadBrandIcon
+  ${IfNot} ${Silent}
+    !insertmacro DC_LoadBrandIcon
+  ${EndIf}
+  ReadRegStr $DC_PreviousDir HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
+  !ifdef APP_64_UNPACKED_SIZE
+    IntOp $DC_RequiredMB ${APP_64_UNPACKED_SIZE} / 1024
+    IntOp $DC_RequiredMB $DC_RequiredMB * 2
+    IntOp $DC_RequiredMB $DC_RequiredMB + 100
+  !else
+    StrCpy $DC_RequiredMB 1024
+  !endif
   StrCpy $DC_DesktopChoice ${BST_CHECKED}
   CreateDirectory "$DC_InstallerLogs"
   FileOpen $DC_Log "$DC_InstallerLogs\last-install.log" a
@@ -99,63 +116,75 @@ Var DC_OldShortcut
   ${EndIf}
 !macroend
 
-!macro DC_BrandFunctions PREFIX
-Function ${PREFIX}DC_BrandPanel
-  ; 侧栏背景可以铺满，但图标用 ICO 的原生方形尺寸，文字用原生控件绘制。
-  ${NSD_CreateLabel} 0u 0u 109u 193u ""
+!macro DC_CenteredLabel Y H TEXT FONT COLOR
+  nsDialogs::CreateControl STATIC ${DEFAULT_STYLES}|${SS_CENTER} 0 0 ${Y} 100% ${H} "${TEXT}"
   Pop $0
-  System::Call 'user32::SetWindowPos(p r0,p0,i0,i0,i0,i0,i0x13)'
-  SetCtlColors $0 "FFFFFF" "176B51"
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:"
-  System::Call 'user32::SetWindowPos(p r0,p1,i0,i0,i0,i0,i0x13)'
-  ${If} $DC_FontBrand == ""
-    CreateFont $DC_FontBrand "Segoe UI" 20 600
-    CreateFont $DC_FontBrandCn "Microsoft YaHei" 17 600
+  SetCtlColors $0 "${COLOR}" "${MUI_BGCOLOR}"
+  SendMessage $0 ${WM_SETFONT} ${FONT} 1
+!macroend
+
+!macro DC_WizardVisuals
+Function DC_InitFonts
+  ${If} $DC_FontTitle == ""
+    CreateFont $DC_FontTitle "Microsoft YaHei" 19 600
     CreateFont $DC_FontSmall "Microsoft YaHei" 9 400
-    CreateFont $DC_FontFoot "Segoe UI" 8 400
-    CreateFont $DC_FontTitle "Microsoft YaHei" 13 600
+    CreateFont $DC_FontCheck "Segoe UI Symbol" 32 600
   ${EndIf}
-  System::Call 'user32::GetDpiForWindow(p$HWNDPARENT)i.r0'
-  IntOp $1 $0 * 80
+FunctionEnd
+
+Function DC_BrandWelcome
+  ShowWindow $mui.WelcomePage.Image ${SW_HIDE}
+  ShowWindow $mui.WelcomePage.Title ${SW_HIDE}
+  ShowWindow $mui.WelcomePage.Text ${SW_HIDE}
+  Call DC_InitFonts
+  ; 按窗口 DPI 从 ICO 选择清晰的尺寸，再在内容区水平居中。
+  System::Call 'user32::GetDpiForWindow(p $HWNDPARENT)i.r0'
+  IntOp $1 $0 * 76
   IntOp $1 $1 / 96
-  ${NSD_CreateIcon} 12u 14u $1 $1 ""
+  ${NSD_CreateIcon} 0 24u $1 $1 ""
   Pop $3
   ${If} $DC_LogoHandle == ""
     System::Call 'user32::LoadImageW(p0,w "$PLUGINSDIR\dc-brand.ico",i1,ir1,ir1,i0x10)p.r2'
     StrCpy $DC_LogoHandle $2
   ${EndIf}
   SendMessage $3 ${STM_SETIMAGE} ${IMAGE_ICON} $DC_LogoHandle
-  System::Call 'user32::SetWindowPos(p r3,p0,i0,i0,i0,i0,i0x13)'
-  ${NSD_CreateLabel} 12u 69u 92u 24u "YOTOO"
-  Pop $0
-  System::Call 'user32::SetWindowPos(p r0,p0,i0,i0,i0,i0,i0x13)'
-  SetCtlColors $0 "FFFFFF" "176B51"
-  SendMessage $0 ${WM_SETFONT} $DC_FontBrand 1
-  ${NSD_CreateLabel} 12u 91u 92u 24u "部署中心"
-  Pop $0
-  System::Call 'user32::SetWindowPos(p r0,p0,i0,i0,i0,i0,i0x13)'
-  SetCtlColors $0 "FFFFFF" "176B51"
-  SendMessage $0 ${WM_SETFONT} $DC_FontBrandCn 1
-  ${NSD_CreateLabel} 12u 122u 22u 2u ""
-  Pop $0
-  System::Call 'user32::SetWindowPos(p r0,p0,i0,i0,i0,i0,i0x13)'
-  SetCtlColors $0 "9CE8C9" "9CE8C9"
-  ${NSD_CreateLabel} 12u 140u 92u 18u "构建 · 部署 · 回滚"
-  Pop $0
-  System::Call 'user32::SetWindowPos(p r0,p0,i0,i0,i0,i0,i0x13)'
-  SetCtlColors $0 "E2F2E9" "176B51"
-  SendMessage $0 ${WM_SETFONT} $DC_FontSmall 1
-  ${NSD_CreateLabel} 12u 171u 92u 14u "本地部署工作台"
-  Pop $0
-  System::Call 'user32::SetWindowPos(p r0,p0,i0,i0,i0,i0,i0x13)'
-  SetCtlColors $0 "B9DCCD" "176B51"
-  SendMessage $0 ${WM_SETFONT} $DC_FontFoot 1
+  System::Call 'user32::GetParent(p r3)p.r4'
+  System::Call '*(i0,i0,i0,i0)p.r5'
+  System::Call 'user32::GetWindowRect(p r3,p r5)'
+  System::Call 'user32::MapWindowPoints(p0,p r4,p r5,i2)'
+  System::Call '*$5(i,i.r2,i,i)'
+  System::Call 'user32::GetClientRect(p r4,p r5)'
+  System::Call '*$5(i,i,i.r0,i)'
+  System::Free $5
+  IntOp $0 $0 - $1
+  IntOp $0 $0 / 2
+  System::Call 'user32::SetWindowPos(p r3,p0,ir0,ir2,ir1,ir1,i0x14)'
+  !insertmacro DC_CenteredLabel 71u 15u "Windows x64 · v${VERSION}" $DC_FontSmall "${DC_BRAND_MUTED}"
+  !insertmacro DC_CenteredLabel 87u 24u "${DC_WELCOME_TITLE}" $DC_FontTitle "${DC_BRAND_INK}"
+  !insertmacro DC_CenteredLabel 116u 18u "在本机管理 Java 服务的构建、部署与回滚。" $DC_FontSmall "${DC_BRAND_MUTED}"
+  !insertmacro DC_CenteredLabel 146u 18u "覆盖安装会保留现有配置、部署历史和日志。" $DC_FontSmall "${DC_BRAND_MUTED}"
+  GetDlgItem $0 $HWNDPARENT 1
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:开始设置"
 FunctionEnd
 
-Function ${PREFIX}DC_BrandFinish
-  Call ${PREFIX}DC_BrandPanel
-  SendMessage $mui.FinishPage.Title ${WM_SETFONT} $DC_FontTitle 1
-  SendMessage $mui.FinishPage.Text ${WM_SETFONT} $DC_FontSmall 1
+Function DC_BrandFinish
+  ; 重启提示页仍由 MUI 处理。
+  ${If} $mui.FinishPage.Run == ""
+    Return
+  ${EndIf}
+  ShowWindow $mui.FinishPage.Image ${SW_HIDE}
+  ShowWindow $mui.FinishPage.Title ${SW_HIDE}
+  ShowWindow $mui.FinishPage.Text ${SW_HIDE}
+  ShowWindow $mui.FinishPage.Run ${SW_HIDE}
+  Call DC_InitFonts
+  !insertmacro DC_CenteredLabel 20u 14u "第 4 步 / 共 4 步" $DC_FontSmall "166649"
+  !insertmacro DC_CenteredLabel 37u 40u "✓" $DC_FontCheck "166649"
+  !insertmacro DC_CenteredLabel 83u 25u "安装完成" $DC_FontTitle "${DC_BRAND_INK}"
+  !insertmacro DC_CenteredLabel 115u 17u "YOTOO 部署中心已安装，可以从开始菜单打开。" $DC_FontSmall "${DC_BRAND_MUTED}"
+  ${NSD_CreateCheckbox} 103u 143u 130u 16u "立即打开 YOTOO 部署中心"
+  Pop $mui.FinishPage.Run
+  SetCtlColors $mui.FinishPage.Run "${DC_BRAND_INK}" "${MUI_BGCOLOR}"
+  ${NSD_SetState} $mui.FinishPage.Run ${BST_CHECKED}
 FunctionEnd
 !macroend
 
@@ -167,10 +196,6 @@ FunctionEnd
   !define MUI_FINISHPAGE_RUN_FUNCTION DC_StartApp
   !define MUI_PAGE_CUSTOMFUNCTION_SHOW DC_BrandFinish
   !insertmacro MUI_PAGE_FINISH
-!macroend
-
-!macro customUninstallPage
-  !define MUI_PAGE_CUSTOMFUNCTION_SHOW un.DC_BrandFinish
 !macroend
 
 !macro customHeader
@@ -189,83 +214,158 @@ FunctionEnd
 !endif
 ManifestDPIAware true
 SetFont /LANG=2052 "Microsoft YaHei" 9
-!ifdef BUILD_UNINSTALLER
-  !insertmacro DC_BrandFunctions "un."
-!else
-  !insertmacro DC_BrandFunctions ""
-  Function DC_BrandWelcome
-    Call DC_BrandPanel
-    SendMessage $mui.WelcomePage.Title ${WM_SETFONT} $DC_FontTitle 1
-    SendMessage $mui.WelcomePage.Text ${WM_SETFONT} $DC_FontSmall 1
-  FunctionEnd
-!endif
 !ifndef BUILD_UNINSTALLER
+!insertmacro DC_WizardVisuals
 Function DC_ValidateDirectory
-  ${If} $INSTDIR == ""
-    MessageBox MB_OK|MB_ICONSTOP "安装目录不能为空。" /SD IDOK
-    SetErrorLevel 1603
-    Abort
+  StrCpy $0 $INSTDIR 2 1
+  System::Call 'shlwapi::PathGetDriveNumberW(w "$INSTDIR")i.r1'
+  ${If} $0 != ":\"
+  ${OrIf} $1 < 0
+    StrCpy $0 "请输入带盘符的完整安装目录。"
+    Goto DC_DirectoryError
+  ${EndIf}
+  GetFullPathName $INSTDIR "$INSTDIR"
+  StrCpy $0 $INSTDIR 1 -1
+  ${If} $0 == "\"
+    StrCpy $INSTDIR $INSTDIR -1
   ${EndIf}
   ${GetRoot} "$INSTDIR" $0
   ${If} $0 == $INSTDIR
   ${OrIf} "$0\" == $INSTDIR
-    MessageBox MB_OK|MB_ICONSTOP "请选择磁盘中的应用文件夹，不能直接安装到磁盘根目录。" /SD IDOK
-    SetErrorLevel 1603
-    Abort
+    StrCpy $0 "请指定应用文件夹，不能直接安装到磁盘根目录。"
+    Goto DC_DirectoryError
   ${EndIf}
+  ; 程序目录会由卸载器管理。它须与数据目录分开，新位置也不能占用原安装目录。
+  StrLen $0 "$DC_DataRoot\"
+  StrCpy $1 "$INSTDIR\" $0
+  StrLen $0 "$INSTDIR\"
+  StrCpy $2 "$DC_DataRoot\" $0
+  ${If} $1 == "$DC_DataRoot\"
+  ${OrIf} $2 == "$INSTDIR\"
+    StrCpy $0 "安装目录与用户数据目录不能重合或互相包含。"
+    Goto DC_DirectoryError
+  ${EndIf}
+  ${If} $INSTDIR != $DC_PreviousDir
+    ${If} $DC_PreviousDir != ""
+      StrLen $0 "$DC_PreviousDir\"
+      StrCpy $1 "$INSTDIR\" $0
+      ${If} $1 == "$DC_PreviousDir\"
+        StrCpy $0 "新目录不能位于原安装目录内。"
+        Goto DC_DirectoryError
+      ${EndIf}
+    ${EndIf}
+    FindFirst $0 $1 "$INSTDIR\*"
+    ${While} $1 != ""
+      ${If} $1 != "."
+      ${AndIf} $1 != ".."
+        FindClose $0
+        StrCpy $0 "请选择空目录，或输入一个新的应用目录。"
+        Goto DC_DirectoryError
+      ${EndIf}
+      FindNext $0 $1
+    ${EndWhile}
+    FindClose $0
+  ${EndIf}
+  StrCpy $2 $INSTDIR
+  DC_CheckDirectoryParents:
+    System::Call 'kernel32::GetFileAttributesW(w r2)i.r3'
+    ${If} $3 != -1
+      IntOp $3 $3 & 0x400
+      ${If} $3 != 0
+        StrCpy $0 "安装路径包含链接或目录联接，请选择普通目录。"
+        Goto DC_DirectoryError
+      ${EndIf}
+    ${EndIf}
+    ${GetParent} "$2" $3
+    ${If} $3 != ""
+    ${AndIf} $3 != $2
+      StrCpy $2 $3
+      Goto DC_CheckDirectoryParents
+    ${EndIf}
   ClearErrors
   CreateDirectory "$INSTDIR"
-  FileOpen $0 "$INSTDIR\.deploy-center-write-test" w
+  GetTempFileName $0 "$INSTDIR"
   ${If} ${Errors}
-    MessageBox MB_OK|MB_ICONSTOP "无法写入所选目录：$\r$\n$INSTDIR$\r$\n$\r$\n请确认路径有效，并选择当前用户有写入权限的位置。受保护目录可能需要管理员权限，本安装器不会请求提权。" /SD IDOK
-    SetErrorLevel 1603
-    Abort
+    StrCpy $0 "无法写入所选目录，请选择当前用户有写入权限的位置。"
+    Goto DC_DirectoryError
   ${EndIf}
-  FileClose $0
-  Delete "$INSTDIR\.deploy-center-write-test"
-  System::Call 'kernel32::GetDiskFreeSpaceExW(w "$INSTDIR", *l .r0, *l .r1, *l .r2) i .r3'
+  Delete "$0"
+  System::Call 'kernel32::GetDiskFreeSpaceExW(w "$INSTDIR",*l .r0,p0,p0)i.r3'
   ${If} $3 == 0
-    MessageBox MB_OK|MB_ICONSTOP "无法读取安装磁盘的可用空间，请检查目录或磁盘状态。" /SD IDOK
-    SetErrorLevel 1603
-    Abort
+    StrCpy $0 "无法读取安装磁盘的可用空间。"
+    Goto DC_DirectoryError
   ${EndIf}
   System::Int64Op $0 / 1048576
   Pop $0
-  !ifdef APP_64_UNPACKED_SIZE
-    IntOp $1 ${APP_64_UNPACKED_SIZE} / 1024
-    IntOp $1 $1 * 2
-    IntOp $1 $1 + 100
-  !else
-    StrCpy $1 1024
-  !endif
-  ${If} $0 < $1
-    MessageBox MB_OK|MB_ICONSTOP "磁盘空间不足。$\r$\n需要至少 $1 MB，可用 $0 MB。$\r$\n请更换安装目录或释放空间后重试。" /SD IDOK
-    SetErrorLevel 1603
-    Abort
+  ${If} $0 < $DC_RequiredMB
+    StrCpy $0 "磁盘空间不足。需要至少 $DC_RequiredMB MB，可用 $0 MB。"
+    Goto DC_DirectoryError
+  ${EndIf}
+  Return
+  DC_DirectoryError:
+  MessageBox MB_OK|MB_ICONSTOP "$0$\r$\n$INSTDIR" /SD IDOK
+  SetErrorLevel 1603
+  Abort
+FunctionEnd
+
+Function DC_RefreshSpace
+  Pop $0
+  ${NSD_GetText} $DC_PathInput $1
+  StrCpy $2 $1 3
+  System::Call 'kernel32::GetDiskFreeSpaceExW(w r2,*l .r3,p0,p0)i.r4'
+  ${If} $4 != 0
+    System::Int64Op $3 / 1048576
+    Pop $3
+    ${NSD_SetText} $DC_SpaceLabel "需要 $DC_RequiredMB MB · 磁盘可用 $3 MB"
+  ${Else}
+    ${NSD_SetText} $DC_SpaceLabel "需要 $DC_RequiredMB MB · 安装前检查可用空间"
+  ${EndIf}
+FunctionEnd
+
+Function DC_BrowseDirectory
+  Pop $0
+  ${NSD_GetText} $DC_PathInput $1
+  nsDialogs::SelectFolderDialog "选择安装目录" "$1"
+  Pop $1
+  ${If} $1 != "error"
+    ${NSD_SetText} $DC_PathInput "$1"
   ${EndIf}
 FunctionEnd
 
 Function DC_OptionsCreate
-  !insertmacro MUI_HEADER_TEXT "安装选项" "确认安装位置与快捷方式"
+  !insertmacro MUI_HEADER_TEXT "选择安装位置" "第 2 步 / 共 4 步"
   nsDialogs::Create 1018
   Pop $DC_Dialog
   ${If} $DC_Dialog == error
     Abort
   ${EndIf}
-  ${NSD_CreateLabel} 0 0 100% 24u "安装位置：$\r$\n$INSTDIR"
+  GetDlgItem $0 $HWNDPARENT 1
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:安装"
+  ${NSD_CreateLabel} 0 5u 100% 15u "输入完整路径，或点击「浏览」选择其他磁盘或文件夹。"
   Pop $0
-  ${NSD_CreateLabel} 0 35u 100% 30u "当前数据目录：$\r$\n$DC_DataRoot$\r$\n配置、日志、更新缓存及升级备份均跟随该目录。"
+  ${NSD_CreateLabel} 0 29u 100% 13u "安装目录"
   Pop $0
-  ${NSD_CreateCheckbox} 0 82u 100% 14u "创建桌面快捷方式"
+  ${NSD_CreateDirRequest} 0 44u 80% 17u "$INSTDIR"
+  Pop $DC_PathInput
+  ${NSD_CreateBrowseButton} 82% 44u 18% 17u "浏览..."
+  Pop $0
+  ${NSD_OnClick} $0 DC_BrowseDirectory
+  ${NSD_CreateLabel} 0 65u 100% 14u ""
+  Pop $DC_SpaceLabel
+  ${NSD_OnChange} $DC_PathInput DC_RefreshSpace
+  Push $DC_PathInput
+  Call DC_RefreshSpace
+  ${NSD_CreateCheckbox} 0 88u 100% 14u "创建桌面快捷方式"
   Pop $DC_Checkbox
   ${NSD_SetState} $DC_Checkbox $DC_DesktopChoice
-  ${NSD_CreateLabel} 0 112u 100% 28u "始终创建开始菜单入口。升级会保留用户数据；安装和使用均以当前普通用户运行。"
+  ${NSD_CreateLabel} 0 113u 100% 29u "配置、部署历史和日志保存在原数据目录。$\r$\n开始菜单入口会自动创建。"
   Pop $0
   nsDialogs::Show
 FunctionEnd
 
 Function DC_OptionsLeave
   ${NSD_GetState} $DC_Checkbox $DC_DesktopChoice
+  ${NSD_GetText} $DC_PathInput $INSTDIR
   Call DC_ValidateDirectory
   StrCpy $DC_ChosenDir $INSTDIR
   Call DC_BackupOldProgram
@@ -273,22 +373,22 @@ FunctionEnd
 
 Function .onInstFailed
   ${If} $DC_Rollback != ""
-    CreateDirectory "$INSTDIR"
+    CreateDirectory "$DC_BackupSource"
     ClearErrors
-    CopyFiles /SILENT "$DC_Rollback\*.*" "$INSTDIR"
+    CopyFiles /SILENT "$DC_Rollback\*.*" "$DC_BackupSource"
     ${IfNot} ${Errors}
-      WriteRegStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "$INSTDIR"
+      WriteRegStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "$DC_BackupSource"
       WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" DisplayName "$DC_OldName"
       WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" DisplayVersion "$DC_OldVersion"
       WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" Publisher "$DC_OldPublisher"
-      WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" InstallLocation "$INSTDIR"
-      WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" UninstallString '$\"$INSTDIR\$DC_OldUninstaller$\"'
-      WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" DisplayIcon "$INSTDIR\$DC_OldExecutable,0"
+      WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" InstallLocation "$DC_BackupSource"
+      WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" UninstallString '$\"$DC_BackupSource\$DC_OldUninstaller$\"'
+      WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" DisplayIcon "$DC_BackupSource\$DC_OldExecutable,0"
       WriteRegDWORD HKCU "${UNINSTALL_REGISTRY_KEY}" NoModify 1
       WriteRegDWORD HKCU "${UNINSTALL_REGISTRY_KEY}" NoRepair 1
-      CreateShortCut "$SMPROGRAMS\$DC_OldShortcut.lnk" "$INSTDIR\$DC_OldExecutable"
+      CreateShortCut "$SMPROGRAMS\$DC_OldShortcut.lnk" "$DC_BackupSource\$DC_OldExecutable"
       ${If} $DC_OldDesktop == 1
-        CreateShortCut "$DESKTOP\$DC_OldShortcut.lnk" "$INSTDIR\$DC_OldExecutable"
+        CreateShortCut "$DESKTOP\$DC_OldShortcut.lnk" "$DC_BackupSource\$DC_OldExecutable"
       ${EndIf}
     ${EndIf}
   ${EndIf}
@@ -302,10 +402,14 @@ Function DC_BackupOldProgram
   ${If} $DC_Rollback != ""
     Return
   ${EndIf}
+  StrCpy $DC_BackupSource $DC_PreviousDir
+  ${If} $DC_BackupSource == ""
+    StrCpy $DC_BackupSource $INSTDIR
+  ${EndIf}
   StrCpy $DC_OldExecutable "${APP_EXECUTABLE_FILENAME}"
-  IfFileExists "$INSTDIR\${APP_EXECUTABLE_FILENAME}" DC_FoundPreviousProgram 0
+  IfFileExists "$DC_BackupSource\${APP_EXECUTABLE_FILENAME}" DC_FoundPreviousProgram 0
   StrCpy $DC_OldExecutable "Deploy Center.exe"
-  IfFileExists "$INSTDIR\Deploy Center.exe" 0 DC_NoPreviousProgram
+  IfFileExists "$DC_BackupSource\Deploy Center.exe" 0 DC_NoPreviousProgram
   DC_FoundPreviousProgram:
   ReadRegStr $DC_OldName HKCU "${UNINSTALL_REGISTRY_KEY}" DisplayName
   ReadRegStr $DC_OldPublisher HKCU "${UNINSTALL_REGISTRY_KEY}" Publisher
@@ -325,7 +429,7 @@ Function DC_BackupOldProgram
   StrCpy $DC_Rollback "$DC_InstallerBackups\$0"
   CreateDirectory "$DC_Rollback"
   ClearErrors
-  CopyFiles /SILENT "$INSTDIR\*.*" "$DC_Rollback"
+  CopyFiles /SILENT "$DC_BackupSource\*.*" "$DC_Rollback"
   ${If} ${Errors}
     MessageBox MB_OK|MB_ICONSTOP "无法备份旧版程序，已停止升级。请检查磁盘空间与目录权限。旧版尚未被卸载。" /SD IDOK
     StrCpy $DC_Rollback ""
@@ -375,7 +479,6 @@ FunctionEnd
 ; 卸载组件页默认不勾选数据清理。升级时即使被传入该选项，也不执行删除。
 !macro customUnInit
   Call un.DC_SetDataPaths
-  !insertmacro DC_LoadBrandIcon
   Call un.DC_ParsePurgeOptions
 !macroend
 

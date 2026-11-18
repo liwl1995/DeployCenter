@@ -36,6 +36,34 @@ it('空计划显示入口与桌面运行条件', () => {
   expect(screen.getByText('暂无发布计划')).toBeTruthy();
   expect(screen.getByText(/电脑须保持开机/)).toBeTruthy();
 });
+it('默认只显示未执行计划，可以筛出执行中和已结束计划', () => {
+  const value = plan();
+  render(
+    <ReleaseSchedules
+      plans={[
+        value,
+        { ...value, id: 'SP-executing', state: 'executing' },
+        { ...value, id: 'SP-completed', state: 'completed' },
+        { ...value, id: 'SP-cancelled', state: 'cancelled' },
+      ]}
+      busy={false}
+      onOpen={vi.fn()}
+      onCancel={vi.fn()}
+      onChange={vi.fn()}
+      onPrepare={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole('button', { name: '未执行' }).getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getAllByRole('article')).toHaveLength(1);
+  expect(screen.queryByText('已完成')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: '执行中' }));
+  expect(screen.getAllByRole('article')).toHaveLength(1);
+  expect(screen.getAllByText('执行中')).toHaveLength(2);
+  fireEvent.click(screen.getByRole('button', { name: '已结束' }));
+  expect(screen.getAllByRole('article')).toHaveLength(2);
+  fireEvent.click(screen.getByRole('button', { name: '全部' }));
+  expect(screen.getAllByRole('article')).toHaveLength(4);
+});
 it('计划提供准备日志、改期、重新准备与取消，执行中只提供任务查看', async () => {
   const value = plan(),
     open = vi.fn(),
@@ -75,6 +103,8 @@ it('计划提供准备日志、改期、重新准备与取消，执行中只提�
       onPrepare={prepare}
     />,
   );
+  expect(screen.getByText('当前状态下暂无发布计划')).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: '执行中' }));
   await user.click(menu());
   expect(screen.queryByRole('menuitem', { name: '取消计划' })).toBeNull();
   expect(screen.queryByRole('button', { name: '调整时间' })).toBeNull();

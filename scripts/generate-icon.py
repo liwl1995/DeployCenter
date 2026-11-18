@@ -1,48 +1,77 @@
 from pathlib import Path
-from PIL import Image,ImageDraw,ImageFont
-import math
 
-root=Path('assets');root.mkdir(exist_ok=True)
-green='#176b51';white='#f3f8f4'
-sizes=[16,20,24,32,40,48,64,80,96,100,120,128,140,160,192,200,240,256]
-# 保留选定的「回旋」草案比例：四段圆弧围绕中心旋转，图形占图标边长的 5/6。
-arm='M395 155H505V275H395A120 120 0 0 0 275 395V505H155V395A240 240 0 0 1 395 155Z'
-paths=''.join(f'<path d="{arm}" transform="rotate({angle} 500 500)"/>' for angle in [0,90,180,270])
-svg=f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000"><rect width="1000" height="1000" rx="250" fill="{green}"/><g fill="{white}" transform="translate(83.333333 83.333333) scale(.833333333)">{paths}</g></svg>'''
-(root/'icon.svg').write_text(svg,encoding='utf-8')
+from PIL import Image, ImageDraw, ImageFont
 
-# 与 SVG 共用圆弧几何，以双倍分辨率绘制后降采样，避免小图标边缘锯齿。
-size=2048;scale=size/1000
-base=Image.new('RGBA',(size,size));draw=ImageDraw.Draw(base)
-draw.rounded_rectangle((0,0,size-1,size-1),radius=250*scale,fill=green)
-points=[(395,155),(505,155),(505,275),(395,275)]
-for i in range(65):
- a=-math.pi/2-math.pi/2*i/64;points.append((395+120*math.cos(a),395+120*math.sin(a)))
-points.extend([(275,505),(155,505),(155,395)])
-for i in range(65):
- a=math.pi+math.pi/2*i/64;points.append((395+240*math.cos(a),395+240*math.sin(a)))
-for angle in [0,90,180,270]:
- a=math.radians(angle);rotated=[]
- for x,y in points:
-  x,y=(x-500)*5/6,(y-500)*5/6
-  rotated.append(((500+x*math.cos(a)-y*math.sin(a))*scale,(500+x*math.sin(a)+y*math.cos(a))*scale))
- draw.polygon(rotated,fill=white)
-base=base.resize((1024,1024),Image.Resampling.LANCZOS)
-base.save(root/'icon-1024.png')
-base.resize((256,256),Image.Resampling.LANCZOS).save(root/'icon.png')
-base.save(root/'icon.ico',sizes=[(n,n) for n in sizes])
+ASSETS = Path('assets')
+INSTALLER = Path('installer')
+ORANGE = '#c2410c'
+WHITE = '#ffffff'
+SIDEBAR = '#f5f4f2'
+SIZES = [16, 20, 24, 32, 40, 48, 64, 80, 96, 100, 120, 128, 140, 160, 192, 200, 240, 256]
+# 同一条完整轮廓生成 SVG、位图和 ICO，避免小尺寸下出现拼接缝。
+MARK_INSET = 140.625
+MARK_EDGE = 718.75
+MARK_RADIUS = 234.375
+MARK_WIDTH = 109.375
 
-preview=Image.new('RGB',(920,440),'#f5f7f9');pd=ImageDraw.Draw(preview);font='C:/Windows/Fonts/msyh.ttc'
-thumb=base.resize((256,256),Image.Resampling.LANCZOS);preview.paste(thumb,(70,72),thumb)
-pd.text((380,90),'YOTOO 部署中心',font=ImageFont.truetype(font,37),fill='#223041')
-pd.text((383,150),'回旋 · 品牌图标',font=ImageFont.truetype(font,20),fill='#58677b')
-for i,n in enumerate([16,24,32,48,64]):
- x=390+i*90;thumb=base.resize((n,n),Image.Resampling.LANCZOS);preview.paste(thumb,(x,244-n//2),thumb)
- pd.text((x,296),str(n)+'px',font=ImageFont.truetype(font,13),fill='#58677b')
-pd.text((72,378),'统一用于安装程序、开始菜单、桌面、任务栏与窗口',font=ImageFont.truetype(font,17),fill='#58677b')
-preview.save(root/'icon-preview.png')
 
-# 安装侧栏和原生控件使用同一墨绿底色，避免透明圆角出现白边。
-Image.new('RGB',(164,314),green).save('installer/sidebar.bmp')
-brand=Image.new('RGBA',base.size,green);brand.alpha_composite(base)
-brand.save('installer/brand.ico',sizes=[(n,n) for n in sizes])
+def svg(background=None):
+    plate = (
+        f'<rect width="1000" height="1000" rx="236" fill="{background}"/>'
+        if background
+        else ''
+    )
+    color = WHITE if background else ORANGE
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000">'
+        f'{plate}<rect x="{MARK_INSET}" y="{MARK_INSET}" width="{MARK_EDGE}" '
+        f'height="{MARK_EDGE}" rx="{MARK_RADIUS}" fill="none" stroke="{color}" '
+        f'stroke-width="{MARK_WIDTH}"/></svg>\n'
+    )
+
+
+def icon():
+    # 位图在高分辨率绘制，再降采样；内外圆角与 SVG 的居中描边一致。
+    size = 2048
+    scale = size / 1000
+    image = Image.new('RGBA', (size, size))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((0, 0, size - 1, size - 1), radius=236 * scale, fill=ORANGE)
+    for offset, color in ((-MARK_WIDTH / 2, WHITE), (MARK_WIDTH / 2, ORANGE)):
+        start = (MARK_INSET + offset) * scale
+        end = (MARK_INSET + MARK_EDGE - offset) * scale
+        draw.rounded_rectangle((start, start, end, end),
+                               radius=(MARK_RADIUS - offset) * scale, fill=color)
+    return image.resize((1024, 1024), Image.Resampling.LANCZOS)
+
+
+def main():
+    ASSETS.mkdir(exist_ok=True)
+    (ASSETS / 'icon.svg').write_text(svg(ORANGE), encoding='utf-8')
+    (ASSETS / 'brand-mark.svg').write_text(svg(), encoding='utf-8')
+    base = icon()
+    base.save(ASSETS / 'icon-1024.png')
+    base.resize((256, 256), Image.Resampling.LANCZOS).save(ASSETS / 'icon.png')
+    ico_sizes = [(n, n) for n in SIZES]
+    base.save(ASSETS / 'icon.ico', sizes=ico_sizes)
+
+    preview = Image.new('RGB', (920, 400), SIDEBAR)
+    draw = ImageDraw.Draw(preview)
+    font = 'C:/Windows/Fonts/msyh.ttc'
+    hero = base.resize((224, 224), Image.Resampling.LANCZOS)
+    preview.paste(hero, (64, 76), hero)
+    draw.text((340, 101), 'YOTOO 部署中心', font=ImageFont.truetype(font, 34), fill='#211f1e')
+    draw.text((343, 158), '回旋标识', font=ImageFont.truetype(font, 18), fill='#605a56')
+    for index, size in enumerate([16, 24, 32, 48, 64]):
+        x = 346 + index * 86
+        thumb = base.resize((size, size), Image.Resampling.LANCZOS)
+        preview.paste(thumb, (x, 245 - size // 2), thumb)
+        draw.text((x, 288), f'{size} px', font=ImageFont.truetype(font, 13), fill='#605a56')
+    preview.save(ASSETS / 'icon-preview.png')
+
+    # 欢迎页按 DPI 加载原生图标，透明圆角与窗口底色衔接。
+    base.save(INSTALLER / 'brand.ico', sizes=ico_sizes)
+
+
+if __name__ == '__main__':
+    main()

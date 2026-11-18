@@ -48,7 +48,8 @@ describe('v0.3 组件回归', () => {
     const user = userEvent.setup();
     render(<App />);
     await user.selectOptions(screen.getByRole('combobox', { name: '某个目标失败后' }), 'continue');
-    expect(screen.getByText('本次覆盖', { exact: true })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '恢复默认' })).toBeTruthy();
+    expect(screen.queryByText('本次覆盖', { exact: true })).toBeNull();
     expect(JSON.parse(localStorage.getItem('deploy-center-v2')!).settings.failurePolicy).toBe(
       'stop',
     );
@@ -62,7 +63,8 @@ describe('v0.3 组件回归', () => {
     ).toBe('stop');
     await user.click(screen.getByRole('link', { name: 'YOTOO 部署中心' }));
     await user.click(screen.getByRole('button', { name: '恢复默认' }));
-    expect(screen.queryByText('本次覆盖', { exact: true })).toBeNull();
+    expect(screen.queryByRole('button', { name: '恢复默认' })).toBeNull();
+    expect((screen.getByRole('combobox', { name: '某个目标失败后' }) as HTMLSelectElement).value).toBe('stop');
   });
   it('A4/B7 步骤和上传显示真实耗时，历史拆开构建日志与目标日志', async () => {
     vi.useFakeTimers();
@@ -91,7 +93,7 @@ describe('v0.3 组件回归', () => {
     expect(
       (screen.getByRole('combobox', { name: '某个目标失败后' }) as HTMLSelectElement).value,
     ).toBe('stop');
-    expect(screen.queryByText('本次覆盖', { exact: true })).toBeNull();
+    expect(screen.queryByRole('button', { name: '恢复默认' })).toBeNull();
   });
   it('B7 设置保留条数立即清理最旧历史与孤立任务日志', () => {
     render(<App />);

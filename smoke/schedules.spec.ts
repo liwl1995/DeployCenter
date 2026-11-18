@@ -152,6 +152,8 @@ test('定时发布入口、确认时间、计划改期取消与日志返回', as
   await page.getByRole('button', { name: /返回发布计划/ }).click();
   await page.getByRole('button', { name: /发布计划操作/ }).click();
   await page.getByRole('menuitem', { name: '取消计划', exact: true }).click();
+  await expect(page.getByText('已取消', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '已结束', exact: true }).click();
   await expect(page.getByText('已取消', { exact: true })).toBeVisible();
 });
 test('计划页面在三个尺寸下可用，重新准备仍需确认', async () => {

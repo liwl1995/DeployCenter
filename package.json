@@ -107,7 +107,6 @@
     "nsis": {
       "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
       "deleteAppDataOnUninstall": false,
       "allowElevation": false,
       "include": "installer/custom.nsh",
@@ -117,8 +116,6 @@
       "language": "2052",
       "multiLanguageInstaller": true,
       "displayLanguageSelector": false,
-      "installerSidebar": "installer/sidebar.bmp",
-      "uninstallerSidebar": "installer/sidebar.bmp",
       "installerIcon": "assets/icon.ico",
       "uninstallerIcon": "assets/icon.ico",
       "createDesktopShortcut": true,

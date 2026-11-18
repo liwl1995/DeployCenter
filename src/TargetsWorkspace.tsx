@@ -57,7 +57,7 @@ export function TargetsWorkspace({
         })}
         cardMeta={(t) => (
           <>
-            <span>{t.healthState}</span>
+            <span title={t.healthState}>{t.healthState}</span>
             <time>{cardTime(t.lastDeploy)}</time>
           </>
         )}

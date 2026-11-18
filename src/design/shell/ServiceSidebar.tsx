@@ -13,7 +13,6 @@ import { HoverTip } from '../ui/hover-tip';
 import { useSidebarCollapsed } from '../useSidebarCollapsed';
 import type { Service } from '../../model';
 import type { WorkspacePage } from '../../workspace-model';
-import brand from '../../../assets/icon.svg';
 
 export function ServiceSidebar({
   services,
@@ -53,7 +52,7 @@ export function ServiceSidebar({
             onPage('deploy');
           }}
         >
-          <img src={brand} alt="" />
+          <span className="sidebar-brand-mark" aria-hidden="true" />
           <strong>YOTOO 部署中心</strong>
         </a>
         <HoverTip content={toggleLabel} side="right">

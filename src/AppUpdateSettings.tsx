@@ -132,11 +132,11 @@ export function AppUpdateSettings({
         </div>
         <p className="update-status" role="status">
           {state.stage === 'ready' || state.stage === 'current' ? (
-            <CheckCircle2 size={16} />
+            <CheckCircle2 size={16} aria-hidden="true" />
           ) : working ? (
-            <Loader2 className="spin" size={16} />
+            <Loader2 className="spin" size={16} aria-hidden="true" />
           ) : null}
-          {label}
+          <span>{label}</span>
         </p>
         {state.checkedAt && (
           <p className="note">

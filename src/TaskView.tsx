@@ -1,7 +1,7 @@
 import { Button } from './design/ui/button';
 import { stepNames as names } from './step-names';
 import { useLayoutEffect, useRef, useState } from 'react';
-import { ArrowLeft, Check, Circle, CircleAlert, Clock3, Loader2, Minus, X } from 'lucide-react';
+import { ArrowLeft, Check, Circle, CircleAlert, CircleDot, Clock3, Loader2, Minus, X } from 'lucide-react';
 import { desktop } from './platform';
 import { Badge, Card, Demo, download } from './ui';
 import { MoreMenu, type MenuAction } from './EntityActions';
@@ -38,7 +38,7 @@ const statusText = {
 type Status = keyof typeof statusText;
 const icons = {
   pending: Circle,
-  running: Loader2,
+  running: CircleDot,
   success: Check,
   failed: X,
   skipped: Minus,
@@ -183,6 +183,7 @@ export function TaskView({
     };
   });
   const failedStage = stages.findIndex((s) => s.status === 'failed');
+  const runningStage = active ? stages.findIndex((s) => s.status === 'running') : -1;
   const [selection, setSelection] = useState<{
     target: number;
     stage: number | null;
@@ -431,7 +432,8 @@ export function TaskView({
       )}
       <div className="task-stages" role="group" aria-label="部署阶段">
         {stages.map((entry, index) => {
-          const Icon = icons[entry.status];
+          const spinning = index === runningStage;
+          const Icon = spinning ? Loader2 : icons[entry.status];
           return (
             <button
               className={'task-stage task-tone-' + entry.status}
@@ -443,7 +445,7 @@ export function TaskView({
             >
               <Icon
                 size={16}
-                className={entry.status === 'running' ? 'spin' : undefined}
+                className={spinning ? 'spin' : undefined}
                 aria-hidden="true"
               />
               <span>
@@ -472,7 +474,6 @@ export function TaskView({
                         <div className="task-step-row">
                           <Icon
                             size={15}
-                            className={status === 'running' ? 'spin' : undefined}
                             aria-label={statusText[status]}
                           />
                           <Button

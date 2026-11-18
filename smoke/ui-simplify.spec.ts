@@ -372,13 +372,11 @@ test('日志优先任务页的八种状态与连续输出在三个尺寸下可�
           .getByRole('button', { name: /上传与校验/ });
         await upload.click();
         await expect(taskPage.getByRole('progressbar', { name: '文件上传进度' })).toBeVisible();
-        for (const selector of ['.task-stage .spin', '.task-step-row .spin']) {
-          await expect
-            .poll(() =>
-              taskPage.locator(selector).evaluate((el) => el.getAnimations()[0]?.playState),
-            )
-            .toBe('running');
-        }
+        await expect(page.locator('.sidebar-task .spin, .task-step-row .spin')).toHaveCount(0);
+        await expect(taskPage.locator('.task-stage .spin')).toHaveCount(1);
+        await expect
+          .poll(() => taskPage.locator('.task-stage .spin').evaluate((el) => el.getAnimations()[0]?.playState))
+          .toBe('running');
         await upload.click();
         const viewport = taskPage.getByRole('log', { name: '任务日志' });
         const elapsed = await taskPage.locator('.task-duration').textContent();

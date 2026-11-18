@@ -298,9 +298,15 @@ hr {
   gap: var(--space-2);
   color: var(--text-1);
 }
-.sidebar-brand img {
+.sidebar-brand-mark {
   width: 21px;
   height: 21px;
+  flex: none;
+  background: #c2410c;
+  mask: url('../assets/brand-mark.svg') center / contain no-repeat;
+}
+.dark .sidebar-brand-mark {
+  background: #fb923c;
 }
 .sidebar-brand strong {
   overflow: hidden;
@@ -509,15 +515,15 @@ hr {
   border-color: var(--border-strong);
 }
 .deployment-target-main {
-  display: flex;
+  display: grid;
+  grid-template-columns: 16px 30px minmax(0, 1fr) 80px 116px 44px 28px 28px;
   align-items: center;
   gap: var(--space-2);
   min-height: var(--h-card);
   padding: var(--card-py) 10px;
 }
 .target-identity {
-  flex: 1 1 120px;
-  min-width: 80px;
+  min-width: 0;
   text-align: left;
 }
 .target-identity > :is(strong, small) {
@@ -547,10 +553,13 @@ hr {
   overflow: hidden;
   clip-path: inset(50%);
 }
-.target-health .compact-status {
-  max-width: 130px;
+.compact-status {
+  max-width: 100%;
+}
+.compact-status > span {
+  display: block;
   overflow: hidden;
-  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .target-backup .switch-row {
   display: flex;
@@ -604,6 +613,10 @@ hr {
 }
 .failure-policy select {
   font-size: var(--fs-caption);
+}
+.failure-policy-reset[hidden] {
+  display: inline-flex;
+  visibility: hidden;
 }
 .service-empty {
   display: grid;
@@ -1126,7 +1139,6 @@ p.code,
   align-items: center;
   gap: var(--space-2);
 }
-.entity-record,
 .schedule-record {
   display: flex;
   align-items: center;
@@ -1134,7 +1146,25 @@ p.code,
   padding: var(--card-py) 12px;
   min-height: var(--h-card);
 }
-.entity-record-identity,
+.entity-list {
+  grid-template-columns: 30px minmax(0, 1fr) 76px 116px max-content;
+}
+.entity-record {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+  column-gap: var(--space-3);
+  min-height: var(--h-card);
+  padding: var(--card-py) 12px;
+}
+.entity-record-identity {
+  grid-column: 2;
+  min-width: 0;
+}
+.entity-record > .entity-state { grid-column: 3; }
+.entity-record > .entity-card-meta { grid-column: 4; }
+.entity-record > .entity-actions { grid-column: 5; justify-content: flex-end; }
 .schedule-identity {
   flex: 1;
   min-width: 0;
@@ -1194,10 +1224,14 @@ p.code,
 }
 .entity-card-meta {
   display: grid;
-  min-width: 60px;
-  justify-items: end;
+  min-width: 0;
   font-size: var(--fs-caption);
   color: var(--text-3);
+}
+.entity-card-meta > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .entity-actions {
   display: flex;
@@ -1233,6 +1267,9 @@ p.code,
   display: grid;
   gap: var(--space-2);
   margin-top: 12px;
+}
+.schedule-filter {
+  margin-top: var(--space-3);
 }
 .schedule-identity h2 {
   margin-bottom: 3px;
@@ -1313,8 +1350,18 @@ th {
 .history-version-col {
   width: 135px;
 }
-.history-menu-col {
-  width: 34px;
+.history-menu-col,
+.tool-menu-col {
+  width: 64px;
+}
+.history-table :is(th, td):last-child:not([colspan]) {
+  text-align: right;
+}
+.tool-name-col {
+  width: 112px;
+}
+.tool-refs-col {
+  width: 80px;
 }
 .tool-state-col {
   width: 92px;
@@ -1709,6 +1756,16 @@ th {
   padding-top: 10px;
   border-top: 1px solid var(--line);
 }
+.update-status {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+.update-status > svg {
+  align-self: flex-start;
+  margin-top: 2px;
+  flex: none;
+}
 .update-notes {
   max-height: 230px;
   overflow: auto;
@@ -1801,6 +1858,9 @@ th {
   }
 }
 @media (max-width: 960px) {
+  .deployment-target-main {
+    grid-template-columns: 16px minmax(0, 1fr) 72px 108px 44px 28px 28px;
+  }
   .deployment-target-main > .record-icon {
     display: none;
   }
@@ -1814,21 +1874,16 @@ th {
   .deployment-footer {
     padding-inline: 16px;
   }
-  .target-health .compact-status {
-    max-width: 100px;
-  }
   .task-duration {
     display: none;
   }
 }
 @media (max-width: 740px) {
-  .entity-record {
-    flex-wrap: wrap;
+  .entity-list {
+    grid-template-columns: 30px minmax(0, 1fr) 76px max-content;
   }
-  .entity-record-identity {
-    flex-basis: 55%;
-  }
-  .entity-card-meta {
+  .entity-record > .entity-actions { grid-column: 4; }
+  .entity-record > .entity-card-meta {
     display: none;
   }
   .task-header-actions .button {
@@ -1839,6 +1894,9 @@ th {
   }
   .target-health {
     display: none;
+  }
+  .deployment-target-main {
+    grid-template-columns: 16px minmax(0, 1fr) 72px 44px 28px 28px;
   }
   .task-step-list {
     display: grid;

@@ -22,7 +22,7 @@ Function DC_UpdateInstallStage
   ${If} $DC_NextStage >= $DC_Stage
     StrCpy $DC_Stage $DC_NextStage
     StrCpy $DC_StageText $DC_NextStageText
-    SetDetailsPrint both
+    SetDetailsPrint listonly
     DetailPrint "阶段 $DC_Stage/4：$DC_StageText"
     FileOpen $0 "$DC_InstallerLogs\last-install.log" a
     FileWrite $0 "阶段 $DC_Stage/4：$DC_StageText$\r$\n"
@@ -30,7 +30,8 @@ Function DC_UpdateInstallStage
     ${If} $DC_StageBar != ""
       SendMessage $DC_StageBar 0x402 $DC_Stage 0
       System::Call 'user32::RedrawWindow(p $DC_StageBar,p0,p0,i0x101)'
-      !insertmacro MUI_HEADER_TEXT "正在安装 YOTOO 部署中心" "阶段 $DC_Stage/4 · $DC_StageText"
+      !insertmacro MUI_HEADER_TEXT "正在安装" "第 3 步 / 共 4 步"
+      SendMessage $mui.InstFilesPage.Text ${WM_SETTEXT} 0 "STR:安装阶段 $DC_Stage / 4 · $DC_StageText"
     ${EndIf}
   ${EndIf}
   Pop $0
@@ -70,6 +71,9 @@ Function DC_ShowInstallProgress
   Pop $DC_StageBar
   ; 阶段只跳四次，禁用该控件的系统缓动，避免完成时画面仍落后于真实阶段。
   System::Call 'uxtheme::SetWindowTheme(p $DC_StageBar,w "",w "")'
+  ; COLORREF 使用 BGR 顺序，对应品牌深橙和浅灰轨道。
+  SendMessage $DC_StageBar 0x409 0 0x0C41C2
+  SendMessage $DC_StageBar 0x2001 0 0xEEEFF1
   SendMessage $DC_StageBar 0x406 0 4
   ShowWindow $mui.InstFilesPage.ProgressBar ${SW_HIDE}
   System::Call 'user32::GetWindowRect(p $mui.InstFilesPage.ShowLogButton,p r0)'
@@ -80,7 +84,7 @@ Function DC_ShowInstallProgress
   System::Call '*$0(i,i,i.r3,i)'
   IntOp $3 $3 - $1
   IntOp $3 $3 - $1
-  System::Call 'user32::CreateWindowExW(i0,w "BUTTON",w "显示安装详情",i0x50010003,ir1,ir2,ir3,ir4,p $mui.InstFilesPage,p1991,p0,p0)p.s'
+  System::Call 'user32::CreateWindowExW(i0,w "BUTTON",w "显示安装日志",i0x50010003,ir1,ir2,ir3,ir4,p $mui.InstFilesPage,p1991,p0,p0)p.s'
   Pop $DC_DetailToggle
   ; 标准展开按钮与日志原本共用同一行；为可反复切换的开关单独留出一行。
   IntOp $5 $2 + $4
@@ -94,7 +98,7 @@ Function DC_ShowInstallProgress
   System::Call 'user32::SetWindowPos(p $mui.InstFilesPage.Log,p0,ir1,ir5,ir3,ir4,i0x14)'
   SendMessage $mui.InstFilesPage.ShowLogButton ${WM_GETFONT} 0 0 $5
   SendMessage $DC_DetailToggle ${WM_SETFONT} $5 1
-  SendMessage $DC_DetailToggle ${BM_SETCHECK} ${BST_CHECKED} 0
+  SendMessage $DC_DetailToggle ${BM_SETCHECK} ${BST_UNCHECKED} 0
   StrCpy $DC_DetailVisible -1
   Call DC_InstallDetailsTick
   ; 只借用隐藏窗口承载计时器，不把它当作向导页面。

@@ -3,6 +3,7 @@ import type { ReleaseSchedule } from './schedules';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Rocket,
+  Activity,
   Box,
   CalendarClock,
   ChevronDown,
@@ -1281,7 +1282,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
             setInspected(-1);
             openTask();
           }} aria-label="当前任务">
-          <Loader2 size={16} className="spin" /><span>当前任务</span><small>{taskProgress(task!)}%</small>
+          <Activity size={16} aria-hidden="true" /><span>当前任务</span><small>{taskProgress(task!)}%</small>
         </button>}
         global={[
           ...nav.filter((n) => n.page !== 'deploy').map((n) => ({ ...n })),
@@ -1717,17 +1718,16 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                   <div className="deployment-footer" aria-label="部署操作">
                     <div className="deployment-count grow"><strong>已选 {chosen.length} 个目标</strong><small>{build === 'rebuild' ? '构建一次' : '使用现有 JAR'} · {chosen.filter((t) => effective(t).enabled).length} 个开启备份</small></div>
                     <div className="failure-policy">
+                      <Button variant="link" size="compact" className="failure-policy-reset"
+                        hidden={failureOverride === null}
+                        onClick={() => setFailureOverride(null)}>恢复默认</Button>
                       <label className="sr-only" htmlFor="deployment-failure-policy">某个目标失败后</label>
                       <select id="deployment-failure-policy" value={failureOverride ?? db.settings.failurePolicy}
                         onChange={(event) => setFailureOverride(event.target.value as Database['settings']['failurePolicy'])}>
                         <option value="stop">失败后停止后续目标</option>
                         <option value="continue">失败后继续其他目标</option>
                       </select>
-                      <FieldHelp label="某个目标失败后" text="这是本次覆盖，只作用于本次部署。可在「设置 → 部署与构建」修改默认策略。" />
-                      {failureOverride !== null && <>
-                        <small>本次覆盖</small>
-                        <Button variant="link" size="compact" onClick={() => setFailureOverride(null)}>恢复默认</Button>
-                      </>}
+                      <FieldHelp label="某个目标失败后" text="此处的选择只作用于本次部署。可在「设置 → 部署与构建」修改默认策略。" />
                     </div>
                     {desktop && <Button variant="neutral" disabled={busy || isActive(task) || !!blockReason || !chosen.length} onClick={() => void launch(chosen, undefined, true)}>试运行（远程只读）</Button>}
                     <Button disabled={busy || (!isActive(task) && (!!blockReason || !chosen.length || (!desktop && build === 'existing' && !artifact.exists)))} onClick={() => void launch()}>

@@ -77,6 +77,23 @@ try{
   Check '已安装程序实际启动与 SQLite 加密渲染' ((Run $exe '--smoke') -eq 0 -and (Get-Content (Join-Path $data 'smoke-result.json') -Raw | ConvertFrom-Json).ok)
   Start-Sleep -Milliseconds 800
   Check '覆盖升级保留用户数据' ((Run $installer '/S') -eq 0 -and (Get-Content (Join-Path $data 'keep-user-data.txt') -Raw).Trim() -eq $id)
+  $protectedProgram=Join-Path $data 'Program'
+  New-Item -ItemType Directory -Path $protectedProgram | Out-Null
+  Check '拒绝安装到用户数据目录的子目录' ((Run $installer "/S /D=$protectedProgram") -eq 1603 -and @(Get-ChildItem -LiteralPath $protectedProgram -Force).Count -eq 0 -and (Test-Path -LiteralPath $exe))
+  $occupied=Join-Path $qaRoot '已有文件'
+  New-Item -ItemType Directory -Path $occupied | Out-Null
+  $marker=Join-Path $occupied 'keep.txt'
+  Set-Content -LiteralPath $marker -Value $id -Encoding utf8
+  Check '拒绝占用含其他文件的目录' ((Run $installer "/S /D=$occupied") -ne 0 -and (Get-Content -LiteralPath $marker -Raw).Trim() -eq $id)
+  $newProgram=Join-Path $qaRoot '新位置 Space/程序'
+  Check '升级可更换程序目录' ((Run $installer "/S /D=$newProgram") -eq 0)
+  $newExe=Join-Path $newProgram "$product.exe"
+  $entry=@(Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty | Where-Object {$_.DisplayName -like "$product*"})
+  Check '换目录后程序和注册指向新位置' ((Test-Path -LiteralPath $newExe) -and -not(Test-Path -LiteralPath $exe) -and $entry.Count -eq 1 -and $entry[0].InstallLocation -eq $newProgram.Replace('/','\'))
+  Check '换目录后用户数据和应用可用' ((Get-Content (Join-Path $data 'keep-user-data.txt') -Raw).Trim() -eq $id -and (Run $newExe '--smoke') -eq 0)
+  Start-Sleep -Milliseconds 800
+  $program=$newProgram
+  $exe=$newExe
   $uninstaller=Join-Path $program "Uninstall $product.exe"
   Check '默认卸载成功' ((Run $uninstaller '/S') -eq 0)
   $deadline=[DateTime]::UtcNow.AddSeconds(30);while((Test-Path -LiteralPath $exe)-and[DateTime]::UtcNow -lt $deadline){Start-Sleep -Milliseconds 200}

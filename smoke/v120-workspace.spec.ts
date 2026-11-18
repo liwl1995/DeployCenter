@@ -92,7 +92,8 @@ test.beforeEach(async () => {
 test.afterEach(async () => {
   await app?.close();
   if (!dir.startsWith(path.resolve('.test-data') + path.sep)) throw new Error('越界');
-  await fs.rm(dir, { recursive: true, force: true });
+  // Windows 上 Electron 退出后，拼写词典的文件句柄可能稍晚释放。
+  await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });
 });
 test('全部页面在三个宽度和两种主题下无横向溢出，真实边界始终可见', async () => {
   const page = await app.firstWindow(),

@@ -371,7 +371,7 @@ test('1.1.0 自动读取 JAR/Git、刷新信息、字段提示及部署按钮间
   const help = page.getByRole('button', { name: '某个目标失败后说明' });
   await help.focus();
   await expect(page.getByRole('tooltip')).toBeVisible();
-  await expect(page.getByRole('tooltip')).toContainText('本次覆盖');
+  await expect(page.getByRole('tooltip')).toContainText('只作用于本次部署');
   await git(['checkout', '-b', 'metadata-refreshed']);
   await page.getByRole('button', { name: '刷新 JAR / Git 信息' }).click();
   await expect(page.locator('.branch')).toContainText('metadata-refreshed');

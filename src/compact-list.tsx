@@ -7,7 +7,7 @@ export function CompactStatus({ label, tone }: { label: string; tone: CompactTon
   return (
     <span className={'compact-status ' + tone} title={label}>
       <i aria-hidden="true" />
-      {label}
+      <span>{label}</span>
     </span>
   );
 }
