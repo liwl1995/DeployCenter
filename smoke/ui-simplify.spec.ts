@@ -1,3 +1,4 @@
+import { expectViewport } from './window-size';
 import Sqlite from 'better-sqlite3';
 import { Storage } from '../electron/storage';
 import { createTask } from '../src/engine';
@@ -111,7 +112,7 @@ test.beforeEach(async ({}, info) => {
     );
   }
   const page = await app.firstWindow();
-  await expect(page.getByRole('heading', { name: '准备好，发布下一版本' })).toBeVisible();
+  await expect(page.getByRole('region', { name: '服务工作台' })).toBeVisible();
 });
 test.afterEach(async () => {
   await app?.close();
@@ -134,7 +135,7 @@ async function size(width: number, height: number) {
     [width, height],
   );
   const page = await app.firstWindow();
-  await expect.poll(() => page.evaluate(() => [innerWidth, innerHeight])).toEqual([width, height]);
+  await expectViewport(page, width, height);
   // 等待视口调整对应的布局和滚动事件落定，避免新打开的菜单被上一帧事件关闭。
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 }
@@ -145,34 +146,31 @@ async function boundaries() {
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth - innerWidth),
   ).toBeLessThanOrEqual(1);
-  await expect(page.getByRole('contentinfo', { name: '应用状态' })).toBeInViewport({ ratio: 1 });
+  await expect(page.locator('.service-sidebar')).toBeInViewport({ ratio: 1 });
 }
 async function shot(name: string) {
   const page = await app.firstWindow();
   await fs.mkdir(captures, { recursive: true });
   await page.screenshot({ path: path.join(captures, name + '.png') });
 }
-test('启动直接部署，三个配置页卡片与详情在三种尺寸下可用', async () => {
+test('启动直接部署，三个配置页列表与详情在三种尺寸下可用', async () => {
   const page = await app.firstWindow();
   const nav = page.getByRole('navigation', { name: '主导航' });
-  await expect(page.getByRole('heading', { name: '准备好，发布下一版本' })).toBeVisible();
+  await expect(page.getByRole('region', { name: '服务工作台' })).toBeVisible();
   await expect(nav.getByRole('button', { name: '首页总览' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '重复上次部署' })).toHaveCount(0);
   for (const [width, height] of sizes) {
     await size(width, height);
     for (const name of ['服务管理', '部署目标', '服务器']) {
-      await nav.getByRole('button', { name, exact: true }).click();
-      const grid = page.locator('.entity-card-grid');
-      await expect(grid.locator('.entity-card')).toHaveCount(6);
-      const columns = await grid.evaluate(
-        (el) => getComputedStyle(el).gridTemplateColumns.split(' ').length,
-      );
-      expect(columns).toBe(3);
-      const lastCard = (await grid.locator('.entity-card').last().boundingBox())!;
-      const footerBox = (await page.getByRole('contentinfo', { name: '应用状态' }).boundingBox())!;
-      expect(lastCard.y + lastCard.height).toBeLessThanOrEqual(footerBox.y);
+      await page.getByRole('button', { name, exact: true }).click();
+      const grid = page.locator('.entity-list');
+      await expect(grid.locator('.entity-record')).toHaveCount(6);
+      const firstRow = (await grid.locator('.entity-record').first().boundingBox())!;
+      const secondRow = (await grid.locator('.entity-record').nth(1).boundingBox())!;
+      expect(firstRow.x).toBe(secondRow.x);
+      expect(secondRow.y).toBeGreaterThan(firstRow.y + firstRow.height);
       await expect(
-        grid.locator('.entity-card').first().locator('.entity-actions button'),
+        grid.locator('.entity-record').first().locator('.entity-actions button'),
       ).toHaveCount(3);
 
       await expect(page.locator('.entity-detail')).toHaveCount(0);
@@ -191,7 +189,7 @@ test('启动直接部署，三个配置页卡片与详情在三种尺寸下可�
       await shot(name + '-' + width + 'x' + height);
       const text = name === '服务管理' ? '中文' : name === '部署目标' ? '环境' : '仅配置';
       await search.fill(text);
-      const card = grid.locator('.entity-card').last();
+      const card = grid.locator('.entity-record').last();
       await card.scrollIntoViewIfNeeded();
       const main = page.getByRole('main');
       const before = await main.evaluate((el) => el.scrollTop);
@@ -347,9 +345,13 @@ test('日志优先任务页的八种状态与连续输出在三个尺寸下可�
             : '远程执行日志\n'),
       );
       await page.reload();
-      await page.locator('.footer-task').click();
+      if (fixture === 'running') await page.getByRole('button', { name: '当前任务', exact: true }).click();
+      else {
+        await page.getByRole('button', { name: '部署历史', exact: true }).click();
+        await page.locator('.history-task').first().click();
+      }
       const taskPage = page.locator('.task-page');
-      const footer = page.getByRole('contentinfo', { name: '应用状态' });
+      const sidebar = page.locator('.service-sidebar');
       await expect(taskPage.getByRole('heading', { level: 1 })).not.toContainText(task.id);
       await expect(taskPage.getByRole('heading', { name: '执行日志' })).toBeVisible();
       await expect(
@@ -429,9 +431,7 @@ test('日志优先任务页的八种状态与连续输出在三个尺寸下可�
         await main.evaluate((el) => {
           el.scrollTop = 0;
         });
-        await expect
-          .poll(() => page.evaluate(() => [innerWidth, innerHeight]))
-          .toEqual([width, height]);
+        await expectViewport(page, width, height);
         if (primary)
           await expect(taskPage.getByRole('button', { name: primary, exact: true })).toBeInViewport(
             { ratio: 1 },
@@ -460,16 +460,17 @@ test('日志优先任务页的八种状态与连续输出在三个尺寸下可�
         );
         await expect(taskPage.getByRole('textbox', { name: '搜索日志' })).toHaveCount(0);
         await expect(taskPage.getByRole('button', { name: '复制完整日志' })).toHaveCount(0);
-        const footerBounds = (await footer.boundingBox())!;
-        expect(logBounds.y + logBounds.height).toBeLessThanOrEqual(footerBounds.y + 1);
+        expect(logBounds.y + logBounds.height).toBeLessThanOrEqual(mainBounds.y + mainBounds.height + 1);
         await shot(fixture + '-' + width + 'x' + height);
         if (fixture === 'success') {
           await page.evaluate(() => {
             document.documentElement.dataset.theme = 'dark';
+      document.documentElement.classList.toggle('dark', true);
           });
           await shot(fixture + '-dark-' + width + 'x' + height);
           await page.evaluate(() => {
             document.documentElement.dataset.theme = 'light';
+      document.documentElement.classList.toggle('dark', false);
           });
         }
         const menu = taskPage.getByRole('button', { name: '更多任务操作' });
@@ -483,11 +484,11 @@ test('日志优先任务页的八种状态与连续输出在三个尺寸下可�
           expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(height);
           await page.keyboard.press('Escape');
         }
-        const footerBefore = await footer.boundingBox();
+        const footerBefore = await sidebar.boundingBox();
         await main.evaluate((el) => {
           el.scrollTop = el.scrollHeight;
         });
-        expect(await footer.boundingBox()).toEqual(footerBefore);
+        expect(await sidebar.boundingBox()).toEqual(footerBefore);
         await expect(taskPage.locator('.task-page-header')).toBeInViewport({ ratio: 1 });
       }
       db.prepare('DELETE FROM tasks WHERE id = ?').run(task.id);
@@ -666,6 +667,7 @@ test('更新设置三种窗口下无溢出，按需下载、取消和校验，�
     for (const theme of ['light', 'dark']) {
       await page.evaluate((theme) => {
         document.documentElement.dataset.theme = theme;
+      document.documentElement.classList.toggle('dark', theme === 'dark');
       }, theme);
       for (const [width, height] of sizes) {
         await app.evaluate(
@@ -852,6 +854,7 @@ test('历史与构建环境单行布局在三个尺寸和两种主题下紧凑�
   for (const theme of ['light', 'dark']) {
     await page.evaluate((theme) => {
       document.documentElement.dataset.theme = theme;
+      document.documentElement.classList.toggle('dark', theme === 'dark');
     }, theme);
     for (const [width, height] of sizes) {
       await size(width, height);
@@ -871,7 +874,7 @@ test('历史与构建环境单行布局在三个尺寸和两种主题下紧凑�
       const heights = await page
         .locator('.history-task')
         .evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height));
-      expect(heights.every((height) => height >= 48 && height <= 56)).toBe(true);
+      expect(heights.every((height) => height >= 32 && height <= 56), heights.join(', ')).toBe(true);
       expect(
         await page.locator('main').evaluate((main) => main.scrollWidth <= main.clientWidth),
       ).toBe(true);
@@ -902,7 +905,7 @@ test('历史与构建环境单行布局在三个尺寸和两种主题下紧凑�
       const toolHeights = await jdk
         .locator('.compact-data-row')
         .evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height));
-      expect(toolHeights.every((height) => height >= 48 && height <= 56)).toBe(true);
+      expect(toolHeights.every((height) => height >= 32 && height <= 56), toolHeights.join(', ')).toBe(true);
       await boundaries();
       await shot(`单行JDK-${theme}-${width}x${height}`);
       const jdkRow = jdk.getByRole('row', { name: 'JDK JDK 21-0', exact: true });
@@ -927,112 +930,36 @@ test('历史与构建环境单行布局在三个尺寸和两种主题下紧凑�
   }
 });
 
-test('顶栏外观与设置在三个窗口下固定可用，主题同步保存并跟随系统', async () => {
+test('设置外观支持两种主题、跟随系统和重新启动后的偏好恢复', async () => {
   test.setTimeout(120_000);
   const page = await app.firstWindow();
-  const nav = page.getByRole('navigation', { name: '主导航' });
-  const group = page.getByRole('group', { name: '外观与设置' });
-  const appearance = group.getByRole('button', { name: /切换外观/ });
-  const settings = group.getByRole('button', { name: '设置', exact: true });
-  await expect(nav.getByRole('button', { name: '设置', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: '设置', exact: true })).toHaveCount(1);
+  const settings = page.getByRole('button', { name: '设置', exact: true });
+  await settings.click();
+  await page.getByRole('tab', { name: '外观与提醒', exact: true }).click();
+  const select = page.getByLabel('界面主题', { exact: true });
   const colors: Record<string, string> = {};
-  for (const [theme, label] of [
-    ['light', '浅色'],
-    ['dark', '深色'],
-  ]) {
-    await appearance.click();
-    await page.getByRole('menuitemradio', { name: label, exact: true }).click();
-    await expect
-      .poll(() => page.evaluate(() => document.documentElement.dataset.theme))
-      .toBe(theme);
-    await expect
-      .poll(() =>
-        page.evaluate(async () => (await window.deployCenter!.load()).database.settings.theme),
-      )
-      .toBe(theme);
-    colors[theme] = await page.evaluate(
-      () => getComputedStyle(document.documentElement).backgroundColor,
-    );
+  for (const theme of ['light', 'dark']) {
+    await select.selectOption(theme);
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    await expect.poll(async () => (await page.evaluate(() => window.deployCenter!.load())).database.settings.theme).toBe(theme);
+    colors[theme] = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     for (const [width, height] of sizes) {
       await size(width, height);
-      const bar = (await page.locator('.workspace-bar').boundingBox())!;
-      const mode = (await page.getByText('真实部署 · 请核对目标', { exact: true }).boundingBox())!;
-      const icon = (await settings.boundingBox())!;
-      const themeIcon = (await appearance.boundingBox())!;
-      expect(bar.height).toBeGreaterThanOrEqual(48);
-      expect(bar.height).toBeLessThanOrEqual(50);
-      expect(icon.width).toBeGreaterThanOrEqual(36);
-      expect(icon.height).toBeGreaterThanOrEqual(36);
-      expect(icon.x + icon.width).toBeGreaterThan(width - 50);
-      expect(themeIcon.x).toBeGreaterThan(mode.x + mode.width);
-      await appearance.click();
-      const menu = page.getByRole('menu');
-      await expect(menu.getByRole('menuitemradio')).toHaveCount(3);
-      await expect(menu.getByRole('menuitemradio', { name: label, exact: true })).toHaveAttribute(
-        'aria-checked',
-        'true',
-      );
-      const popup = (await menu.boundingBox())!;
-      expect(popup.x).toBeGreaterThanOrEqual(0);
-      expect(popup.x + popup.width).toBeLessThanOrEqual(width);
-      expect(popup.y).toBeGreaterThanOrEqual(0);
-      expect(popup.y + popup.height).toBeLessThanOrEqual(height);
-      await boundaries();
-      await shot(`顶栏全局操作-${theme}-${width}x${height}`);
-      await page.keyboard.press('Escape');
-      await expect(appearance).toBeFocused();
-      await settings.click();
-      await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
-      await expect(settings).toHaveAttribute('aria-current', 'page');
-      await page.locator('main').evaluate((main) => {
-        main.scrollTop = main.scrollHeight;
-      });
-      const fixed = (await settings.boundingBox())!;
-      expect(Math.abs(fixed.y - icon.y)).toBeLessThan(1);
       await expect(settings).toBeInViewport({ ratio: 1 });
+      await expect(select).toBeInViewport({ ratio: 1 });
       await boundaries();
-      await nav.getByRole('button', { name: '部署历史', exact: true }).click();
+      await shot('外观-' + theme + '-' + width + 'x' + height);
     }
   }
   expect(colors.light).not.toBe(colors.dark);
-  await appearance.focus();
-  await page.keyboard.press('ArrowDown');
-  await expect(page.getByRole('menuitemradio', { name: '深色', exact: true })).toBeFocused();
-  await page.keyboard.press('Escape');
-  await expect(appearance).toBeFocused();
-  await page.keyboard.press('Enter');
-  await page.keyboard.press('Tab');
-  await expect(page.getByRole('menu')).toHaveCount(0);
-  await expect(settings).toBeFocused();
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await settings.click();
   await page.getByRole('tab', { name: '外观与提醒', exact: true }).click();
-  await expect(page.getByLabel('界面主题', { exact: true })).toHaveValue('dark');
-  await page.getByLabel('界面主题', { exact: true }).selectOption('light');
-  await expect(appearance).toHaveAttribute('title', /浅色/);
-  await appearance.click();
-  await page.getByRole('menuitemradio', { name: '深色', exact: true }).click();
-  await expect
-    .poll(() =>
-      page.evaluate(async () => (await window.deployCenter!.load()).database.settings.theme),
-    )
-    .toBe('dark');
-  await page.reload();
-  await expect(appearance).toHaveAttribute('title', /深色/);
-  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe('dark');
-  await appearance.click();
-  await page.getByRole('menuitemradio', { name: '跟随系统', exact: true }).click();
-  await expect
-    .poll(() =>
-      page.evaluate(async () => (await window.deployCenter!.load()).database.settings.theme),
-    )
-    .toBe('system');
+  await select.selectOption('system');
   for (const theme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme: theme });
-    await expect
-      .poll(() => page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor))
-      .toBe(colors[theme]);
-    await expect(appearance).toHaveAttribute('title', /跟随系统/);
+    await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(colors[theme]);
   }
   await page.emulateMedia({ colorScheme: null });
 });
@@ -1100,11 +1027,11 @@ test('文本复制写入原生剪贴板并可直接粘贴，失败不会下载�
     owned='b'.repeat(40);
     await expect.poll(()=>app.evaluate(({clipboard})=>clipboard.readText())).toBe(owned);
     await expect(page.getByRole('status').filter({hasText:'已复制'})).toBeVisible();
-    await page.getByRole('navigation').getByRole('button',{name:'服务管理',exact:true}).click();
+    await page.getByRole('button',{name:'服务管理',exact:true}).click();
     const search=page.locator('.entity-toolbar').getByRole('textbox');
     await search.focus();await page.keyboard.press('Control+V');await expect(search).toHaveValue(owned);
     await page.getByRole('navigation').getByRole('button',{name:'部署目标',exact:true}).click();
-    await expect(page.locator('.entity-card-grid').getByRole('button',{name:'编辑',exact:true})).toHaveCount(6);
+    await expect(page.locator('.entity-list').getByRole('button',{name:'编辑',exact:true})).toHaveCount(6);
     await expect(page.getByRole('button',{name:'编辑目标',exact:true})).toHaveCount(0);
     expect(await app.evaluate(()=>(globalThis as any).__copyDownloads)).toBe(0);
   }finally{

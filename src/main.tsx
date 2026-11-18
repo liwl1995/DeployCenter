@@ -1,6 +1,8 @@
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { desktop } from './platform';
+import { initializeInputModality } from './design/lib/inputModality';
+initializeInputModality();
 async function mount() {
   try {
     if (typeof __PROTOTYPE__ !== 'undefined' && !__PROTOTYPE__ && !desktop)

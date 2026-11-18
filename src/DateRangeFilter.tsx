@@ -1,3 +1,4 @@
+import { Button } from './design/ui/button';
 import { useState } from 'react';
 import { Modal, Field } from './ui';
 import { DateFilter } from './DateFilter';
@@ -22,23 +23,23 @@ export function DateRangeFilter({
           { label: '近 7 天', days: 7 },
           { label: '近 30 天', days: 30 },
         ].map(({ label, days }) => (
-          <button
+          <Button
             key={label}
-            className="button"
+            variant="neutral" size="compact"
             onClick={() => onChange(days ? recentDates(days) : { from: '', to: '' })}
           >
             {label}
-          </button>
+          </Button>
         ))}
-        <button
-          className="button"
+        <Button
+          variant="neutral" size="compact"
           onClick={() => {
             setDraft(value);
             setOpen(true);
           }}
         >
           自定义
-        </button>
+        </Button>
       </div>
       {(value.from || value.to) && (
         <p className="note" role="status">
@@ -62,11 +63,11 @@ export function DateRangeFilter({
             </p>
           )}
           <footer className="modal-actions">
-            <button className="button" onClick={() => setOpen(false)}>
+            <Button variant="neutral" size="compact" onClick={() => setOpen(false)}>
               取消
-            </button>
-            <button
-              className="button primary"
+            </Button>
+            <Button
+              variant="default" size="compact"
               disabled={!valid}
               onClick={() => {
                 onChange(draft);
@@ -74,7 +75,7 @@ export function DateRangeFilter({
               }}
             >
               应用日期范围
-            </button>
+            </Button>
           </footer>
         </Modal>
       )}

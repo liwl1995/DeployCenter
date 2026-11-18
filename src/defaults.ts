@@ -1,5 +1,5 @@
 import type { Database, Service, Target } from './model';
-export const prototype = typeof __PROTOTYPE__ === 'undefined' || __PROTOTYPE__;
+export const prototype = typeof __PROTOTYPE__ !== 'undefined' && __PROTOTYPE__;
 export function newService(): Service {
   return {
     id: crypto.randomUUID(),

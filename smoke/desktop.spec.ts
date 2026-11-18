@@ -59,12 +59,12 @@ test('首次启动无示例服务器；安全选项和 IPC 工作', async () => 
   expect(prefs).toEqual({ sandbox: true, contextIsolation: true, nodeIntegration: false });
   expect((await page.evaluate(() => window.deployCenter!.load())).database.servers).toHaveLength(0);
   await expect(page.getByText('模拟当前目标启动 / 健康检查失败')).toHaveCount(0);
-  await expect(page.getByRole('contentinfo', { name: '应用状态' })).toBeVisible();
+  await expect(page.locator('.desktop-page-header')).toBeVisible();
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible();
 });
 test('通过界面保存第一个服务，重启后从 SQLite 恢复', async () => {
   const page = await app.firstWindow();
-  await page.getByRole('navigation').getByRole('button', { name: '服务管理', exact: true }).click();
+  await page.getByRole('button', { name: '服务管理', exact: true }).click();
   await page.getByRole('button', { name: '添加服务', exact: true }).click();
   await page.getByLabel('服务名称', { exact: true }).fill('本机验收服务');
   await page.getByLabel('服务标识', { exact: true }).fill('local-smoke');
@@ -73,7 +73,7 @@ test('通过界面保存第一个服务，重启后从 SQLite 恢复', async () 
   await expect(
     page
       .getByRole('navigation', { name: '主导航' })
-      .getByRole('button', { name: '一键部署', exact: true }),
+      .getByRole('button', { name: '本机验收服务', exact: true }),
   ).toBeVisible();
   await page.getByRole('button', { name: '服务器', exact: true }).click();
   await expect(page.getByText('cordys-19', { exact: false })).toHaveCount(0);
@@ -107,7 +107,7 @@ test('通过界面保存第一个服务，重启后从 SQLite 恢复', async () 
   await expect(
     restored
       .getByRole('navigation', { name: '主导航' })
-      .getByRole('button', { name: '一键部署', exact: true }),
+      .getByRole('button', { name: '本机验收服务', exact: true }),
   ).toBeVisible();
   expect(
     (await restored.evaluate(() => window.deployCenter!.load())).database.services[0].name,
@@ -216,7 +216,7 @@ test('utilityProcess 通过 IPC 执行只读试运行，完成首次指纹确认
     await page.reload();
     await page
       .getByRole('navigation', { name: '主导航' })
-      .getByRole('button', { name: '一键部署', exact: true })
+      .getByRole('button', { name: service.name, exact: true })
       .click();
     await page.getByRole('button', { name: '使用现有 JAR', exact: true }).click();
     await page.getByRole('button', { name: '试运行（远程只读）', exact: true }).click();
@@ -257,7 +257,7 @@ test('utilityProcess 通过 IPC 执行只读试运行，完成首次指纹确认
     await expect(page.getByRole('group', { name: '选择任务目标' })).toHaveCount(0);
     await expect(page.getByRole('heading', { name: '执行日志', exact: true })).toBeVisible();
     await page.getByRole('button', { name: '返回部署', exact: true }).click();
-    await expect(page.getByRole('heading', { name: '准备好，发布下一版本' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: service.name, exact: true })).toBeVisible();
     await page.getByRole('button', { name: '部署历史', exact: true }).click();
     await page.locator('.history-task').first().click();
     await page.getByRole('button', { name: '返回部署历史', exact: true }).click();
@@ -351,7 +351,7 @@ test('1.1.0 自动读取 JAR/Git、刷新信息、字段提示及部署按钮间
   const page = await app.firstWindow();
   await page
     .getByRole('navigation', { name: '主导航' })
-    .getByRole('button', { name: '一键部署', exact: true })
+    .getByRole('button', { name: service.name, exact: true })
     .click();
   await page.getByRole('button', { name: '使用现有 JAR', exact: true }).click();
   await page.locator('.build-details > summary').click();
@@ -367,7 +367,7 @@ test('1.1.0 自动读取 JAR/Git、刷新信息、字段提示及部署按钮间
   const dryRun = await page
     .getByRole('button', { name: '试运行（远程只读）', exact: true })
     .boundingBox();
-  expect(dryRun!.y - (deploy!.y + deploy!.height)).toBeGreaterThanOrEqual(10);
+  expect(deploy!.x - (dryRun!.x + dryRun!.width)).toBeGreaterThanOrEqual(6);
   const help = page.getByRole('button', { name: '某个目标失败后说明' });
   await help.focus();
   await expect(page.getByRole('tooltip')).toBeVisible();

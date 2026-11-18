@@ -1,3 +1,4 @@
+import { Button } from './design/ui/button';
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import type { DiagnosticResult } from './features';
 import { fmtTime } from './model';
@@ -18,12 +19,12 @@ import { prototype } from './defaults';
 type SaveProps<T> = { initial: T; db: Database; onSave: (value: T) => void; onClose: () => void };
 const Submit = ({ onClose }: { onClose: () => void }) => (
   <footer className="modal-actions">
-    <button type="button" className="button" onClick={onClose}>
+    <Button type="button" variant="neutral" size="compact" onClick={onClose}>
       取消
-    </button>
-    <button className="button primary" type="submit">
+    </Button>
+    <Button variant="default" size="compact" type="submit">
       保存配置
-    </button>
+    </Button>
   </footer>
 );
 export function ServiceForm({ initial, db, onSave, onClose }: SaveProps<Service>) {
@@ -294,9 +295,9 @@ export function ServerForm({
             </Field>
             <p className="note wide">
               {v.credentialMode === 'windows'
-                ? desktop
-                  ? '使用当前 Windows 用户的 DPAPI 加密；下次部署可复用。加密不可用时将阻止保存。'
-                  : 'Windows 凭据管理器是正式版能力；原型仍在部署确认时询问，不保存口令。'
+                ? prototype && !desktop
+                  ? 'Windows 凭据管理器是正式版能力；原型仍在部署确认时询问，不保存口令。'
+                  : '使用当前 Windows 用户的 DPAPI 加密；下次部署可复用。加密不可用时将阻止保存。'
                 : '部署确认时按服务器询问密码或私钥口令，仅保留在任务内存。'}
             </p>
           </>
@@ -328,9 +329,9 @@ export function ServerForm({
               />
             </Field>
           )}
-          <button type="button" className="button" disabled={testing} onClick={() => void test()}>
+          <Button type="button" variant="neutral" size="compact" disabled={testing} onClick={() => void test()}>
             {testing ? '测试中…' : '测试当前表单连接'}
-          </button>
+          </Button>
           {testError && (
             <p role="alert" className="warning">
               {testError}
@@ -824,27 +825,27 @@ export function TargetForm({ initial, db, onSave, onClose, initialTab }: SavePro
         )}
       </div>
       <footer className="modal-actions">
-        <button type="button" className="button" onClick={onClose}>
+        <Button type="button" variant="neutral" size="compact" onClick={onClose}>
           取消
-        </button>
+        </Button>
         {step > 0 && (
-          <button type="button" className="button" onClick={() => showTab(targetTabs[step - 1])}>
+          <Button type="button" variant="neutral" size="compact" onClick={() => showTab(targetTabs[step - 1])}>
             上一步
-          </button>
+          </Button>
         )}
         {lastStep ? (
-          <button key="save" type="submit" className="button primary">
+          <Button key="save" type="submit" variant="default" size="compact">
             保存配置
-          </button>
+          </Button>
         ) : (
-          <button
+          <Button
             key="next"
             type="button"
-            className="button primary"
+            variant="default" size="compact"
             onClick={() => showTab(targetTabs[step + 1])}
           >
             下一步
-          </button>
+          </Button>
         )}
       </footer>
     </form>

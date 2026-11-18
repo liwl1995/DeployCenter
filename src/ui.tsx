@@ -1,3 +1,4 @@
+import { Button } from './design/ui/button';
 import {
   useEffect,
   useLayoutEffect,
@@ -41,7 +42,7 @@ export function Card({
   );
 }
 /** 提示放到页面浮层，避免在矮窗口或弹窗滚动区域内被裁掉。 */
-function FieldHelp({ label, text }: { label: string; text: string }) {
+export function FieldHelp({ label, text }: { label: string; text: string }) {
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const tooltip = useRef<HTMLSpanElement>(null);
@@ -193,6 +194,19 @@ export function Switch({
     </label>
   );
 }
+const modalPanels = new Set<HTMLElement>();
+let modalBodyOverflow = '';
+
+export function hasOpenModal() {
+  return modalPanels.size > 0;
+}
+
+function isTopModal(panel: HTMLElement) {
+  return ![...modalPanels].some(
+    (other) => panel.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING,
+  );
+}
+
 export function Modal({
   title,
   children,
@@ -216,9 +230,14 @@ export function Modal({
   close.current = onClose;
   const cannotClose = useRef(closeDisabled);
   cannotClose.current = closeDisabled;
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previous = returnFocus ?? (document.activeElement as HTMLElement | null);
     const panel = ref.current!;
+    if (!modalPanels.size) {
+      modalBodyOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+    }
+    modalPanels.add(panel);
     const controls = () =>
       [
         ...panel.querySelectorAll<HTMLElement>(
@@ -234,7 +253,7 @@ export function Modal({
             !collapsed.parentElement?.closest('details:not([open])'))
         );
       });
-    if ([...document.querySelectorAll('[role="dialog"]')].at(-1) === panel) {
+    if (isTopModal(panel)) {
       const items = controls();
       (
         items.find((e) => e.hasAttribute('data-autofocus')) ||
@@ -243,7 +262,7 @@ export function Modal({
       )?.focus();
     }
     const key = (e: KeyboardEvent) => {
-      if ([...document.querySelectorAll('[role="dialog"]')].at(-1) !== panel) return;
+      if (!isTopModal(panel)) return;
       if (e.key === 'Escape') {
         e.preventDefault();
         if (!cannotClose.current) close.current();
@@ -262,12 +281,12 @@ export function Modal({
       }
     };
     document.addEventListener('keydown', key);
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
     return () => {
+      const restoreFocus = isTopModal(panel);
+      modalPanels.delete(panel);
+      if (!modalPanels.size) document.body.style.overflow = modalBodyOverflow;
       document.removeEventListener('keydown', key);
-      document.body.style.overflow = overflow;
-      if (previous?.isConnected) previous.focus();
+      if (restoreFocus && previous?.isConnected) previous.focus({ preventScroll: true });
     };
   }, []);
   return (
@@ -283,14 +302,14 @@ export function Modal({
           <div>
             <h2 id={id}>{title}</h2>
           </div>
-          <button
-            className="icon-button"
+          <Button
+            variant="ghost" size="icon-compact"
             disabled={closeDisabled}
             onClick={onClose}
             aria-label="关闭弹窗"
           >
             <X size={20} />
-          </button>
+          </Button>
         </header>
         <div className="modal-content">{children}</div>
         {footer && <footer className="modal-footer">{footer}</footer>}
@@ -413,9 +432,9 @@ export function PathInput({
         onChange={(e) => onChange(e.target.value)}
       />
       {desktop && (
-        <button
+        <Button
           type="button"
-          className="button"
+          variant="neutral" size="compact"
           disabled={disabled}
           onClick={() =>
             void desktop!.choose(kind).then((path) => {
@@ -424,7 +443,7 @@ export function PathInput({
           }
         >
           浏览…
-        </button>
+        </Button>
       )}
     </div>
   );

@@ -4,13 +4,20 @@
 
 ## 安装与启动
 
-运行 `YOTOO部署中心-1.7.0-x64-安装包.exe`，按中文向导选择目录和桌面快捷方式。开始菜单入口始终创建，完成页可选择立即运行。默认安装到当前用户的 Programs 目录；其他目录必须具备写入权限和足够空间，不自动请求管理员权限。
+运行 `YOTOO部署中心-2.0.0-x64-安装包.exe`，按中文向导选择目录和桌面快捷方式。开始菜单入口始终创建，完成页可选择立即运行。默认安装到当前用户的 Programs 目录；其他目录必须具备写入权限和足够空间，不自动请求管理员权限。
 
 正常使用不需要安装 Node.js、数据库服务，也不需要另开前端或后端。图标、界面、帮助和依赖随安装包提供。只有实际构建时才需要在应用里配置外部 JDK、Wrapper/Maven；部署时需要访问目标服务器。Maven 首次下载依赖可能需要网络。
 
 安装器拒绝覆盖正在运行的应用，不会强杀部署任务。请在应用内等待任务结束或请求安全取消，再正常退出。升级识别固定应用 ID，沿用原安装目录，不生成重复安装项。升级前备份旧程序，失败时尝试恢复；恢复备份和失败日志跟随配置的数据目录，分别位于 `installer-backups` 和 `logs\installer`。
 
 默认卸载保留用户数据。卸载向导的可选组件可彻底清理配置、部署历史、凭据与日志，默认不勾选，并有二次确认。升级流程始终保留数据。
+
+## 2.0.0 桌面界面
+
+- 左侧直接选择服务，服务内切换部署目标、发布记录和构建配置。部署栏固定在窗口底部，试运行和部署在同一区域操作，定时发布放在「发布选项」。
+- 服务器、部署目标、发布计划、部署历史和构建环境都可直接从侧栏打开。设置集中提供外观、部署与构建、数据与存储、配置与帮助。原有本地配置和历史可随安装升级继续使用。
+- 默认窗口为 `1000 × 650`，最小为 `900 × 600`。窄窗时侧栏自动收起，也可手动切换。支持深色、浅色、系统主题，以及紧凑和舒适两种密度。
+- 从任务返回发布记录或部署历史时，恢复筛选、搜索、已展开的记录、滚动位置和焦点。间距、圆角、字重和控件遵循 [界面设计规范](docs/ui-design.md)。
 
 ## 数据与权限
 
@@ -81,19 +88,19 @@ SSH Config 别名由系统 `ssh.exe` 处理，保留 ProxyJump、Agent、Identit
 ## 开发与构建
 
 ```powershell
-npm ci
+npm ci --ignore-scripts
+node node_modules/electron/install.js
 npm run typecheck
 npm test
 npm run build
 npm run test:smoke
 npm start
-npm run rebuild:native
 npm run dist
 ```
 
 `npm run dist` 生成 NSIS 安装包。`installer/custom.nsh` 定义中文向导、路径/空间检查、快捷方式、运行保护、升级恢复与可选数据清理。`scripts/generate-icon.py` 生成 SVG 母版对应的多尺寸图标与安装品牌图形（需 Python + Pillow）。
 
-SQLite 使用 better-sqlite3，asarUnpack 解包原生模块。`@electron/rebuild` 从源码重编译需要 Visual Studio C++ Build Tools。本次环境缺少该工具链，重编译尝试失败；当前运行测试使用依赖自带的官方 N-API 预编译模块，已在 Electron 中实际加载。不能把预编译模块可用称为源码编译成功。
+锁文件统一使用 npm 官方源。Windows x64 构建使用 better-sqlite3 自带的 N-API 预编译模块，安装依赖时跳过原生重编译，再显式下载锁定版本的 Electron。自行重编译时，安装 Visual Studio C++ Build Tools 后运行 `npm run rebuild:native`。
 
 ## 测试与验收边界
 
@@ -119,7 +126,7 @@ SQLite 使用 better-sqlite3，asarUnpack 解包原生模块。`@electron/rebuil
 python scripts/package-source.py --output "YOTOO部署中心-1.0.0-source.zip"
 ```
 
-脚本包含源码、测试、构建脚本、安装品牌资源、dist、dist-electron、说明和逐文件 SHA256SUMS，排除 node_modules、release 和本机测试数据；生成后检查 ZIP CRC 和逐文件 SHA-256。
+源码包包含源码、测试、构建脚本、安装资源、说明和逐文件 SHA256SUMS。解压后用锁定的 npm 依赖重新构建，生成物和安装助手由构建生成。安装器另行分发，正式构建不生成源码映射。打包脚本检查 ZIP CRC 和逐文件 SHA-256。
 
 
 ## v1.1.0 本地优化

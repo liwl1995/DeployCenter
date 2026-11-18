@@ -1,0 +1,303 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-app: #ffffff;
+    --border: #e3e3e9;
+    --focus-rgb: 249 115 22;
+    --bg-sidebar: #f5f5f7;
+    --bg-subtle: #efeff2;
+    --bg-selected: #e4e4ea;
+    --bg-card: #ffffff;
+    --border-strong: #cfcfd6;
+    --text-1: #18181b;
+    --text-2: #52525b;
+    --text-3: #65656e;
+    --action-bg: #f97316;
+    --action-fg: #ffffff;
+    --action-hover: #ea620a;
+    --action-text: #c2410c;
+    --action-soft: #fff1e6;
+    --inverse-bg: #18181b;
+    --inverse-fg: #ffffff;
+    --inverse-hover: #2e2e33;
+    --overlay: rgba(9, 9, 11, 0.36);
+    --control-off: #888890;
+
+    /* 模式色：直连蓝、路由青绿、聚合紫。--*-border 是当前卡片的边框，等于各自的 fill */
+    --direct-fill: #0a84ff;
+    --direct-text: #0063c7;
+    --direct-soft: #eaf3ff;
+    --direct-solid: #0066cc;
+    --direct-on: #ffffff;
+    --direct-border: var(--direct-fill);
+
+    --route-fill: #0d9488;
+    --route-text: #06726b;
+    --route-soft: #e7f6f4;
+    --route-solid: #0f766e;
+    --route-on: #ffffff;
+    --route-border: var(--route-fill);
+
+    --stack-fill: #7c3aed;
+    --stack-text: #6d28d9;
+    --stack-soft: #f2ecfe;
+    --stack-solid: #6d28d9;
+    --stack-on: #ffffff;
+    --stack-border: var(--stack-fill);
+
+    --success: #16a34a;
+    --success-text: #007634;
+    --success-soft: #e8f7ee;
+    --warning: #d97706;
+    --warning-text: #a64a00;
+    --warning-soft: #fef3c7;
+    --danger: #dc2626;
+    --danger-text: #b91c1c;
+    --danger-soft: #fee2e2;
+    --chart-1: #0891b2;
+    /* 用量页的趋势图和热力图。暂时沿用 chart-1（深色下跟着 chart-1 变）；
+       单独留一个变量，以后换用量图配色不牵动额度条等其他用 chart-1 的地方 */
+    --chart-usage: var(--chart-1);
+    /* 热力图 1–4 档：前三档用 chart-usage 保住饱和度，最深档换同色相深一级的 #0e7490。
+       chart-usage 是中等亮度，只按浓度混的话最深档不够深，整张图偏淡 */
+    --heat-1: color-mix(in srgb, var(--chart-usage) 32%, transparent);
+    --heat-2: color-mix(in srgb, var(--chart-usage) 62%, transparent);
+    --heat-3: var(--chart-usage);
+    --heat-4: #0e7490;
+    --chart-2: #db2777;
+    --chart-grid: #ececf0;
+
+    /* 会话阅读页的 Agent 主题色：只用于提问竖条和助手 glyph，
+       正文保持中性（决策 D4）。作文字用时对 --bg-app / --bg-subtle 对比度 ≥ 4.5:1 */
+    --agent-claude: #c2613f;
+    --agent-codex: #3f3f46;
+    --agent-gemini: #3367d6;
+    --agent-opencode: #0f766e;
+    --agent-pi: #7c3aed;
+    --agent-generic: var(--text-2);
+    --diff-add-bg: var(--success-soft);
+    --diff-del-bg: var(--danger-soft);
+
+    --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+    --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08), 0 1px 3px rgba(16, 24, 40, 0.06);
+    --shadow-lg: 0 20px 40px rgba(16, 24, 40, 0.16), 0 4px 12px rgba(16, 24, 40, 0.08);
+  }
+
+  .dark {
+    --bg-app: #1c1c1e;
+    --border: #3e3e46;
+    --focus-rgb: 216 121 61;
+    --bg-sidebar: #161618;
+    --bg-subtle: #26262a;
+    --bg-selected: #313136;
+    --bg-card: #2e2e33;
+    --border-strong: #4a4a52;
+    /* 三档文字都比纯白压低一截并拉开明度差：太亮时三档都贴近白色，整屏显得刺眼、层次压平。
+       次级、三级对卡片底、选中底（--bg-card / --bg-selected）都 ≥ 4.5:1 */
+    --text-1: #e4e4e7;
+    --text-2: #ababb3;
+    --text-3: #9a9aa2;
+    /* 深色模式：实心块压暗一档（大面积不刺眼）+ 白字；文字、焦点描边用亮一档的 #fb923c */
+    --action-bg: #ea580c;
+    --action-fg: #ffffff;
+    --action-hover: #f06d1f;
+    --action-text: #fb923c;
+    /* 深色下浅橙底用半透明叠在卡片 / 侧栏底色上：不透明的深橙会发闷、像一块棕色 */
+    --action-soft: rgba(249, 115, 21, 0.12);
+    --inverse-bg: #f4f4f5;
+    --inverse-fg: #18181b;
+    --inverse-hover: #e4e4e7;
+    --overlay: rgba(0, 0, 0, 0.55);
+    --control-off: #6f6f77;
+
+    /* 深色模式的模式色压低亮度和饱和度：原来的亮蓝 / 青绿 / 亮紫在深底上太刺眼。
+       浅底用半透明叠加，当前卡片边框用半透明的 fill */
+    --direct-fill: #4a8fd9;
+    --direct-text: #8fb8e6;
+    --direct-soft: rgba(74, 143, 217, 0.12);
+    --direct-solid: #2f6db3;
+    --direct-on: #ffffff;
+    --direct-border: color-mix(in srgb, var(--direct-fill) 50%, transparent);
+
+    --route-fill: #2a9d8f;
+    --route-text: #7cc4ba;
+    --route-soft: rgba(42, 157, 143, 0.12);
+    --route-solid: #1f7d72;
+    --route-on: #ffffff;
+    --route-border: color-mix(in srgb, var(--route-fill) 50%, transparent);
+
+    --stack-fill: #8b74d6;
+    --stack-text: #b5a6e3;
+    --stack-soft: rgba(139, 116, 214, 0.12);
+    --stack-solid: #6a52bf;
+    --stack-on: #ffffff;
+    --stack-border: color-mix(in srgb, var(--stack-fill) 50%, transparent);
+
+    --success: #4ade80;
+    --success-text: #4ade80;
+    --success-soft: #0f2b1a;
+    --warning: #fbbf24;
+    --warning-text: #fcd34d;
+    --warning-soft: #33260a;
+    --danger: #f87171;
+    --danger-text: #fca5a5;
+    --danger-soft: #3a1414;
+    --chart-1: #38bdf8;
+    /* 深色底上越亮越多，chart-usage 本身就是最亮档 */
+    --heat-1: color-mix(in srgb, var(--chart-usage) 30%, transparent);
+    --heat-2: color-mix(in srgb, var(--chart-usage) 50%, transparent);
+    --heat-3: color-mix(in srgb, var(--chart-usage) 75%, transparent);
+    --heat-4: var(--chart-usage);
+    --chart-2: #f472b6;
+    --chart-grid: #2c2c31;
+
+    --agent-claude: #e08a6a;
+    --agent-codex: #d4d4d8;
+    --agent-gemini: #8ab4f8;
+    --agent-opencode: #5eead4;
+    --agent-pi: #c4b5fd;
+    --agent-generic: var(--text-2);
+    --diff-add-bg: var(--success-soft);
+    --diff-del-bg: var(--danger-soft);
+
+    --shadow-sm: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.4);
+  }
+}
+
+/* 勾选框 / 单选框：不用系统原生外观（各处边框、圆角、深色模式都不一样），
+   统一画成 16px、1.5px border-strong 描边；选中 = 主题色底 + 反色勾（单选 = 粗主题色圈）。
+   原生 <input type="checkbox|radio"> 加 ui-checkbox / ui-radio 即可，Checkbox 组件已经带上。 */
+@layer components {
+  .ui-checkbox,
+  .ui-radio {
+    appearance: none;
+    -webkit-appearance: none;
+    display: inline-grid;
+    place-content: center;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    border: 1.5px solid var(--border-strong);
+    background-color: var(--bg-card);
+    cursor: pointer;
+    transition:
+      background-color 150ms,
+      border-color 150ms;
+  }
+  .ui-checkbox {
+    border-radius: var(--radius-control);
+  }
+  .ui-radio {
+    border-radius: var(--radius-pill);
+  }
+  .ui-checkbox::before {
+    content: '';
+    width: 10px;
+    height: 10px;
+    background-color: var(--action-fg);
+    transform: scale(0);
+    transition: transform 120ms ease-out;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+  }
+  .ui-checkbox:indeterminate::before {
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='4' stroke-linecap='round'%3E%3Cpath d='M6 12h12'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='4' stroke-linecap='round'%3E%3Cpath d='M6 12h12'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+  }
+  .ui-checkbox:checked,
+  .ui-checkbox:indeterminate {
+    background-color: var(--action-bg);
+    border-color: var(--action-bg);
+  }
+  .ui-checkbox:checked::before,
+  .ui-checkbox:indeterminate::before {
+    transform: scale(1);
+  }
+  .ui-radio:checked {
+    border: 5px solid var(--action-bg);
+  }
+  .ui-checkbox:hover:not(:disabled):not(:checked):not(:indeterminate),
+  .ui-radio:hover:not(:disabled):not(:checked) {
+    border-color: var(--text-3);
+  }
+  .ui-checkbox:focus-visible,
+  .ui-radio:focus-visible {
+    outline: 2px solid rgb(var(--focus-rgb));
+    outline-offset: 2px;
+  }
+  .ui-checkbox:disabled,
+  .ui-radio:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+}
+
+/* 紧凑与舒适是同一套排版角色的两种密度。 */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --radius-control: 6px;
+  --radius-panel: 10px;
+  --radius-dialog: 14px;
+  --radius-pill: 999px;
+  --radius-circle: 50%;
+  --fs-badge: 11px;
+  --lh-badge: 16px;
+  --fs-caption: 12px;
+  --lh-caption: 18px;
+  --fs-body: 13px;
+  --lh-body: 20px;
+  --fs-strong: 14px;
+  --lh-strong: 20px;
+  --fs-section: 15px;
+  --lh-section: 22px;
+  --fs-title: 16px;
+  --lh-title: 24px;
+  --fs-page: 20px;
+  --lh-page: 28px;
+  --fs-xs: 12px;
+  --lh-xs: 16px;
+
+  --h-control: 32px;
+  --h-control-sm: 28px;
+  --h-nav-row: 28px;
+  --h-card: 58px;
+  --card-py: 10px;
+}
+
+:root[data-density='comfortable'] {
+  --fs-badge: 12px;
+  --lh-badge: 16px;
+  --fs-caption: 13px;
+  --lh-caption: 18px;
+  --fs-body: 14px;
+  --lh-body: 22px;
+  --fs-strong: 15px;
+  --lh-strong: 22px;
+  --fs-section: 16px;
+  --lh-section: 24px;
+  --fs-title: 18px;
+  --lh-title: 26px;
+  --fs-xs: 13px;
+  --lh-xs: 18px;
+
+  --h-control: 36px;
+  --h-control-sm: 32px;
+  --h-nav-row: 34px;
+  --h-card: 68px;
+  --card-py: 14px;
+}

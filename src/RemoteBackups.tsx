@@ -1,3 +1,4 @@
+import { Button } from './design/ui/button';
 import { useEffect, useRef, useState } from 'react';
 import type { DesktopAPI } from './platform';
 import type { BackupPlan, MaintenanceRecord } from './features';
@@ -102,8 +103,8 @@ export function RemoteBackups({
           />
         </Field>
       )}
-      <button
-        className="button"
+      <Button
+        variant="neutral" size="compact"
         disabled={busy}
         onClick={() =>
           void run(async () => {
@@ -116,7 +117,7 @@ export function RemoteBackups({
         }
       >
         {busy ? '正在处理…' : '读取备份列表（只读）'}
-      </button>
+      </Button>
       {error && (
         <p role="alert" className="warning">
           {error}
@@ -158,8 +159,8 @@ export function RemoteBackups({
           {!plan.entries.length && (
             <p className="empty">暂无本工具确认创建的备份。导入历史不作为删除依据。</p>
           )}
-          <button
-            className="button danger mt"
+          <Button
+            variant="danger" size="compact" className="mt"
             disabled={busy || !chosen.length || chosen.length > 100}
             onClick={() => {
               setWord('');
@@ -167,7 +168,7 @@ export function RemoteBackups({
             }}
           >
             预览清理 {chosen.length} 个文件 · {size(chosen.reduce((n, f) => n + f.size, 0))}
-          </button>
+          </Button>
         </>
       )}
       {audits.length > 0 && (
@@ -181,12 +182,12 @@ export function RemoteBackups({
                   {fmtTime(a.time)} · {a.requested.length} 个文件
                 </p>
               </div>
-              <button className="button" onClick={() => setDetail(a)}>
+              <Button variant="neutral" size="compact" onClick={() => setDetail(a)}>
                 查看记录
-              </button>
+              </Button>
               {['pending', 'unknown'].includes(a.status) && (
-                <button
-                  className="button"
+                <Button
+                  variant="neutral" size="compact"
                   disabled={busy}
                   onClick={() =>
                     void run(async () => {
@@ -198,16 +199,16 @@ export function RemoteBackups({
                   }
                 >
                   只读核实结果
-                </button>
+                </Button>
               )}
             </div>
           ))}
         </div>
       )}
       <div className="modal-actions">
-        <button className="button" disabled={busy} onClick={close}>
+        <Button variant="neutral" size="compact" disabled={busy} onClick={close}>
           返回
-        </button>
+        </Button>
       </div>
       {confirm && plan && (
         <Modal
@@ -231,11 +232,11 @@ export function RemoteBackups({
             </Field>
           )}
           <div className="modal-actions">
-            <button className="button" disabled={busy} onClick={() => setConfirm(false)}>
+            <Button variant="neutral" size="compact" disabled={busy} onClick={() => setConfirm(false)}>
               返回列表
-            </button>
-            <button
-              className="button danger"
+            </Button>
+            <Button
+              variant="danger" size="compact"
               disabled={busy || (plan.production && word !== plan.environment)}
               onClick={() =>
                 void run(async () => {
@@ -250,7 +251,7 @@ export function RemoteBackups({
               }
             >
               {busy ? '清理中，请等待结果' : '确认清理'}
-            </button>
+            </Button>
           </div>
         </Modal>
       )}
@@ -258,9 +259,9 @@ export function RemoteBackups({
         <Modal title="备份清理详情" onClose={() => setDetail(undefined)} wide>
           <BackupAudit value={detail} />
           <div className="modal-actions">
-            <button className="button" onClick={() => setDetail(undefined)}>
+            <Button variant="neutral" size="compact" onClick={() => setDetail(undefined)}>
               返回
-            </button>
+            </Button>
           </div>
         </Modal>
       )}

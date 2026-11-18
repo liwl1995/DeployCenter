@@ -3,31 +3,26 @@ import type { ReleaseSchedule } from './schedules';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Rocket,
-  Boxes,
+  Box,
+  CalendarClock,
+  ChevronDown,
+  Settings as SettingsIcon,
   Server as ServerIcon,
   Wrench,
   History as HistoryIcon,
   SlidersHorizontal,
   Plus,
-  Search,
   AlertTriangle,
-  ArrowRight,
   ArrowLeft,
   RotateCcw,
   X,
   Download,
-  Upload,
   ChevronRight,
-  ShieldCheck,
   GitBranch,
   FileArchive,
   Pencil,
-  Coffee,
   Loader2,
   FolderOpen,
-  BookOpen,
-  Code2,
-  Info,
 } from 'lucide-react';
 import {
   loadDatabase,
@@ -59,19 +54,17 @@ import { copyText } from './clipboard';
 import { createTask, startTask, tick, cancelTask, requestFailure } from './engine';
 import { recordTask, pruneHistory, canRollback as rollbackAllowed, historyLogs } from './records';
 import { CredentialSession, credentialServers } from './credentials';
-import { Badge, Card, Field, Switch, Modal, Demo, download } from './ui';
+import { Badge, Card, Field, FieldHelp, Switch, Modal, Demo, download, hasOpenModal } from './ui';
 import { ServiceForm, ServerForm, TargetForm, BackupFields } from './forms';
 import './style.css';
-import { DataSettings, LegacyArtifactReview } from './DataSettings';
+import { LegacyArtifactReview } from './DataSettings';
+import { SettingsWorkspace } from './SettingsWorkspace';
 import type { SnapshotAvailability } from './features';
-import { DirectorySettings } from './DirectorySettings';
 import {
   confirmProduction,
   productionNames,
   knownCommit,
   healthLabels,
-  toolLabels,
-  taskResult,
   deploymentTime,
   cloneService,
   cloneTarget,
@@ -83,20 +76,28 @@ import { RemoteBackups, BackupAudit } from './RemoteBackups';
 import { WorkbenchReviewPanel } from './WorkbenchReview';
 import { PresetShelf, FirstGuide } from './WorkspaceHome';
 import { preparePreset, type WorkspacePage } from './workspace-model';
-import { TaskHistory } from './TaskHistory';
+import { TaskHistory, type HistoryViewState } from './TaskHistory';
+import { useWorkspaceNavigation } from './workspace-navigation';
 import { MoreMenu, DeleteEntity } from './EntityActions';
 import { BuildEnvironment } from './BuildEnvironment';
-import { TargetConfiguration } from './TargetConfiguration';
+import { ServersWorkspace, serverIdentity } from './ServersWorkspace';
+import { TargetsWorkspace } from './TargetsWorkspace';
+import { ServicesWorkspace } from './ServicesWorkspace';
 import { DateRangeFilter } from './DateRangeFilter';
 import { withinDateRange, type DateRange } from './date-range';
 import { taskProgress, readExpandedTargets, saveExpandedTargets } from './layout-state';
-import { EntityWorkspace, EntityDetail, WorkspaceTabs, Disclosure } from './WorkspaceLayout';
+import { Disclosure } from './WorkspaceLayout';
 import { DiagnosticPanel } from './TaskExtras';
 import { TaskView } from './TaskView';
-import { AppUpdateSettings } from './AppUpdateSettings';
-import { HeaderActions } from './HeaderActions';
 import type { DiagnosticKind } from './features';
-import brandIcon from '../assets/icon.svg';
+import { AppPageHeader } from './design/shell/AppPageHeader';
+import { ServiceSidebar } from './design/shell/ServiceSidebar';
+import { Button } from './design/ui/button';
+import { Checkbox } from './design/ui/checkbox';
+import { PageTabs } from './design/ui/page-tabs';
+import { SegmentedControl } from './design/ui/segmented-control';
+import { CompactStatus } from './compact-list';
+import { workspacePages } from './workspace-model';
 import { newService, newTargetTemplate, emptyDatabase, prototype } from './defaults';
 import {
   desktop,
@@ -116,11 +117,12 @@ import {
 } from './DesktopViews';
 
 type Page = WorkspacePage;
+const fixture = prototype && !desktop;
 type Dialog =
   | { kind: 'service'; value: Service }
   | { kind: 'server'; value: Server }
   | { kind: 'target'; value: Target; initialTab?: '健康检查' }
-  | { kind: 'picker' }
+  | { kind: 'picker' | 'presets' }
   | { kind: 'confirm'; task: Task; token?: string; returnFocus?: HTMLElement; schedule?: boolean; plan?: ReleaseSchedule; reschedule?: boolean }
   | { kind: 'cancel' }
   | { kind: 'history'; value: History }
@@ -129,7 +131,6 @@ type Dialog =
   | null;
 const nav = [
   { page: 'deploy', name: '一键部署', icon: Rocket },
-  { page: 'services', name: '服务管理', icon: Boxes },
   { page: 'targets', name: '部署目标', icon: SlidersHorizontal },
   { page: 'servers', name: '服务器', icon: ServerIcon },
   { page: 'tools', name: '构建环境', icon: Wrench },
@@ -163,7 +164,7 @@ function LogViewer({ lines, active = true }: { lines: string[]; active?: boolean
       aria-label="任务日志"
     >
       <span className="terminal-caption">
-        {desktop ? '执行日志' : '模拟任务日志 · 未连接服务器'}
+        {fixture ? '模拟任务日志 · 未连接服务器' : '执行日志'}
       </span>
       {lines.map((line, i) => (
         <span
@@ -229,11 +230,15 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   const [failureOverride, setFailureOverride] = useState<
     Database['settings']['failurePolicy'] | null
   >(null);
-  const [page, setPage] = useState<Page>(initialPage || 'deploy');
-  useEffect(() => {
-    const content = document.querySelector<HTMLElement>('.workspace > main');
-    if (content) content.scrollTop = 0;
-  }, [page]);
+  const { page, returnPage: taskReturnPage, navigate: setPage, openTask, returnFromTask, mainRef, serviceScrollRef } = useWorkspaceNavigation(initialPage);
+  const historyViews = useRef(new Map<string, HistoryViewState>());
+  const [serviceTab, setServiceTab] = useState('deploy');
+  const [settingsSection, setSettingsSection] = useState('general');
+  const [environment, setEnvironment] = useState('all');
+  const [density, setDensity] = useState<'compact' | 'comfortable'>(() => {
+    try { return localStorage.getItem('deploy-center-density') === 'comfortable' ? 'comfortable' : 'compact'; }
+    catch { return 'compact'; }
+  });
   const [emptyService] = useState(() => newService());
   const [serviceId, setServiceId] = useState(() =>
     db.services.some((s) => s.id === db.lastService) ? db.lastService : db.services[0]?.id || '',
@@ -245,9 +250,6 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   );
   const [build, setBuild] = useState<Task['build']>('rebuild');
   const [overrides, setOverrides] = useState<Record<string, Backup>>({});
-  const compactTargets = db.settings.compactTargets ?? true;
-  const setCompactTargets = (value: boolean) =>
-    setDb((old) => ({ ...old, settings: { ...old.settings, compactTargets: value } }));
   const [expanded, setExpanded] = useState<string[]>(() =>
     readExpandedTargets(boot?.dataDir || 'prototype'),
   );
@@ -256,7 +258,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     [expanded, boot?.dataDir],
   );
   const [artifact, setArtifact] = useState<Artifact>(() =>
-    (desktop ? initialArtifact : artifactFor)(
+    (fixture ? artifactFor : initialArtifact)(
       db.services.find((s) => s.id === serviceId) || emptyService,
     ),
   );
@@ -270,7 +272,6 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   const [preflightBusy, setPreflightBusy] = useState(false);
   const [schedules, setSchedules] = useState<ReleaseSchedule[]>([]);
   const [deployNote, setDeployNote] = useState<string>();
-  const [taskReturnPage, setTaskReturnPage] = useState<Page>('deploy');
   const [dialog, setDialog] = useState<Dialog>(null);
   const [task, setTask] = useState<Task | null>(boot?.task || null);
   const [busy, setBusy] = useState(false);
@@ -279,8 +280,6 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   const [serverChecks, setServerChecks] = useState<
     Record<string, { ok: boolean; time: string; identity: string }>
   >({});
-  const serverIdentity = (s: Server) =>
-    JSON.stringify([s.host, s.user, s.port, s.auth, s.alias, s.keyPath, s.sshConfigFile]);
   const [unfinished, setUnfinished] = useState(boot?.unfinished || []);
   const [observations, setObservations] = useState<
     { targetId: string; label: string; sessionId: string; active: boolean }[]
@@ -334,6 +333,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       }, 350);
       return () => clearTimeout(timer);
     }
+    if (!fixture) return;
     try {
       localStorage.setItem('deploy-center-v2', safeConfigJson(db));
     } catch {
@@ -346,15 +346,28 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     return () => clearTimeout(timer);
   }, [message]);
   useEffect(() => {
-    document.documentElement.dataset.theme = db.settings.theme;
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+    const update = () => {
+      const dark = db.settings.theme === 'dark' || (db.settings.theme === 'system' && media?.matches);
+      document.documentElement.dataset.theme = db.settings.theme;
+      document.documentElement.classList.toggle('dark', !!dark);
+    };
+    update();
+    media?.addEventListener('change', update);
+    return () => media?.removeEventListener('change', update);
   }, [db.settings.theme]);
   useEffect(() => {
-    if (desktop || !isActive(task)) return;
+    document.documentElement.dataset.density = density;
+    try { localStorage.setItem('deploy-center-density', density); } catch { /* 界面偏好仍在本次会话生效。 */ }
+  }, [density]);
+  useEffect(() => { setServiceTab('deploy'); setEnvironment('all'); }, [serviceId]);
+  useEffect(() => {
+    if (!fixture || !isActive(task)) return;
     const timer = setInterval(() => setTask((current) => (current ? tick(current) : null)), 850);
     return () => clearInterval(timer);
   }, [task?.id, task?.status]);
   useEffect(() => {
-    if (desktop || !task || isActive(task)) return;
+    if (!fixture || !task || isActive(task)) return;
     credentials.current.clear();
     if (recorded.current.has(task.id)) return;
     recorded.current.add(task.id);
@@ -408,8 +421,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       } else if (event.kind === 'open-task') {
         void desktop!.readTask(event.taskId).then((value) => {
           setTask(value);
-          setTaskReturnPage('history');
-          setPage('task');
+          openTask('history');
         });
       } else if (event.kind === 'database') setDb((old) => mergedDatabase(old, event.database));
       else if (event.kind === 'trust') setTrust(event.request);
@@ -528,7 +540,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   }
   async function pickJar() {
     if (!desktop) {
-      fileRef.current?.click();
+      if (fixture) fileRef.current?.click();
       return;
     }
     await nativeAction(async () => {
@@ -569,7 +581,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     );
     const fallback = db.targets.find((t) => t.serviceId === id && !t.production);
     setSelected(prior.length ? prior : fallback ? [fallback.id] : []);
-    setArtifact((desktop ? initialArtifact : artifactFor)(s));
+    setArtifact((fixture ? artifactFor : initialArtifact)(s));
     setOverrides({});
     setDb((old) => ({ ...old, lastService: id }));
   }
@@ -584,8 +596,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   }
   async function launch(targetList = chosen, rollback?: History, dryRun = false, schedule = false) {
     if (isActive(task)) {
-      if (page !== 'task') setTaskReturnPage(page);
-      setPage('task');
+      openTask();
       notify('请先结束当前任务');
       return;
     }
@@ -593,7 +604,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       notify('请至少选择一个部署目标');
       return;
     }
-    if (!desktop && build === 'existing' && !artifact.exists && !rollback) {
+    if (fixture && build === 'existing' && !artifact.exists && !rollback) {
       notify('请先选择有效的现有 JAR 文件');
       return;
     }
@@ -628,6 +639,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       }
       return;
     }
+    if (!fixture) return;
     const sourceService = rollback
       ? {
           ...db.services.find((s) => s.id === rollback.service.id)!,
@@ -791,7 +803,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     setDb(next);
     setServiceId(current.id);
     setSelected((old) => old.filter((tid) => !removed.has(tid)));
-    setArtifact((desktop ? initialArtifact : artifactFor)(current));
+    setArtifact((fixture ? artifactFor : initialArtifact)(current));
     setDialog(null);
     notify('配置已删除，历史和远程文件保留');
   }
@@ -831,19 +843,19 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           },
         ]}
       />
-      <button className="button" onClick={() => setDialog({ kind: 'service', value: s })}>
+      <Button variant="neutral" size="compact" onClick={() => setDialog({ kind: 'service', value: s })}>
         编辑
-      </button>
+      </Button>
 
-      <button
-        className="button primary"
+      <Button
+        variant="default" size="compact"
         onClick={() => {
           selectService(s.id);
           setPage('deploy');
         }}
       >
         去部署
-      </button>
+      </Button>
     </div>
   );
   const targetActions = (t: Target) => (
@@ -905,12 +917,12 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           },
         ]}
       />
-      <button className="button" onClick={() => setDialog({ kind: 'target', value: t })}>
+      <Button variant="neutral" size="compact" onClick={() => setDialog({ kind: 'target', value: t })}>
         <Pencil size={15} />
         编辑
-      </button>
-      <button
-        className="button primary"
+      </Button>
+      <Button
+        variant="default" size="compact"
         onClick={() => {
           selectService(t.serviceId);
           setSelected([t.id]);
@@ -918,19 +930,19 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         }}
       >
         去部署
-      </button>
+      </Button>
     </div>
   );
   const serverActions = (s: Server) => (
     <div className="entity-actions">
-      <button
-        className="button"
+      <Button
+        variant="neutral" size="compact"
         aria-label={'编辑服务器' + s.name}
         onClick={() => setDialog({ kind: 'server', value: s })}
       >
         <Pencil size={15} />
         编辑
-      </button>
+      </Button>
       <MoreMenu
         label={'更多服务器' + s.name + '操作'}
         actions={[
@@ -977,39 +989,21 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           },
         ]}
       />{' '}
-      <button
-        className="button primary"
+      <Button
+        variant="default" size="compact"
         onClick={() =>
-          desktop
-            ? setNativeDialog({ title: '测试连接 · ' + s.name, server: s })
-            : notify('原型未发起连接。正式版将展示主机指纹及认证结果。')
+          fixture
+            ? notify('原型未发起连接。正式版将展示主机指纹及认证结果。')
+            : setNativeDialog({ title: '测试连接 · ' + s.name, server: s })
         }
       >
         测试连接
-      </button>
+      </Button>
     </div>
   );
   const cardTime = (value?: string) => (deploymentTime(value) ? fmtTime(value!).slice(5, 16) : '—');
-  const serviceLastDeploy = (id: string) =>
-    db.targets
-      .filter((t) => t.serviceId === id && deploymentTime(t.lastDeploy))
-      .map((t) => t.lastDeploy)
-      .sort()
-      .at(-1) ||
-    db.history.find(
-      (h) =>
-        h.service.id === id &&
-        ['success', 'unverified', 'rolledback'].includes(h.status) &&
-        deploymentTime(h.time),
-    )?.time;
-  const header = (title: string, description: string, action?: ReactNode) => (
-    <header className="page-header">
-      <div>
-        <h1>{title}</h1>
-        <p className="muted">{description}</p>
-      </div>
-      {action}
-    </header>
+  const header = (_title: string, description: string, action?: ReactNode) => (
+    <div className="page-intro">{description}{action}</div>
   );
   const filteredHistory = db.history.filter(
     (h) =>
@@ -1081,9 +1075,9 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 <small>{h.backupPath ? '有备份' : '无备份'}</small>
               </td>
               <td>
-                <button className="link" onClick={() => setDialog({ kind: 'history', value: h })}>
+                <Button variant="link" size="compact" onClick={() => setDialog({ kind: 'history', value: h })}>
                   详情
-                </button>
+                </Button>
               </td>
             </tr>
           ))}
@@ -1100,6 +1094,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     setBusy(true);
     try {
       if (!desktop) {
+        if (!fixture) return;
         selectService(p.serviceId);
         setSelected(p.targetIds);
         setBuild(p.build);
@@ -1144,1274 +1139,15 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     />
   );
   const changeBackup = (id: string, b: Backup) => setOverrides((old) => ({ ...old, [id]: b }));
-  return (
-    <div
-      className="app"
-      onDragOver={(e) => {
-        if (desktop && e.dataTransfer.types.includes('Files')) e.preventDefault();
-      }}
-      onDrop={(e) => {
-        if (!desktop || !e.dataTransfer.files.length) return;
-        e.preventDefault();
-        if (
-          document.querySelector('[role="dialog"]') ||
-          busy ||
-          isActive(task) ||
-          !db.services.length
-        ) {
-          notify('请先结束当前操作并选择服务，再拖入 JAR。');
-          return;
-        }
-        if (e.dataTransfer.files.length !== 1) {
-          notify('每次请选择一个 JAR 文件。');
-          return;
-        }
-        const file = e.dataTransfer.files[0];
-        void nativeAction(async () => {
-          const value = await desktop!.acceptDrop(file);
-          setRetrySource(undefined);
-          setArtifact(value);
-          setJarSelection(value.path);
-          setBuild('existing');
-          setPage('deploy');
-          setInfoRefresh((n) => n + 1);
-          notify('已选中 JAR，部署前仍会完整校验。');
-        });
-      }}
-    >
-      <aside className="sidebar">
-        <a
-          className="brand"
-          href="#"
-          onClick={(e) => {
-            e.preventDefault();
-            setPage('deploy');
-          }}
-        >
-          <span className="brand-mark">
-            <img src={brandIcon} alt="" />
-          </span>
-          <span>
-            YOTOO 部署中心<small>本地部署工作台</small>
-          </span>
-        </a>
-        <nav aria-label="主导航">
-          <span className="nav-heading">操作</span>
-          {nav
-            .filter((n) => n.page === 'deploy')
-            .map((n) => (
-              <button
-                key={n.page}
-                className={page === n.page ? 'selected' : ''}
-                onClick={() => setPage(n.page)}
-              >
-                <n.icon size={18} />
-                {n.name}
-              </button>
-            ))}
-          {isActive(task) && (
-            <button className={page === 'task' ? 'selected' : ''}
-              onClick={() => {
-                if (page !== 'task') setTaskReturnPage(page);
-                setInspected(-1);
-                setPage('task');
-              }}>
-              <Loader2 size={18} className="spin" />
-              当前任务<small>{task?.status === 'cancelling' ? '取消中' : '执行中'}</small>
-            </button>
-          )}
-          <button
-            className={page === 'history' ? 'selected' : ''}
-            onClick={() => setPage('history')}
-          >
-            <HistoryIcon size={18} />
-            部署历史
-          </button>
-          {desktop && <button className={page === 'schedules' ? 'selected' : ''} onClick={() => setPage('schedules')}><HistoryIcon size={18} />发布计划</button>}
-          <span className="nav-heading">配置</span>
-          {nav
-            .filter((n) => !['deploy', 'history'].includes(n.page))
-            .map((n) => (
-              <button
-                key={n.page}
-                className={page === n.page ? 'selected' : ''}
-                onClick={() => setPage(n.page)}
-              >
-                <n.icon size={18} />
-                {n.name}
-              </button>
-            ))}
-        </nav>
-        <div className="sidebar-footer">
-          <span className="local-dot" />
-          <span>
-            本机工作空间<small>数据与安装目录分开保存</small>
-          </span>
-        </div>
-      </aside>
-      <div className="workspace">
-        <div className="workspace-bar">
-          <strong className="row deployment-boundary">
-            <ShieldCheck size={16} />
-            {desktop ? '真实部署 · 请核对目标' : '界面原型 · 未连接服务器'}
-          </strong>
-          <HeaderActions
-            theme={db.settings.theme}
-            onTheme={(theme) => setDb((old) => ({ ...old, settings: { ...old.settings, theme } }))}
-            settingsActive={page === 'settings'}
-            onSettings={() => setPage('settings')}
-          />
-        </div>
-        <main>
-          {!!taskIssues.length && (
-            <div className="warning" role="alert">
-              <strong>有任务元数据无法读取，原始数据与相关文件已保留</strong>
-              <p>
-                暂时不能确定产物共享关系或远端执行结果。请检查数据目录中的数据库备份，修复后重新打开应用；不会用空配置覆盖原数据。
-              </p>
-              <button className="button" onClick={() => void desktop?.openDataDir()}>
-                打开数据目录
-              </button>
-            </div>
-          )}
-          {desktop && page !== 'task' && observations.some((s) => s.active) && (
-            <div className="notice">
-              <strong>部署后日志观察</strong>
-              <div className="row wrap mt">
-                {observations
-                  .filter((s) => s.active)
-                  .map((s) => (
-                    <button
-                      key={s.sessionId}
-                      className="button"
-                      onClick={() =>
-                        setNativeDialog({
-                          title: '部署后观察 · ' + s.label,
-                          logs: s.targetId,
-                          logSession: s.sessionId,
-                        })
-                      }
-                    >
-                      {s.label} · 查看或停止
-                    </button>
-                  ))}
-              </div>
-            </div>
-          )}
-          {desktop && page !== 'task' && unfinished.length > 0 && (
-            <div className="warning" role="status">
-              <strong>存在未结束的部署任务</strong>
-              <p>核实只读取原任务状态或清理未启动的上传，不会继续后续目标或重新替换。</p>
-              {unfinished.map((t) => (
-                <button
-                  className="button"
-                  key={t.id}
-                  disabled={isActive(task)}
-                  onClick={() => setNativeDialog({ title: '核实中断任务 · ' + t.id, recover: t })}
-                >
-                  {t.service.name} · 核实原任务
-                </button>
-              ))}
-            </div>
-          )}
-          {recovery && (
-            <div className="warning" role="alert">
-              <strong>
-                {recovery.backupKey
-                  ? '配置无法读取，已备份原始数据。'
-                  : '配置无法读取，原键仍保留；备份存储不可用，请下载原始数据。'}
-              </strong>
-              <p>确认前不会覆盖原配置。备份键：{recovery.backupKey || '未写入'}</p>
-              <div className="row wrap">
-                <button
-                  className="button"
-                  onClick={() => download('deploy-center-original.txt', recovery.raw)}
-                >
-                  下载原始数据
-                </button>
-                <button
-                  className="button"
-                  onClick={() => {
-                    if (desktop)
-                      void nativeAction(async () => {
-                        await desktop!.confirmRecovery();
-                        setRecovery(undefined);
-                      });
-                    else setRecovery(undefined);
-                  }}
-                >
-                  {desktop ? '确认恢复为空配置' : '确认使用示例配置并保存'}
-                </button>
-              </div>
-            </div>
-          )}
-          {storageError && (
-            <p className="warning" role="alert">
-              {storageError}
-            </p>
-          )}
-          {page === 'deploy' && !db.services.length && (
-            <>
-              {header('一键部署', '添加服务并配置部署目标，或导入已有配置。')}
-              <FirstGuide
-                db={db}
-                tasks={taskRows}
-                onPage={setPage}
-                onImport={() => void importNative()}
-              />
-            </>
-          )}
-          {page === 'deploy' && !!db.services.length && (
-            <>
-              {header(
-                '准备好，发布下一版本',
-                '选择服务和目标，确认每次发布的边界。',
-              )}
-              <div className="deploy-layout">
-                <div className="stack">
-                  <Card
-                    title={
-                      <>
-                        <span className="section-number">01</span>服务与构建
-                      </>
-                    }
-                    action={
-                      <button
-                        className="link"
-                        onClick={() => setDialog({ kind: 'service', value: service })}
-                      >
-                        编辑配置
-                        <Pencil size={14} />
-                      </button>
-                    }
-                  >
-                    <button
-                      className="service-picker"
-                      onClick={() => setDialog({ kind: 'picker' })}
-                      aria-haspopup="dialog"
-                    >
-                      <span className="service-icon">{service.name[0]}</span>
-                      <span className="grow">
-                        <strong>{service.name}</strong>
-                        <small>{service.description}</small>
-                      </span>
-                      <Search size={18} />
-                      <ChevronRight size={17} />
-                    </button>
-                    <div className="tags">
-                      <Badge>{service.jdk || '未选择 JDK'}</Badge>
-                      <Badge>
-                        {service.tool === 'wrapper'
-                          ? 'Maven Wrapper'
-                          : service.tool === 'auto'
-                            ? '自动选择 Maven'
-                            : '本地 Maven'}
-                      </Badge>
-                      {[...new Set(chosen.map((t) => modeLabel(t.mode)))].map((m) => (
-                        <Badge key={m}>{m}</Badge>
-                      ))}
-                    </div>
-                    <div className="segments" aria-label="构建方式">
-                      <button
-                        aria-pressed={build === 'rebuild'}
-                        onClick={() => setBuild('rebuild')}
-                      >
-                        <Wrench size={16} />
-                        重新构建
-                      </button>
-                      <button
-                        aria-pressed={build === 'existing'}
-                        onClick={() => setBuild('existing')}
-                      >
-                        <FileArchive size={16} />
-                        使用现有 JAR
-                      </button>
-                    </div>
-                    {desktop && (
-                      <>
-                        <p className="build-brief">
-                          {service.jdk || '未选择 JDK'} · {toolLabels[service.tool]} ·{' '}
-                          {displayService.git.branch} ·{' '}
-                          <code title={displayService.git.commit}>
-                            {/^[a-f0-9]{7,64}$/i.test(displayService.git.commit)
-                              ? displayService.git.commit.slice(0, 7)
-                              : '未记录提交'}
-                          </code>
-                          <span aria-hidden="true"> · </span>
-                          JAR：
-                          {artifact.exists
-                            ? niceSize(artifact.size) + ' · ' + fmtTime(artifact.modified)
-                            : '文件不存在或待构建'}
-                        </p>
-                        {build === 'existing' && (
-                          <button className="button" onClick={() => void pickJar()}>
-                            <FolderOpen size={16} />
-                            选择本地 JAR
-                          </button>
-                        )}
-                      </>
-                    )}
-                    <details className="build-details">
-                      <summary>构建与产物详情</summary>
-                      {build === 'rebuild' ? (
-                        <>
-                          <p className="code">
-                            {service.tool === 'wrapper'
-                              ? '.\\mvnw.cmd'
-                              : service.mavenPath || 'mvn.cmd'}{' '}
-                            {service.args}
-                            {service.profiles ? ' -P' + service.profiles : ''}
-                          </p>
-                          <div className="metadata">
-                            <span>工作目录：{service.workDir || '.'}</span>
-                            <span>JDK 仅作用于构建进程</span>
-                          </div>
-                          <p className="path">产物：{localJar(service)}</p>
-                        </>
-                      ) : (
-                        <>
-                          <ArtifactInfo value={artifact} service={displayService} />
-                          <p className="note">
-                            {desktop
-                              ? '已读取本地文件信息；选择文件或确认部署前会检查 JAR 完整性。'
-                              : '浏览器只能读取文件名、大小和修改时间；桌面版将使用系统文件对话框并检查 JAR 有效性。'}
-                          </p>
-                          <div className="row wrap">
-                            <button className="button" onClick={() => void pickJar()}>
-                              <FolderOpen size={16} />
-                              选择本地 JAR
-                            </button>
-                            {prototype && db.settings.demoMode && (
-                              <Demo>
-                                {' '}
-                                <button
-                                  className="link"
-                                  onClick={() => setArtifact(artifactFor(service))}
-                                >
-                                  使用示例产物
-                                </button>
-                                <button
-                                  className="link"
-                                  onClick={() =>
-                                    setArtifact((old) => ({
-                                      ...old,
-                                      modified: '2026-11-01T08:00:00+08:00',
-                                    }))
-                                  }
-                                >
-                                  查看旧产物提醒
-                                </button>
-                              </Demo>
-                            )}
-                          </div>
-                        </>
-                      )}
-                      <p className="branch">
-                        <GitBranch size={14} />
-                        {displayService.git.branch}
-                        <HashValue
-                          label="Git 提交"
-                          value={displayService.git.commit}
-                          onCopy={(value) => void copy(value)}
-                        />
-                        {displayService.git.dirty && <Badge kind="warn">有未提交修改</Badge>}
-                        <span>
-                          {desktop
-                            ? localInfoBusy
-                              ? '正在读取本地信息…'
-                              : localInfo?.serviceId === serviceId
-                                ? /^[a-f0-9]{7,64}$/i.test(displayService.git.commit)
-                                  ? 'Git 提交：' + fmtTime(displayService.git.time)
-                                  : '未找到 Git 仓库或本机 Git 不可用'
-                                : '等待读取本地信息'
-                            : 'Git 示例信息'}
-                        </span>
-                      </p>
-                      {desktop && (
-                        <>
-                          {localInfo?.serviceId === serviceId && localInfo.artifactError && (
-                            <p className="warning" role="status">
-                              {localInfo.artifactError}
-                            </p>
-                          )}
-                          {localInfoError && (
-                            <p className="warning" role="alert">
-                              {localInfoError}
-                            </p>
-                          )}
-                          <div className="row wrap local-info-actions">
-                            <button
-                              className="button"
-                              disabled={localInfoBusy}
-                              onClick={() => setInfoRefresh((n) => n + 1)}
-                            >
-                              <RotateCcw size={15} />
-                              刷新 JAR / Git 信息
-                            </button>
-                            {jarSelection && (
-                              <button className="link" onClick={() => setJarSelection(undefined)}>
-                                使用配置的产物路径
-                              </button>
-                            )}
-                          </div>
-                        </>
-                      )}
-                    </details>
-                  </Card>
-                  <Card
-                    title={
-                      <>
-                        <span className="section-number">02</span>部署目标
-                        <span className="count">
-                          {chosen.length} / {targets.length}
-                        </span>
-                      </>
-                    }
-                    action={
-                      <button className="link" onClick={() => setPage('targets')}>
-                        管理目标
-                        <ArrowRight size={14} />
-                      </button>
-                    }
-                  >
-                    {!targets.length && <p className="empty">还没有部署目标，请先配置。</p>}
-                    <div className="row spread wrap">
-                      <Switch
-                        label="紧凑目标列表"
-                        checked={compactTargets}
-                        onChange={setCompactTargets}
-                      />
-                      {targets.length > 0 && (
-                        <button
-                          className="link"
-                          onClick={() => {
-                            const visibleIds = new Set(targets.map((target) => target.id));
-                            setExpanded((old) => old.filter((id) => !visibleIds.has(id)));
-                            if (!compactTargets) setCompactTargets(true);
-                          }}
-                        >
-                          全部收起
-                        </button>
-                      )}
-                    </div>
-                    {targets.map((t) => {
-                      const s = db.servers.find((s) => s.id === t.serverId)!;
-                      const b = effective(t);
-                      const open = expanded.includes(t.id);
-                      if (compactTargets && !open)
-                        return (
-                          <article
-                            className={
-                              'target-compact ' + (selected.includes(t.id) ? 'checked' : '')
-                            }
-                            key={t.id}
-                          >
-                            <label className="compact-choice">
-                              <input
-                                type="checkbox"
-                                checked={selected.includes(t.id)}
-                                aria-label={'选择' + t.name}
-                                onChange={() => toggleTarget(t)}
-                              />
-                              <span>
-                                <strong title={t.name}>
-                                  {t.name}
-                                  {t.production ? ' · 正式' : ''}
-                                </strong>
-                                <small title={s.name}>{s.name}</small>
-                              </span>
-                            </label>
-                            <VersionFacts target={t} onCopy={(value) => void copy(value)} />
-                            <span className="compact-health" title={t.healthState}>
-                              {t.healthState}
-                            </span>
-                            <div
-                              title={
-                                '目标默认：' +
-                                (t.backup.enabled ? '备份' : '不备份') +
-                                '；' +
-                                (overrides[t.id] ? '本次覆盖' : '目标默认')
-                              }
-                            >
-                              <Switch
-                                label={t.name + '备份'}
-                                checked={b.enabled}
-                                onChange={(enabled) => changeBackup(t.id, { ...b, enabled })}
-                              />
-                            </div>
-                            <button
-                              className="link"
-                              aria-label={'展开' + t.name + '详情'}
-                              onClick={() => setExpanded((old) => [...old, t.id])}
-                            >
-                              详情
-                            </button>
-                          </article>
-                        );
-                      return (
-                        <article
-                          className={'target-card ' + (selected.includes(t.id) ? 'checked' : '')}
-                          key={t.id}
-                        >
-                          <div className="target-top">
-                            <label className="target-choice">
-                              <input
-                                type="checkbox"
-                                checked={selected.includes(t.id)}
-                                onChange={() => toggleTarget(t)}
-                                aria-label={'选择' + t.name}
-                              />
-                              <span>
-                                <strong>{t.name}</strong>
-                                <span className="target-server">
-                                  {s.name} · {serverAddress(s)}
-                                </span>
-                              </span>
-                            </label>
-                            <div className="row wrap">
-                              <Badge kind={t.production ? 'warn' : ''}>
-                                {t.production ? '正式' : '非正式'}
-                              </Badge>
-                              <Badge>{modeLabel(t.mode)}</Badge>
-                              <button
-                                className="icon-button"
-                                aria-label={'编辑' + t.name}
-                                onClick={() => setDialog({ kind: 'target', value: t })}
-                              >
-                                <Pencil size={15} />
-                              </button>
-                            </div>
-                          </div>
-                          <p className="path">{remoteJar(t)}</p>
-                          <div className="target-facts">
-                            <VersionFacts
-                              target={t}
-                              fingerprintFirst
-                              onCopy={(value) => void copy(value)}
-                            />
-                            <span>
-                              上次部署<em>{fmtTime(t.lastDeploy)}</em>
-                            </span>
-                            <span>
-                              健康状态<em>{t.healthState}</em>
-                            </span>
-                          </div>
-                          <div className="target-bottom">
-                            <Switch
-                              label={'本次备份 · ' + t.name}
-                              checked={b.enabled}
-                              onChange={(enabled) => changeBackup(t.id, { ...b, enabled })}
-                              description={'目标默认：' + (t.backup.enabled ? '备份' : '不备份')}
-                            />
-                            <span className="muted">
-                              {overrides[t.id] ? '本次覆盖' : '目标默认'} ·{' '}
-                              {b.enabled
-                                ? '备份' + (b.autoRollback ? '并自动回滚' : '，手动恢复')
-                                : '不备份'}
-                            </span>
-                            <button
-                              className="link"
-                              aria-expanded={open}
-                              onClick={() =>
-                                setExpanded((old) =>
-                                  open ? old.filter((id) => id !== t.id) : [...old, t.id],
-                                )
-                              }
-                            >
-                              {open ? '收起' : '本次策略'}
-                            </button>
-                          </div>
-                          {open && (
-                            <div className="target-override">
-                              <BackupFields value={b} onChange={(x) => changeBackup(t.id, x)} />
-                              {desktop && (
-                                <>
-                                  <Switch
-                                    label="本次成功后观察日志"
-                                    disabled={t.mode === 'jar' && !t.appLogPath}
-                                    checked={
-                                      (observationOverrides[t.id] || t.observation)?.enabled ||
-                                      false
-                                    }
-                                    onChange={(enabled) =>
-                                      setObservationOverrides((old) => ({
-                                        ...old,
-                                        [t.id]: {
-                                          duration: (old[t.id] || t.observation)?.duration || 60,
-                                          enabled,
-                                        },
-                                      }))
-                                    }
-                                    description={
-                                      t.mode === 'jar' && !t.appLogPath
-                                        ? '启用前需在目标配置中填写应用日志路径。'
-                                        : '健康未验证且部署完成时，自动打开只读日志观察。'
-                                    }
-                                  />
-                                  <Field label="本次观察时间（秒）">
-                                    <input
-                                      type="number"
-                                      min="10"
-                                      max="3600"
-                                      value={
-                                        (observationOverrides[t.id] || t.observation)?.duration ??
-                                        60
-                                      }
-                                      onChange={(e) =>
-                                        setObservationOverrides((old) => ({
-                                          ...old,
-                                          [t.id]: {
-                                            enabled: (old[t.id] || t.observation)?.enabled || false,
-                                            duration: Number(e.target.value),
-                                          },
-                                        }))
-                                      }
-                                    />
-                                  </Field>
-                                  {observationOverrides[t.id] && (
-                                    <button
-                                      className="link"
-                                      onClick={() =>
-                                        setObservationOverrides((old) => {
-                                          const next = { ...old };
-                                          delete next[t.id];
-                                          return next;
-                                        })
-                                      }
-                                    >
-                                      恢复目标默认观察设置
-                                    </button>
-                                  )}
-                                </>
-                              )}
-
-                              {!b.enabled && (
-                                <p className="warning">未启用备份，失败时不能依赖本次备份恢复。</p>
-                              )}
-                              <button
-                                className="link"
-                                onClick={() =>
-                                  setOverrides((old) => {
-                                    const next = { ...old };
-                                    delete next[t.id];
-                                    return next;
-                                  })
-                                }
-                              >
-                                恢复该目标默认策略
-                              </button>
-                            </div>
-                          )}
-                        </article>
-                      );
-                    })}
-                    <p className="note">
-                      <ShieldCheck size={15} />
-                      先上传并校验，再停止服务；一个服务只构建一次。
-                    </p>
-                  </Card>
-                  <Disclosure
-                    title="部署预检明细"
-                    description="查看本机环境、产物与远端检查状态；阻断原因同时显示在部署按钮下方。"
-                  >
-                    <PrecheckPanel check={desktop ? preflight : null} pending={preflightBusy} />
-                  </Disclosure>
-                </div>
-                <aside className="summary">
-                  <Card title="本次部署">
-                    <dl>
-                      <dt>服务</dt>
-                      <dd>{service.name}</dd>
-                      <dt>目标</dt>
-                      <dd>{chosen.length} 个，按顺序执行</dd>
-                      <dt>构建</dt>
-                      <dd>{build === 'rebuild' ? '重新构建一次' : '使用指定 JAR'}</dd>
-                      <dt>备份</dt>
-                      <dd>
-                        {chosen.filter((t) => effective(t).enabled).length} / {chosen.length} 个目标
-                      </dd>
-                    </dl>
-                    <hr />
-                    <Field label="某个目标失败后">
-                      <select
-                        value={failureOverride ?? db.settings.failurePolicy}
-                        onChange={(e) =>
-                          setFailureOverride(
-                            e.target.value as Database['settings']['failurePolicy'],
-                          )
-                        }
-                      >
-                        <option value="stop">停止后续目标</option>
-                        <option value="continue">继续其他目标</option>
-                      </select>
-                    </Field>
-                    {failureOverride !== null && (
-                      <div className="row wrap">
-                        <Badge>本次覆盖</Badge>
-                        <button className="link" onClick={() => setFailureOverride(null)}>
-                          恢复默认
-                        </button>
-                      </div>
-                    )}
-                    {chosen.some((t) => t.production) && (
-                      <p className="warning">包含正式环境，需要额外确认。</p>
-                    )}
-                    {desktop && (
-                      <details className="deployment-note">
-                        <summary>
-                          本次备注<span>默认参考最近提交说明</span>
-                        </summary>{' '}
-                        <Field
-                          label="本次内容"
-                          hint="默认参考最近一次提交说明，可修改；会写入历史。"
-                        >
-                          <textarea
-                            maxLength={2000}
-                            value={deployNote ?? displayService.git.message ?? ''}
-                            onChange={(e) => setDeployNote(e.target.value)}
-                          />
-                        </Field>
-                      </details>
-                    )}
-                    <div className="deploy-actions" aria-label="部署操作">
-                      <button
-                        className="button primary block"
-                        disabled={
-                          busy ||
-                          !!blockReason ||
-                          !chosen.length ||
-                          (!desktop && build === 'existing' && !artifact.exists)
-                        }
-                        onClick={() => launch()}
-                      >
-                        <Rocket size={18} />
-                        {isActive(task) ? '查看当前任务' : '部署'}
-                      </button>
-                      {desktop && (
-                        <button
-                          className="button"
-                          disabled={busy || isActive(task) || !!blockReason || !chosen.length}
-                          onClick={() => void launch(chosen, undefined, false, true)}
-                        >
-                          定时发布
-                        </button>
-                      )}
-                      {desktop && (
-                        <button
-                          className="button"
-                          disabled={busy || isActive(task) || !!blockReason || !chosen.length}
-                          onClick={() => void launch(chosen, undefined, true)}
-                        >
-                          试运行（远程只读）
-                        </button>
-                      )}
-                    </div>
-                    {blockReason && (
-                      <p className="warning" role="status">
-                        {blockReason}
-                      </p>
-                    )}
-                    <p className="note">
-                      {desktop
-                        ? '确认后将构建产物并修改勾选目标；正式环境逐项输入环境名称。'
-                        : '当前为界面原型，不执行真实部署。'}
-                    </p>
-                    {busy && <p role="status">正在检查本地构建环境和产物…</p>}
-                  </Card>
-                </aside>
-              </div>
-              <Disclosure title="部署预设" description="保存或载入常用选择，载入后仍需确认。">
-                {presetShelf()}
-              </Disclosure>
-            </>
-          )}
-          {page === 'schedules' && desktop && (
-            <ReleaseSchedules
-              plans={schedules}
-              busy={busy || isActive(task)}
-              onOpen={(id) =>
-                void nativeAction(async () => {
-                  const value = await desktop!.readTask(id);
-                  setTask(value);
-                  setTaskReturnPage('schedules');
-                  setInspected(-1);
-                  setPage('task');
-                })
-              }
-              onCancel={(id) => void nativeAction(() => desktop!.cancelSchedule(id))}
-              onChange={(plan) =>
-                setDialog({
-                  kind: 'confirm',
-                  task: plan.task,
-                  schedule: true,
-                  plan,
-                  reschedule: true,
-                })
-              }
-              onPrepare={(plan) =>
-                void nativeAction(async () => {
-                  await desktop!.save(db);
-                  let jarPath: string | undefined;
-                  if (plan.task.build === 'existing') {
-                    const snapshot = await desktop!.snapshotAvailability(plan.preparationId);
-                    jarPath = snapshot.available
-                      ? snapshot.path
-                      : (await desktop!.choose('jar')) || undefined;
-                    if (!jarPath) return;
-                  }
-                  const prepared = await desktop!.prepare({
-                    serviceId: plan.task.service.id,
-                    targetIds: plan.task.targets.map((r) => r.target.id),
-                    build: plan.task.build,
-                    jarPath,
-                    overrides: Object.fromEntries(
-                      plan.task.targets.map((r) => [r.target.id, r.backup]),
-                    ),
-                    failurePolicy: plan.task.failurePolicy,
-                    note: plan.task.note,
-                  });
-                  setDialog({ kind: 'confirm', ...prepared, schedule: true, plan });
-                })
-              }
-            />
-          )}
-          {page === 'services' && (
-            <>
-              {header('服务管理', '项目、构建环境和产物路径独立配置。')}
-              <EntityWorkspace
-                actions={
-                  <button
-                    className="button primary"
-                    onClick={() =>
-                      setDialog({
-                        kind: 'service',
-                        value: {
-                          ...newService(),
-                          id: uid(),
-                          name: '',
-                          code: '',
-                          root: '',
-                          description: '',
-                          jarName: 'service.jar',
-                          jarDir: 'target',
-                        },
-                      })
-                    }
-                  >
-                    <Plus size={17} />
-                    添加服务
-                  </button>
-                }
-                cardActions={serviceActions}
-                cardState={(s) => ({
-                  good: !!serviceLastDeploy(s.id),
-                  label: serviceLastDeploy(s.id) ? '已部署' : '未部署',
-                })}
-                cardMeta={(s) => (
-                  <>
-                    <span>{db.targets.filter((t) => t.serviceId === s.id).length} 个目标</span>
-                    <time>{cardTime(serviceLastDeploy(s.id))}</time>
-                  </>
-                )}
-                summary={(s) => (
-                  <>
-                    <span className="path" title={s.root}>
-                      {s.root}
-                    </span>
-                    <span className="tags">
-                      <Badge>{s.jdk || '未选择 JDK'}</Badge>
-                      <Badge>{toolLabels[s.tool]}</Badge>
-                    </span>
-                  </>
-                )}
-                label="服务"
-                items={db.services}
-                title={(s) => s.name}
-                subtitle={(s) => s.description || s.code}
-                searchText={(s) => s.code + ' ' + s.root}
-              >
-                {(s) => (
-                  <EntityDetail key={s.id} title={s.name} action={serviceActions(s)}>
-                    <p className="muted">{s.description}</p>
-                    <p className="path">{s.root}</p>
-                    <div className="tags">
-                      <Badge>{s.jdk}</Badge>
-                      <Badge>{toolLabels[s.tool]}</Badge>
-                      {s.workDir && s.workDir !== '.' && <Badge>工作目录：{s.workDir}</Badge>}
-                    </div>
-                    <p className="code">
-                      {s.jarDir}\{s.jarName}
-                    </p>
-                    <p className="note">
-                      {(() => {
-                        const last = taskRows.find((r) => r.serviceId === s.id && !r.dryRun);
-                        return last
-                          ? '上次部署：' + fmtTime(last.started) + ' · ' + taskResult(last)
-                          : db.history.find((h) => h.service.id === s.id)
-                            ? '上次部署：' + fmtTime(db.history.find((h) => h.service.id === s.id)!.time)
-                            : '尚未部署';
-                      })()}
-                    </p>
-                  </EntityDetail>
-                )}
-              </EntityWorkspace>
-            </>
-          )}
-          {page === 'targets' && (
-            <>
-              {header('部署目标', '每个服务与服务器的部署关系，都有独立的运行规则。')}
-              <EntityWorkspace
-                actions={
-                  <button
-                    className="button primary"
-                    disabled={!db.servers.length || !db.services.length}
-                    onClick={() => setDialog({ kind: 'target', value: newTarget() })}
-                  >
-                    <Plus size={17} />
-                    添加部署目标
-                  </button>
-                }
-                filters={
-                  <div className="target-service-filter">
-                    <Field label="筛选服务">
-                      <select value={serviceId} onChange={(e) => selectService(e.target.value)}>
-                        {db.services.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.name}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                  </div>
-                }
-                cardActions={targetActions}
-                cardState={(t) => ({
-                  good: !!deploymentTime(t.lastDeploy),
-                  label: deploymentTime(t.lastDeploy) ? '已部署' : '未部署',
-                })}
-                cardMeta={(t) => (
-                  <>
-                    <span>{t.healthState}</span>
-                    <time>{cardTime(t.lastDeploy)}</time>
-                  </>
-                )}
-                summary={(t) => (
-                  <>
-                    <span className="path" title={remoteJar(t)}>
-                      {remoteJar(t)}
-                    </span>
-                    <span className="tags">
-                      <Badge>{modeLabel(t.mode)}</Badge>
-                      <Badge kind={t.production ? 'warn' : ''}>{t.production ? '正式' : '非正式'}</Badge>
-                    </span>
-                  </>
-                )}
-                key={serviceId}
-                label="部署目标"
-                items={targets}
-                title={(t) => t.name}
-                subtitle={(t) => db.servers.find((s) => s.id === t.serverId)?.name || '未关联服务器'}
-                searchText={(t) =>
-                  [
-                    db.services.find((s) => s.id === t.serviceId)?.name,
-                    db.servers.find((s) => s.id === t.serverId)?.name,
-                    modeLabel(t.mode),
-                  ].join(' ')
-                }
-              >
-                {(t) => (
-                  <EntityDetail
-                    key={t.id}
-                    title={
-                      <span className="row">
-                        {t.name}
-                        <Badge kind={t.production ? 'warn' : ''}>{modeLabel(t.mode)}</Badge>
-                      </span>
-                    }
-                    action={targetActions(t)}
-                  >
-                    <TargetConfiguration
-                      target={t}
-                      server={db.servers.find((s) => s.id === t.serverId)}
-                    />
-                  </EntityDetail>
-                )}
-              </EntityWorkspace>
-            </>
-          )}
-          {page === 'servers' && (
-            <>
-              {header('服务器', '认证信息集中维护，同一台服务器可关联多个服务。')}
-              <EntityWorkspace
-                actions={
-                  <button
-                    className={'button' + (!db.servers.length ? ' primary' : '')}
-                    onClick={() =>
-                      setDialog({
-                        kind: 'server',
-                        value: {
-                          id: uid(),
-                          name: '',
-                          host: '',
-                          port: 22,
-                          user: '',
-                          auth: 'password',
-                          credentialMode: 'ask',
-                          alias: '',
-                          keyPath: '',
-                          note: '',
-                        },
-                      })
-                    }
-                  >
-                    <Plus size={17} />
-                    添加服务器
-                  </button>
-                }
-                cardActions={serverActions}
-                cardState={(s) => ({
-                  good: serverChecks[s.id]?.identity === serverIdentity(s) && serverChecks[s.id].ok,
-                  label:
-                    serverChecks[s.id]?.identity === serverIdentity(s)
-                      ? serverChecks[s.id].ok
-                        ? '连接正常'
-                        : '检查失败'
-                      : '未检查',
-                })}
-                cardMeta={(s) => (
-                  <>
-                    <span>{db.targets.filter((t) => t.serverId === s.id).length} 个目标</span>
-                    <time>
-                      {serverChecks[s.id]?.identity === serverIdentity(s)
-                        ? cardTime(new Date(serverChecks[s.id].time).toISOString())
-                        : '—'}
-                    </time>
-                  </>
-                )}
-                summary={(s) => (
-                  <>
-                    <span className="path" title={serverAddress(s)}>
-                      {serverAddress(s)}
-                    </span>
-                    <span className="tags">
-                      <Badge>
-                        {s.auth === 'alias'
-                          ? 'SSH 别名'
-                          : s.auth === 'password'
-                            ? '密码认证'
-                            : '私钥认证'}
-                      </Badge>
-                    </span>
-                  </>
-                )}
-                label="服务器"
-                items={db.servers}
-                title={(s) => s.name}
-                subtitle={(s) => s.note || '服务器连接配置'}
-              >
-                {(s) => {
-                  const related = db.targets.filter((t) => t.serverId === s.id);
-                  return (
-                    <EntityDetail title={s.name}>
-                      <div className="list-row server-row" key={s.id}>
-                        <ServerIcon size={20} />
-                        <div className="grow">
-                          <p className="muted">
-                            {serverAddress(s)} ·{' '}
-                            {s.auth === 'alias'
-                              ? 'SSH Config'
-                              : s.auth === 'password'
-                                ? '密码认证'
-                                : '私钥认证'}
-                          </p>
-                          <small>
-                            关联 {new Set(related.map((t) => t.serviceId)).size} 个服务 / {related.length}{' '}
-                            个部署目标
-                          </small>
-                        </div>
-                        <Badge>
-                          {serverChecks[s.id]?.identity === serverIdentity(s)
-                            ? (serverChecks[s.id].ok ? '测试通过' : '测试未通过') +
-                              ' · ' +
-                              fmtTime(serverChecks[s.id].time)
-                            : '未测试'}
-                        </Badge>
-                        {serverActions(s)}
-                      </div>
-                    </EntityDetail>
-                  );
-                }}
-              </EntityWorkspace>
-              <p className="note">
-                {desktop
-                  ? '被目标引用的服务器不可删除。口令仅使用当前 Windows 用户 DPAPI 加密，导出不包含口令。'
-                  : '被目标引用的服务器不可删除。原型不保存或导出密码及私钥口令。'}
-              </p>
-            </>
-          )}
-          {page === 'tools' && (
-            <>
-              {header(
-                '构建环境',
-                '服务分别选择 JDK、工作目录、Maven、Profiles 和构建参数。',
-                !desktop && (
-                  <button className="button primary" onClick={() => setDialog({ kind: 'jdk' })}>
-                    <Plus size={17} />
-                    添加 JDK
-                  </button>
-                ),
-              )}
-              {desktop ? (
-                <BuildEnvironment
-                  api={desktop}
-                  db={db}
-                  onEdit={(value) => setDialog({ kind: 'service', value })}
-                  onAdd={() => setDialog({ kind: 'jdk' })}
-                  onDelete={(name) => setDialog({ kind: 'delete', entity: 'jdk', id: name })}
-                  deletionReason={(name) => entityRemovalReason('jdk', name)}
-                  onScan={() =>
-                    void nativeAction(async () => {
-                      const found = await desktop!.detectJdks();
-                      setDb((old) => ({
-                        ...old,
-                        jdks: [
-                          ...old.jdks,
-                          ...found.filter(
-                            (j) =>
-                              !old.jdks.some(
-                                (x) =>
-                                  x.name === j.name ||
-                                  x.path.toLowerCase() === j.path.toLowerCase(),
-                              ),
-                          ),
-                        ],
-                      }));
-                      notify('检测到 ' + found.length + ' 个完整 JDK，已添加未配置项');
-                    })
-                  }
-                />
-              ) : (
-                <>
-                  <Card
-                    title="本机 JDK"
-                    action={
-                      desktop && (
-                        <button
-                          className="button"
-                          onClick={() =>
-                            void nativeAction(async () => {
-                              const found = await desktop!.detectJdks();
-                              setDb((old) => ({
-                                ...old,
-                                jdks: [
-                                  ...old.jdks,
-                                  ...found.filter(
-                                    (j) =>
-                                      !old.jdks.some(
-                                        (x) =>
-                                          x.path.toLowerCase() === j.path.toLowerCase() ||
-                                          x.name === j.name,
-                                      ),
-                                  ),
-                                ],
-                              }));
-                              notify('检测到 ' + found.length + ' 个完整 JDK；已添加未配置项');
-                            })
-                          }
-                        >
-                          扫描本机 JDK
-                        </button>
-                      )
-                    }
-                  >
-                    {db.jdks.map((j) => (
-                      <div className="list-row" key={j.name}>
-                        <Coffee size={21} />
-                        <div className="grow">
-                          <h3>{j.name}</h3>
-                          <p className="path">{j.path}</p>
-                        </div>
-                        <Badge>{desktop ? '本机配置' : '示例安装信息'}</Badge>
-                        <button
-                          className="button"
-                          onClick={() =>
-                            desktop
-                              ? void nativeAction(async () =>
-                                  setNativeDialog({
-                                    title: j.name + ' 检测结果',
-                                    content: await desktop!.checkTool('jdk', j.path),
-                                  }),
-                                )
-                              : notify(
-                                  '原型不调用 java。正式版将执行 java -version 与 javac -version。',
-                                )
-                          }
-                        >
-                          检测
-                        </button>
-                      </div>
-                    ))}
-                  </Card>
-                  <Card className="mt" title="各服务的 Maven 配置">
-                    {db.services.map((s) => (
-                      <div className="list-row" key={s.id}>
-                        <Wrench size={20} />
-                        <div className="grow">
-                          <h3>{s.name}</h3>
-                          <p className="path">
-                            {s.tool === 'wrapper'
-                              ? s.root + '\\mvnw.cmd'
-                              : s.mavenPath || 'PATH 中的 Maven'}
-                          </p>
-                          <p className="muted">
-                            工作目录：{s.workDir} · Profiles：{s.profiles || '无'} · 参数：{s.args}
-                          </p>
-                        </div>
-                        {desktop && (
-                          <button
-                            className="button"
-                            onClick={() =>
-                              void nativeAction(async () => {
-                                await desktop!.save(db);
-                                setNativeDialog({
-                                  title: s.name + ' · Maven 版本',
-                                  content: await desktop!.checkTool('maven', s.id),
-                                });
-                              })
-                            }
-                          >
-                            验证 Maven
-                          </button>
-                        )}
-                        <button
-                          className="button"
-                          onClick={() => setDialog({ kind: 'service', value: s })}
-                        >
-                          配置
-                        </button>
-                      </div>
-                    ))}
-                  </Card>
-                  <p className="note">
-                    <ShieldCheck size={16} />
-                    JAVA_HOME 和 PATH 仅注入单次构建进程；不改系统配置。
-                  </p>
-                </>
-              )}
-            </>
-          )}
-          {page === 'history' && (
-            <>
-              {header(
-                '部署历史',
-                desktop
-                  ? '任务和目标结果保存在本机数据库，可导出完整日志。'
-                  : '真实反映本次原型内完成的每个目标，保留当时配置快照。',
-              )}
-              {desktop ? (
+  const renderHistory = (scoped = false) => {
+    const scope = scoped ? 'service:' + serviceId : 'all';
+    return (
+    desktop ? (
                 <TaskHistory
+                  initialView={historyViews.current.get(scope)}
+                  onViewChange={(view) => historyViews.current.set(scope, view)}
                   onMaintenance={setBackupAudit}
-                  rows={taskRows}
+                  rows={scoped ? taskRows.filter((row) => row.serviceId === serviceId) : taskRows}
                   db={db}
                   api={desktop}
                   busy={isActive(task)}
@@ -2420,7 +1156,6 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                   onOpen={(id, targetId) =>
                     void nativeAction(async () => {
                       const next = await desktop!.readTask(id);
-                      setTaskReturnPage('history');
                       setTask(next);
                       setInspected(
                         Math.max(
@@ -2428,11 +1163,11 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                           next.targets.findIndex((r) => r.target.id === targetId),
                         ),
                       );
-                      setPage('task');
+                      openTask(scoped ? 'deploy' : 'history');
                     })
                   }
                 />
-              ) : (
+              ) : fixture && (
                 <>
                   <div className="filters">
                     <Field label="结果">
@@ -2483,549 +1218,661 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                       <DateRangeFilter value={historyDate} onChange={setHistoryDate} />
                     </Field>
                   </div>
-                  <Card>{historyTable(filteredHistory)}</Card>
+                  <Card>{historyTable(scoped ? filteredHistory.filter((row) => row.service.id === serviceId) : filteredHistory)}</Card>
                 </>
-              )}
+              )
+  );
+  };
+
+  return (
+    <div
+      className={desktop ? "app desktop-shell" : "app"}
+      onDragOver={(e) => {
+        if (desktop && e.dataTransfer.types.includes('Files')) e.preventDefault();
+      }}
+      onDrop={(e) => {
+        if (!desktop || !e.dataTransfer.files.length) return;
+        e.preventDefault();
+        if (
+          hasOpenModal() ||
+          busy ||
+          isActive(task) ||
+          !db.services.length
+        ) {
+          notify('请先结束当前操作并选择服务，再拖入 JAR。');
+          return;
+        }
+        if (e.dataTransfer.files.length !== 1) {
+          notify('每次请选择一个 JAR 文件。');
+          return;
+        }
+        const file = e.dataTransfer.files[0];
+        void nativeAction(async () => {
+          const value = await desktop!.acceptDrop(file);
+          setRetrySource(undefined);
+          setArtifact(value);
+          setJarSelection(value.path);
+          setBuild('existing');
+          setPage('deploy');
+          setInfoRefresh((n) => n + 1);
+          notify('已选中 JAR，部署前仍会完整校验。');
+        });
+      }}
+    >
+      <ServiceSidebar
+        services={db.services}
+        deployedServices={new Set(db.targets.filter((target) => cardTime(target.lastDeploy) !== '—').map((target) => target.serviceId))}
+        current={serviceId}
+        page={page}
+        onPage={(next) => {
+          if (next === 'deploy') setServiceTab('deploy');
+          setPage(next);
+        }}
+        onService={(id) => {
+          if (id !== serviceId) selectService(id);
+          setServiceTab('deploy');
+          setEnvironment('all');
+          setPage('deploy');
+        }}
+        onSearch={() => db.services.length && setDialog({ kind: 'picker' })}
+        settingsNavigation={<div id="settings-directory" className="settings-directory" />}
+        task={isActive(task) && <button className="sidebar-link sidebar-task" aria-current={page === 'task' ? 'page' : undefined}
+          onClick={() => {
+            setInspected(-1);
+            openTask();
+          }} aria-label="当前任务">
+          <Loader2 size={16} className="spin" /><span>当前任务</span><small>{taskProgress(task!)}%</small>
+        </button>}
+        global={[
+          ...nav.filter((n) => n.page !== 'deploy').map((n) => ({ ...n })),
+          ...(desktop ? [{ page: 'schedules' as const, name: '发布计划', icon: CalendarClock }] : []),
+        ].map(({ page: id, name, icon: Icon }) => (
+          <button className="sidebar-link" key={id} aria-label={name} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)} title={name}>
+            <Icon size={17} strokeWidth={1.6} /><span>{name}</span>
+          </button>
+        ))}
+      />
+      <div className="workspace" id="content-area">
+        {page !== 'task' && (
+          <AppPageHeader
+            className="desktop-page-header"
+            truncateTitle
+            icon={page === 'deploy' && db.services.length ? <Box size={20} strokeWidth={1.5} /> : page === 'settings' ? <SettingsIcon size={18} strokeWidth={1.5} /> : undefined}
+            title={page === 'deploy' && db.services.length ? service.name :
+              page === 'settings' && desktop ? ({ general: '外观与提醒', deploy: '部署与构建', data: '数据与存储', help: '配置与帮助' }[settingsSection] || '设置') :
+              workspacePages.find((entry) => entry.page === page)?.name || 'YOTOO 部署中心'}
+            subtitle={page === 'deploy' && service.description ? service.description : undefined}
+            actions={page === 'deploy' && !!db.services.length ? <>
+              <Button variant="quiet" size="compact" onClick={() => setDialog({ kind: 'presets' })}><FolderOpen size={15} />部署预设</Button>
+              <Button variant="ghost" size="icon-compact" aria-label="编辑配置" title="编辑服务" onClick={() => setDialog({ kind: 'service', value: service })}><Pencil size={15} /></Button>
+              <Button variant="neutral" size="compact" disabled={!db.servers.length} onClick={() => setDialog({ kind: 'target', value: newTarget() })}><Plus size={15} />添加目标</Button>
+            </> : page === 'schedules' ? <Button size="compact" onClick={() => { setServiceTab('deploy'); setPage('deploy'); }}>选择发布目标</Button> : undefined}
+          />
+        )}
+        <main ref={mainRef} className={page === 'task' ? 'main-task' : page === 'deploy' && db.services.length ? 'main-service' : 'main-page'}>
+          {!!taskIssues.length && (
+            <div className="warning" role="alert">
+              <strong>有任务元数据无法读取，原始数据与相关文件已保留</strong>
+              <p>
+                暂时不能确定产物共享关系或远端执行结果。请检查数据目录中的数据库备份，修复后重新打开应用；不会用空配置覆盖原数据。
+              </p>
+              <Button variant="neutral" size="compact" onClick={() => void desktop?.openDataDir()}>
+                打开数据目录
+              </Button>
+            </div>
+          )}
+          {desktop && page !== 'task' && observations.some((s) => s.active) && (
+            <div className="notice">
+              <strong>部署后日志观察</strong>
+              <div className="row wrap mt">
+                {observations
+                  .filter((s) => s.active)
+                  .map((s) => (
+                    <Button
+                      key={s.sessionId}
+                      variant="neutral" size="compact"
+                      onClick={() =>
+                        setNativeDialog({
+                          title: '部署后观察 · ' + s.label,
+                          logs: s.targetId,
+                          logSession: s.sessionId,
+                        })
+                      }
+                    >
+                      {s.label} · 查看或停止
+                    </Button>
+                  ))}
+              </div>
+            </div>
+          )}
+          {desktop && page !== 'task' && unfinished.length > 0 && (
+            <div className="warning" role="status">
+              <strong>存在未结束的部署任务</strong>
+              <p>核实只读取原任务状态或清理未启动的上传，不会继续后续目标或重新替换。</p>
+              {unfinished.map((t) => (
+                <Button
+                  variant="neutral" size="compact"
+                  key={t.id}
+                  disabled={isActive(task)}
+                  onClick={() => setNativeDialog({ title: '核实中断任务 · ' + t.id, recover: t })}
+                >
+                  {t.service.name} · 核实原任务
+                </Button>
+              ))}
+            </div>
+          )}
+          {recovery && (
+            <div className="warning" role="alert">
+              <strong>
+                {recovery.backupKey
+                  ? '配置无法读取，已备份原始数据。'
+                  : '配置无法读取，原键仍保留；备份存储不可用，请下载原始数据。'}
+              </strong>
+              <p>确认前不会覆盖原配置。备份键：{recovery.backupKey || '未写入'}</p>
+              <div className="row wrap">
+                <Button
+                  variant="neutral" size="compact"
+                  onClick={() => download('deploy-center-original.txt', recovery.raw)}
+                >
+                  下载原始数据
+                </Button>
+                <Button
+                  variant="neutral" size="compact"
+                  onClick={() => {
+                    if (desktop)
+                      void nativeAction(async () => {
+                        await desktop!.confirmRecovery();
+                        setRecovery(undefined);
+                      });
+                    else setRecovery(undefined);
+                  }}
+                >
+                  {desktop ? '确认恢复为空配置' : '确认使用示例配置并保存'}
+                </Button>
+              </div>
+            </div>
+          )}
+          {storageError && storageError !== blockReason && (
+            <p className="warning" role="alert">
+              {storageError}
+            </p>
+          )}
+          {page === 'deploy' && !db.services.length && (
+            <>
+              {header('一键部署', '添加服务并配置部署目标，或导入已有配置。')}
+              <FirstGuide
+                db={db}
+                tasks={taskRows}
+                onPage={setPage}
+                onImport={() => void importNative()}
+              />
             </>
           )}
-          {page === 'settings' && (
-            <>
-              {header(
-                '设置',
-                desktop ? '默认行为、构建兼容与本机数据。' : '默认行为、构建兼容与原型本地数据。',
-              )}
-              {desktop ? (
-                <WorkspaceTabs
-                  label="设置分类"
-                  sections={[
-                    {
-                      id: 'general',
-                      label: '外观与提醒',
-                      description: '界面偏好和后台任务提醒，修改后自动保存。',
-                      content: (
-                        <div className="stack">
-                          <Card title="界面外观">
-                            <Field label="界面主题">
-                              <select
-                                value={db.settings.theme}
-                                onChange={(e) =>
-                                  setDb((old) => ({
-                                    ...old,
-                                    settings: {
-                                      ...old.settings,
-                                      theme: e.target.value as Database['settings']['theme'],
-                                    },
-                                  }))
-                                }
-                              >
-                                <option value="system">跟随系统</option>
-                                <option value="light">浅色</option>
-                                <option value="dark">深色</option>
-                              </select>
-                            </Field>
-                          </Card>
-                          <Card title="后台提醒">
-                            <Switch
-                              label="Windows 系统通知"
-                              checked={db.settings.notifications !== false}
-                              onChange={(notifications) =>
-                                setDb((old) => ({
-                                  ...old,
-                                  settings: { ...old.settings, notifications },
-                                }))
-                              }
-                              description="窗口在后台时，任务完成或失败会提醒，点击通知回到任务。"
-                            />
-                            <Switch
-                              label="通知提示音"
-                              checked={db.settings.notificationSound !== false}
-                              onChange={(notificationSound) =>
-                                setDb((old) => ({
-                                  ...old,
-                                  settings: { ...old.settings, notificationSound },
-                                }))
-                              }
-                            />
-                          </Card>
-                        </div>
-                      ),
-                    },
-                    {
-                      id: 'deploy',
-                      label: '部署与构建',
-                      description: '这里设置全局默认值，部署页仍可单次覆盖。',
-                      content: (
-                        <div className="stack">
-                          <Card title="部署默认行为">
-                            <div className="settings-fields">
-                              <Field label="某个目标失败后">
-                                <select
-                                  value={db.settings.failurePolicy}
-                                  onChange={(e) =>
-                                    setDb((old) => ({
+          {page === 'deploy' && !!db.services.length && (
+            <section className="service-workspace" aria-label="服务工作台">
+              <PageTabs
+                aria-label="服务工作台"
+                value={serviceTab}
+                onValueChange={setServiceTab}
+                items={[
+                  { value: 'deploy', label: '部署目标' },
+                  { value: 'records', label: '发布记录' },
+                  { value: 'build', label: '构建配置' },
+                ]}
+                className="service-workspace-tabs"
+              />
+              {serviceTab === 'records' ? <div ref={serviceScrollRef} className="service-workspace-scroll" key={serviceId}>{renderHistory(true)}</div> :
+                serviceTab === 'build' ? <div ref={serviceScrollRef} className="service-workspace-scroll">
+                  <ServiceForm key={service.id} initial={service} db={db} onClose={() => setServiceTab('deploy')}
+                    onSave={(value) => {
+                      setDb((old) => ({ ...old, services: upsert(old.services, value) }));
+                      setArtifact((fixture ? artifactFor : initialArtifact)(value));
+                      setJarSelection(undefined);
+                      setRetrySource(undefined);
+                      setLocalInfo(null);
+                      setInfoRefresh((n) => n + 1);
+                      notify('服务配置已保存');
+                    }} />
+                </div> : <>
+                  <div ref={serviceScrollRef} className="service-workspace-scroll">
+                    <div className="artifact-summary">
+                      <span className="record-icon"><FileArchive size={18} strokeWidth={1.5} /></span>
+                      <div className="grow artifact-caption">
+                        <strong>{build === 'existing' ? artifact.name || service.jarName : service.jarName}</strong>
+                        <small>{build === 'existing'
+                          ? artifact.exists ? niceSize(artifact.size) + ' · ' + fmtTime(artifact.modified) : '尚无可用 JAR'
+                          : '部署前构建一次，所有目标共用同一份产物'}</small>
+                      </div>
+                      {build === 'existing' && <Button variant="neutral" size="compact" onClick={() => void pickJar()}><FolderOpen size={14} />选择本地 JAR</Button>}
+                      <SegmentedControl aria-label="构建方式" size="sm" value={build} onValueChange={setBuild}
+                        items={[{ value: 'rebuild', label: '重新构建' }, { value: 'existing', label: '使用现有 JAR' }]} />
+                    </div>
+                    <details className="build-details">
+                      <summary>构建与产物详情</summary>
+                      {build === 'rebuild' ? (
+                        <>
+                          <p className="code">
+                            {service.tool === 'wrapper'
+                              ? '.\\mvnw.cmd'
+                              : service.mavenPath || 'mvn.cmd'}{' '}
+                            {service.args}
+                            {service.profiles ? ' -P' + service.profiles : ''}
+                          </p>
+                          <div className="metadata">
+                            <span>工作目录：{service.workDir || '.'}</span>
+                            <span>JDK 仅作用于构建进程</span>
+                          </div>
+                          <p className="path">产物：{localJar(service)}</p>
+                        </>
+                      ) : (
+                        <>
+                          <ArtifactInfo value={artifact} service={displayService} />
+                          <p className="note">
+                            {fixture
+                              ? '测试夹具只提供文件名、大小和修改时间。'
+                              : '已读取本地文件信息；选择文件或确认部署前会检查 JAR 完整性。'}
+                          </p>
+                          <div className="row wrap">
+                            {fixture && (
+                              <Button variant="neutral" size="compact" onClick={() => void pickJar()}>
+                                <FolderOpen size={16} />
+                                选择本地 JAR
+                              </Button>
+                            )}
+                            {fixture && db.settings.demoMode && (
+                              <Demo>
+                                {' '}
+                                <Button
+                                  variant="link" size="compact"
+                                  onClick={() => setArtifact(artifactFor(service))}
+                                >
+                                  使用示例产物
+                                </Button>
+                                <Button
+                                  variant="link" size="compact"
+                                  onClick={() =>
+                                    setArtifact((old) => ({
                                       ...old,
-                                      settings: {
-                                        ...old.settings,
-                                        failurePolicy: e.target
-                                          .value as Database['settings']['failurePolicy'],
-                                      },
+                                      modified: '2026-11-01T08:00:00+08:00',
                                     }))
                                   }
                                 >
-                                  <option value="stop">停止后续目标</option>
-                                  <option value="continue">继续其他目标</option>
-                                </select>
-                              </Field>
-                              <Field label="陈旧锁阈值（分钟）">
-                                <input
-                                  type="number"
-                                  min="1"
-                                  max="10080"
-                                  value={db.settings.staleLockMinutes ?? 120}
-                                  onChange={(e) =>
-                                    setDb((old) => ({
-                                      ...old,
-                                      settings: {
-                                        ...old.settings,
-                                        staleLockMinutes: Math.max(1, Number(e.target.value)),
-                                      },
-                                    }))
-                                  }
-                                />
-                              </Field>
+                                  查看旧产物提醒
+                                </Button>
+                              </Demo>
+                            )}
+                          </div>
+                        </>
+                      )}
+                      <p className="branch">
+                        <GitBranch size={14} />
+                        {displayService.git.branch}
+                        <HashValue
+                          label="Git 提交"
+                          value={displayService.git.commit}
+                          onCopy={(value) => void copy(value)}
+                        />
+                        {displayService.git.dirty && <Badge kind="warn">有未提交修改</Badge>}
+                        <span>
+                          {desktop
+                            ? localInfoBusy
+                              ? '正在读取本地信息…'
+                              : localInfo?.serviceId === serviceId
+                                ? /^[a-f0-9]{7,64}$/i.test(displayService.git.commit)
+                                  ? 'Git 提交：' + fmtTime(displayService.git.time)
+                                  : '未找到 Git 仓库或本机 Git 不可用'
+                                : '等待读取本地信息'
+                            : 'Git 示例信息'}
+                        </span>
+                      </p>
+                      {desktop && (
+                        <>
+                          {localInfo?.serviceId === serviceId && localInfo.artifactError && (
+                            <p className="warning" role="status">
+                              {localInfo.artifactError}
+                            </p>
+                          )}
+                          {localInfoError && (
+                            <p className="warning" role="alert">
+                              {localInfoError}
+                            </p>
+                          )}
+                          <div className="row wrap local-info-actions">
+                            <Button
+                              variant="neutral" size="compact"
+                              disabled={localInfoBusy}
+                              onClick={() => setInfoRefresh((n) => n + 1)}
+                            >
+                              <RotateCcw size={15} />
+                              刷新 JAR / Git 信息
+                            </Button>
+                            {jarSelection && (
+                              <Button variant="link" size="compact" onClick={() => setJarSelection(undefined)}>
+                                使用配置的产物路径
+                              </Button>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </details>
+
+                    <div className="target-toolbar">
+                      <SegmentedControl aria-label="环境筛选" size="sm" value={environment} onValueChange={setEnvironment}
+                        items={[{ value: 'all', label: '全部目标' }, { value: 'test', label: '非正式' }, { value: 'production', label: '正式' }]} />
+                      <span className="muted">{targets.length} 个目标</span>
+                      {environment !== 'all' &&
+                        chosen.some((target) => target.production !== (environment === 'production')) && (
+                          <span className="note">
+                            {chosen.filter((target) => target.production !== (environment === 'production')).length} 个已选目标未在当前筛选中显示
+                          </span>
+                        )}
+                      <span className="grow" />
+                      {!!expanded.length && <Button size="compact" variant="quiet" onClick={() => setExpanded([])}>全部收起</Button>}
+                      {chosen.length > 0 && <Button size="compact" variant="quiet" onClick={() => {
+                        setSelected([]);
+                        setDb((old) => ({ ...old, lastService: serviceId, lastTargets: [] }));
+                      }}>取消选择</Button>}
+                    </div>
+                    <div className="deployment-targets">
+                      {targets.filter((target) => environment === 'all' || target.production === (environment === 'production')).map((t) => {
+                        const s = db.servers.find((server) => server.id === t.serverId);
+                        const b = effective(t);
+                        const open = expanded.includes(t.id);
+                        return <article key={t.id} className={'deployment-target' + (selected.includes(t.id) ? ' checked' : '')}>
+                          <div className="target-compact deployment-target-main">
+                            <Checkbox aria-label={'选择' + t.name} checked={selected.includes(t.id)} onCheckedChange={() => toggleTarget(t)} />
+                            <span className="record-icon"><Box size={18} strokeWidth={1.5} /></span>
+                            <button className="target-identity" aria-expanded={open} aria-label={(open ? '收起' : '展开') + t.name + '详情'} onClick={() => setExpanded((old) => open ? old.filter((id) => id !== t.id) : [...old, t.id])}>
+                              <strong>{t.name} {t.production && <Badge kind="warn">正式</Badge>}</strong>
+                              <small>{s ? serverAddress(s) + ' · ' + s.name : '未关联服务器'}</small>
+                            </button>
+                            <div className="target-artifact">
+                              <Badge>{modeLabel(t.mode)}</Badge>
+                              <HashValue label="Git 提交" value={t.currentCommit || knownCommit(t.version, t.currentHash)} onCopy={(value) => void copy(value)} />
                             </div>
-                          </Card>
-                          <Card title="构建兼容性">
-                            <Switch
-                              label="兼容 Maven 异常非零退出码"
-                              description="仅当日志包含 BUILD SUCCESS、产物有效且修改时间晚于本次构建开始时间时允许；默认开启，可关闭"
-                              checked={db.settings.allowMavenNonzero}
-                              onChange={(v) =>
-                                setDb((old) => ({
-                                  ...old,
-                                  settings: { ...old.settings, allowMavenNonzero: v },
-                                }))
-                              }
-                            />
-                          </Card>
-                        </div>
-                      ),
-                    },
-                    {
-                      id: 'data',
-                      label: '数据与存储',
-                      description: '查看占用、管理数据位置及保留规则。清理与迁移均需明确确认。',
-                      content: (
-                        <div className="stack data-storage-sections">
-                          <DataSettings
-                            section="usage"
-                            api={desktop}
-                            policy={db.settings.artifactPolicy}
-                            onPolicy={(policy) =>
-                              setDb((old) => ({
-                                ...old,
-                                settings: { ...old.settings, artifactPolicy: policy },
-                              }))
-                            }
-                          />
-                          <DirectorySettings
-                            api={desktop}
-                            beforeMigrate={() => desktop!.save(db)}
-                            blocked={
-                              isActive(task)
-                                ? '任务执行或取消中，不能迁移数据目录。'
-                                : unfinished.length
-                                  ? '有未处理的中断任务，请先核实结果再迁移。'
-                                  : undefined
-                            }
-                            onManage={() =>
-                              document
-                                .querySelector('.storage-usage')
-                                ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                            }
-                          />
-                          <DataSettings
-                            section="retention"
-                            historyFields={
-                              <div className="retention-history">
-                                <h3>部署历史</h3>
-                                <div className="settings-fields">
-                                  <Field
-                                    label="历史保留条数"
-                                    hint="按目标记录计数（1–10000），同时清理不再引用的本机任务日志和产物；远程备份不会删除"
-                                  >
+                            <div className="target-health">
+                              <CompactStatus label={t.healthState} tone={/通过/.test(t.healthState) ? 'good' : t.health.type === 'none' ? 'neutral' : /失败/.test(t.healthState) ? 'bad' : 'warn'} />
+                              <time>{cardTime(t.lastDeploy)}</time>
+                            </div>
+                            <div className="target-backup" title={overrides[t.id] ? '本次覆盖' : '目标默认'}>
+                              <Switch label={t.name + '备份'} checked={b.enabled} onChange={(enabled) => changeBackup(t.id, { ...b, enabled })} />
+                            </div>
+                            <Button variant="ghost" size="icon-compact" aria-label={'编辑' + t.name} onClick={() => setDialog({ kind: 'target', value: t })}><Pencil size={15} /></Button>
+                            <Button variant="ghost" size="icon-compact" aria-label={'本次策略 · ' + t.name} aria-expanded={open}
+                              onClick={() => setExpanded((old) => open ? old.filter((id) => id !== t.id) : [...old, t.id])}><ChevronDown size={15} /></Button>
+                          </div>
+                          {open && <div className="target-override">
+                            <p className="path">{remoteJar(t)}</p>
+                            <HashValue label="JAR 指纹" value={t.currentHash} onCopy={(value) => void copy(value)} />
+                              <BackupFields value={b} onChange={(x) => changeBackup(t.id, x)} />
+                              {desktop && (
+                                <>
+                                  <Switch
+                                    label="本次成功后观察日志"
+                                    disabled={t.mode === 'jar' && !t.appLogPath}
+                                    checked={
+                                      (observationOverrides[t.id] || t.observation)?.enabled ||
+                                      false
+                                    }
+                                    onChange={(enabled) =>
+                                      setObservationOverrides((old) => ({
+                                        ...old,
+                                        [t.id]: {
+                                          duration: (old[t.id] || t.observation)?.duration || 60,
+                                          enabled,
+                                        },
+                                      }))
+                                    }
+                                    description={
+                                      t.mode === 'jar' && !t.appLogPath
+                                        ? '启用前需在目标配置中填写应用日志路径。'
+                                        : '健康未验证且部署完成时，自动打开只读日志观察。'
+                                    }
+                                  />
+                                  <Field label="本次观察时间（秒）">
                                     <input
                                       type="number"
-                                      min="1"
-                                      max="10000"
-                                      value={db.settings.historyLimit}
-                                      onChange={(e) => {
-                                        const value = Number(e.target.value);
-                                        if (Number.isInteger(value) && value >= 1 && value <= 10000)
-                                          setDb((old) =>
-                                            pruneHistory({
-                                              ...old,
-                                              settings: { ...old.settings, historyLimit: value },
-                                            }),
-                                          );
-                                      }}
-                                    />
-                                  </Field>
-                                  <Field label="历史保留天数（0 为不按天清理）">
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      max="3650"
-                                      value={db.settings.historyDays ?? 90}
+                                      min="10"
+                                      max="3600"
+                                      value={
+                                        (observationOverrides[t.id] || t.observation)?.duration ??
+                                        60
+                                      }
                                       onChange={(e) =>
-                                        setDb((old) => ({
+                                        setObservationOverrides((old) => ({
                                           ...old,
-                                          settings: {
-                                            ...old.settings,
-                                            historyDays: Math.max(
-                                              0,
-                                              Math.min(3650, Number(e.target.value)),
-                                            ),
+                                          [t.id]: {
+                                            enabled: (old[t.id] || t.observation)?.enabled || false,
+                                            duration: Number(e.target.value),
                                           },
                                         }))
                                       }
                                     />
                                   </Field>
-                                </div>
-                              </div>
-                            }
-                            api={desktop}
-                            policy={db.settings.artifactPolicy}
-                            onPolicy={(policy) =>
-                              setDb((old) => ({
-                                ...old,
-                                settings: { ...old.settings, artifactPolicy: policy },
-                              }))
-                            }
-                          />
-                        </div>
-                      ),
-                    },
-                    {
-                      id: 'help',
-                      label: '配置与帮助',
-                      description: '检查软件更新、备份配置或查看使用说明。',
-                      content: (
-                        <div className="help-settings">
-                          <AppUpdateSettings api={desktop} version={boot?.version || '1.7.0'} active={isActive(task)} />
-                          <Card className="help-settings-section">
-                            <div className="help-section-row">
-                              <div>
-                                <h2>配置备份</h2>
-                                <p className="muted">导出服务、服务器和目标配置，不包含认证口令；完整日志单独保存。</p>
-                              </div>
-                              <div className="row wrap">
-                                <button
-                                  className="button"
-                                  onClick={() =>
-                                    desktop
-                                      ? void nativeAction(async () => {
-                                          await desktop!.save(db);
-                                          await desktop!.exportConfig();
+                                  {observationOverrides[t.id] && (
+                                    <Button
+                                      variant="link" size="compact"
+                                      onClick={() =>
+                                        setObservationOverrides((old) => {
+                                          const next = { ...old };
+                                          delete next[t.id];
+                                          return next;
                                         })
-                                      : download('deploy-center-config-v3.json', safeConfigJson(db), 'application/json')
-                                  }
-                                >
-                                  <Download size={16} />
-                                  导出配置
-                                </button>
-                                <button
-                                  className="button"
-                                  onClick={() => (desktop ? void importNative() : importRef.current?.click())}
-                                  disabled={isActive(task)}
-                                >
-                                  <Upload size={16} />
-                                  导入配置
-                                </button>
-                              </div>
-                            </div>
-                          </Card>
-                          <Card className="help-settings-section">
-                            <h2>帮助与项目</h2>
-                            <div className="help-resource-list">
-                              <button
-                                className="help-resource-row"
-                                aria-label="使用说明"
-                                disabled={!desktop}
-                                onClick={() => void desktop?.help()}
+                                      }
+                                    >
+                                      恢复目标默认观察设置
+                                    </Button>
+                                  )}
+                                </>
+                              )}
+
+                              {!b.enabled && (
+                                <p className="warning">未启用备份，失败时不能依赖本次备份恢复。</p>
+                              )}
+                              <Button
+                                variant="link" size="compact"
+                                onClick={() =>
+                                  setOverrides((old) => {
+                                    const next = { ...old };
+                                    delete next[t.id];
+                                    return next;
+                                  })
+                                }
                               >
-                                <span className="help-resource-icon">
-                                  <BookOpen size={18} />
-                                </span>
-                                <span className="help-resource-copy">
-                                  <strong>使用说明</strong>
-                                  <span>配置、部署、回滚与常见问题</span>
-                                </span>
-                                <ChevronRight size={16} aria-hidden="true" />
-                              </button>
-                              <a
-                                className="help-resource-row"
-                                aria-label="查看版本与源码"
-                                href="https://github.com/liwl1995/DeployCenter/releases"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                <span className="help-resource-icon">
-                                  <Code2 size={18} />
-                                </span>
-                                <span className="help-resource-copy">
-                                  <strong>版本与源码</strong>
-                                  <span>发布记录、安装包与项目源码</span>
-                                </span>
-                                <ChevronRight size={16} aria-hidden="true" />
-                              </a>
-                              <button
-                                className="help-resource-row"
-                                aria-label="关于 YOTOO 部署中心"
-                                disabled={!desktop}
-                                onClick={() => void desktop?.about()}
-                              >
-                                <span className="help-resource-icon">
-                                  <Info size={18} />
-                                </span>
-                                <span className="help-resource-copy">
-                                  <strong>关于应用</strong>
-                                  <span>YOTOO 部署中心 · 本地部署工作台</span>
-                                </span>
-                                <ChevronRight size={16} aria-hidden="true" />
-                              </button>
-                            </div>
-                          </Card>
-                        </div>
-                      ),
-                    },
-                  ]}
-                />
-              ) : (
-                <>
-                  {desktop && (
-                    <Card title="后台提醒">
-                      <Switch
-                        label="Windows 系统通知"
-                        checked={db.settings.notifications !== false}
-                        onChange={(notifications) =>
-                          setDb((old) => ({ ...old, settings: { ...old.settings, notifications } }))
-                        }
-                        description="窗口在后台时，任务完成或失败会提醒，点击通知回到任务。"
-                      />
-                      <Switch
-                        label="通知提示音"
-                        checked={db.settings.notificationSound !== false}
-                        onChange={(notificationSound) =>
-                          setDb((old) => ({
-                            ...old,
-                            settings: { ...old.settings, notificationSound },
-                          }))
-                        }
-                      />
-                    </Card>
-                  )}
-                  <Card title="部署默认行为">
-                    <Field label="某个目标失败后">
-                      <select
-                        value={db.settings.failurePolicy}
-                        onChange={(e) =>
-                          setDb((old) => ({
-                            ...old,
-                            settings: {
-                              ...old.settings,
-                              failurePolicy: e.target
-                                .value as Database['settings']['failurePolicy'],
-                            },
-                          }))
-                        }
-                      >
-                        <option value="stop">停止后续目标</option>
-                        <option value="continue">继续其他目标</option>
-                      </select>
-                    </Field>
-                    <Field label="界面主题">
-                      <select
-                        value={db.settings.theme}
-                        onChange={(e) =>
-                          setDb((old) => ({
-                            ...old,
-                            settings: {
-                              ...old.settings,
-                              theme: e.target.value as Database['settings']['theme'],
-                            },
-                          }))
-                        }
-                      >
-                        <option value="system">跟随系统</option>
-                        <option value="light">浅色</option>
-                        <option value="dark">深色</option>
-                      </select>
-                    </Field>
-                    <Field
-                      label="历史保留条数"
-                      hint="按目标记录计数（1–10000），同时清理不再引用的本机任务日志和产物；远程备份不会删除"
-                    >
-                      <input
-                        type="number"
-                        min="1"
-                        max="10000"
-                        value={db.settings.historyLimit}
-                        onChange={(e) => {
-                          const value = Number(e.target.value);
-                          if (Number.isInteger(value) && value >= 1 && value <= 10000)
-                            setDb((old) =>
-                              pruneHistory({
-                                ...old,
-                                settings: { ...old.settings, historyLimit: value },
-                              }),
-                            );
-                        }}
-                      />
-                    </Field>
-                    {prototype && (
-                      <Demo>
-                        <Switch
-                          label="演示模式"
-                          description="显示虚线边框中的演示产物和故障注入控件"
-                          checked={db.settings.demoMode}
-                          onChange={(demoMode) =>
-                            setDb((old) => ({ ...old, settings: { ...old.settings, demoMode } }))
-                          }
-                        />
-                      </Demo>
-                    )}
-                    {desktop && (
-                      <>
-                        <Field label="历史保留天数（0 为不按天清理）">
-                          <input
-                            type="number"
-                            min="0"
-                            max="3650"
-                            value={db.settings.historyDays ?? 90}
-                            onChange={(e) =>
-                              setDb((old) => ({
-                                ...old,
-                                settings: {
-                                  ...old.settings,
-                                  historyDays: Math.max(0, Math.min(3650, Number(e.target.value))),
-                                },
-                              }))
-                            }
-                          />
-                        </Field>
-                        <Field label="陈旧锁阈值（分钟）">
-                          <input
-                            type="number"
-                            min="1"
-                            max="10080"
-                            value={db.settings.staleLockMinutes ?? 120}
-                            onChange={(e) =>
-                              setDb((old) => ({
-                                ...old,
-                                settings: {
-                                  ...old.settings,
-                                  staleLockMinutes: Math.max(1, Number(e.target.value)),
-                                },
-                              }))
-                            }
-                          />
-                        </Field>
-                        <button className="button" onClick={() => void desktop!.openDataDir()}>
-                          打开数据目录
-                        </button>
-                      </>
-                    )}
-                    <Switch
-                      label="兼容 Maven 异常非零退出码"
-                      description="仅当日志包含 BUILD SUCCESS、产物有效且修改时间晚于本次构建开始时间时允许；默认开启，可关闭"
-                      checked={db.settings.allowMavenNonzero}
-                      onChange={(v) =>
-                        setDb((old) => ({
-                          ...old,
-                          settings: { ...old.settings, allowMavenNonzero: v },
-                        }))
-                      }
-                    />
-                    <p className="note">
-                      {desktop
-                        ? '默认开启以兼容现有脚本；只有成功标记、新产物时间和完整 JAR 校验全部满足时才接受。'
-                        : '原型不执行 Maven；此选项定义正式实现的构建接受条件。'}
-                    </p>
-                  </Card>
-                  {desktop && (
-                    <DataSettings
-                      api={desktop}
-                      policy={db.settings.artifactPolicy}
-                      onPolicy={(policy) =>
-                        setDb((old) => ({
-                          ...old,
-                          settings: { ...old.settings, artifactPolicy: policy },
-                        }))
-                      }
-                    />
-                  )}
-                  {desktop && (
-                    <DirectorySettings
-                      api={desktop}
-                      beforeMigrate={() => desktop!.save(db)}
-                      blocked={
-                        isActive(task)
-                          ? '任务执行或取消中，不能迁移数据目录。'
-                          : unfinished.length
-                            ? '有未处理的中断任务，请先核实结果再迁移。'
-                            : undefined
-                      }
-                      onManage={() =>
-                        document
-                          .querySelector('.storage-usage')
-                          ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                      }
-                    />
-                  )}
-                  <Card title="配置导入导出" className="mt">
-                    <p className="muted">
-                      {desktop
-                        ? 'SQLite 保存配置和历史，完整日志独立保存。导出不包含认证口令。'
-                        : '原型通过当前浏览器本地存储保存配置和历史。导出不包含认证口令。'}
-                    </p>
-                    <div className="row wrap mt">
-                      <button
-                        className="button"
-                        onClick={() =>
-                          desktop
-                            ? void nativeAction(async () => {
-                                await desktop!.save(db);
-                                await desktop!.exportConfig();
-                              })
-                            : download(
-                                'deploy-center-config-v3.json',
-                                safeConfigJson(db),
-                                'application/json',
-                              )
-                        }
-                      >
-                        <Download size={16} />
-                        导出配置
-                      </button>
-                      <button
-                        className="button"
-                        onClick={() => (desktop ? void importNative() : importRef.current?.click())}
-                        disabled={isActive(task)}
-                      >
-                        <Upload size={16} />
-                        导入配置
-                      </button>
+                                恢复该目标默认策略
+                              </Button>
+
+                          </div>}
+                        </article>;
+                      })}
+                      {!targets.length && <div className="empty service-empty"><Box size={25} strokeWidth={1.4} /><strong>还没有部署目标</strong><span>关联服务器后，配置这个服务的远程部署位置。</span>
+                        <Button variant="neutral" onClick={() => db.servers.length ? setDialog({kind:'target',value:newTarget()}) : setPage('servers')}>{db.servers.length ? '添加部署目标' : '配置服务器'}</Button></div>}
+                      {!!targets.length && !targets.some((t) => environment === 'all' || t.production === (environment === 'production')) && <p className="empty">没有匹配的部署目标。</p>}
                     </div>
-                    <p className="note">
-                      {desktop
-                        ? '数据目录：' + boot?.dataDir
-                        : '正式桌面版改用本地数据库及 Windows 加密凭据，安装与数据目录分离。'}
-                    </p>
-                  </Card>
-                </>
-              )}
+                    <Disclosure title="部署预检明细">
+                      <PrecheckPanel check={desktop ? preflight : null} pending={preflightBusy} />
+                    </Disclosure>
+                    {desktop && (
+                      <details className="deployment-note">
+                        <summary>
+                          本次备注<span>默认参考最近提交说明</span>
+                        </summary>{' '}
+                        <Field
+                          label="本次内容"
+                          hint="默认参考最近一次提交说明，可修改；会写入历史。"
+                        >
+                          <textarea
+                            maxLength={2000}
+                            value={deployNote ?? displayService.git.message ?? ''}
+                            onChange={(e) => setDeployNote(e.target.value)}
+                          />
+                        </Field>
+                      </details>
+                    )}
+
+                    {chosen.some((t) => t.production) && <p className="warning">包含正式环境，需要逐项输入环境名称确认。</p>}
+                    {busy && <p className="note" role="status"><Loader2 size={14} className="spin" />正在检查本地构建环境和产物…</p>}
+                  </div>
+                  {blockReason && <p className="deployment-block" role="status">{blockReason}</p>}
+                  <div className="deployment-footer" aria-label="部署操作">
+                    <div className="deployment-count grow"><strong>已选 {chosen.length} 个目标</strong><small>{build === 'rebuild' ? '构建一次' : '使用现有 JAR'} · {chosen.filter((t) => effective(t).enabled).length} 个开启备份</small></div>
+                    <div className="failure-policy">
+                      <label className="sr-only" htmlFor="deployment-failure-policy">某个目标失败后</label>
+                      <select id="deployment-failure-policy" value={failureOverride ?? db.settings.failurePolicy}
+                        onChange={(event) => setFailureOverride(event.target.value as Database['settings']['failurePolicy'])}>
+                        <option value="stop">失败后停止后续目标</option>
+                        <option value="continue">失败后继续其他目标</option>
+                      </select>
+                      <FieldHelp label="某个目标失败后" text="这是本次覆盖，只作用于本次部署。可在「设置 → 部署与构建」修改默认策略。" />
+                      {failureOverride !== null && <>
+                        <small>本次覆盖</small>
+                        <Button variant="link" size="compact" onClick={() => setFailureOverride(null)}>恢复默认</Button>
+                      </>}
+                    </div>
+                    {desktop && <Button variant="neutral" disabled={busy || isActive(task) || !!blockReason || !chosen.length} onClick={() => void launch(chosen, undefined, true)}>试运行（远程只读）</Button>}
+                    <Button disabled={busy || (!isActive(task) && (!!blockReason || !chosen.length || (!desktop && build === 'existing' && !artifact.exists)))} onClick={() => void launch()}>
+                      <Rocket size={15} />{isActive(task) ? '查看当前任务' : '部署'}
+                    </Button>
+                    {desktop && <MoreMenu iconOnly label="发布选项" trigger={<ChevronDown size={15} />} actions={[
+                      { label: '定时发布', disabled: busy || isActive(task) || !!blockReason || !chosen.length, onClick: () => void launch(chosen, undefined, false, true) },
+                      { label: '部署预设', onClick: () => setDialog({ kind: 'presets' }) },
+                    ]} />}
+                  </div>
+                </>}
+            </section>
+          )}
+          {page === 'schedules' && desktop && (
+            <ReleaseSchedules
+              plans={schedules}
+              busy={busy || isActive(task)}
+              onOpen={(id) =>
+                void nativeAction(async () => {
+                  const value = await desktop!.readTask(id);
+                  setTask(value);
+                  setInspected(-1);
+                  openTask('schedules');
+                })
+              }
+              onCancel={(id) => void nativeAction(() => desktop!.cancelSchedule(id))}
+              onChange={(plan) =>
+                setDialog({
+                  kind: 'confirm',
+                  task: plan.task,
+                  schedule: true,
+                  plan,
+                  reschedule: true,
+                })
+              }
+              onPrepare={(plan) =>
+                void nativeAction(async () => {
+                  await desktop!.save(db);
+                  let jarPath: string | undefined;
+                  if (plan.task.build === 'existing') {
+                    const snapshot = await desktop!.snapshotAvailability(plan.preparationId);
+                    jarPath = snapshot.available
+                      ? snapshot.path
+                      : (await desktop!.choose('jar')) || undefined;
+                    if (!jarPath) return;
+                  }
+                  const prepared = await desktop!.prepare({
+                    serviceId: plan.task.service.id,
+                    targetIds: plan.task.targets.map((r) => r.target.id),
+                    build: plan.task.build,
+                    jarPath,
+                    overrides: Object.fromEntries(
+                      plan.task.targets.map((r) => [r.target.id, r.backup]),
+                    ),
+                    failurePolicy: plan.task.failurePolicy,
+                    note: plan.task.note,
+                  });
+                  setDialog({ kind: 'confirm', ...prepared, schedule: true, plan });
+                })
+              }
+            />
+          )}
+          {page === 'services' && <ServicesWorkspace db={db} taskRows={taskRows} onAdd={() => setDialog({ kind: 'service', value: { ...newService(), id: uid() } })} renderActions={serviceActions} />}
+          {page === 'targets' && <TargetsWorkspace db={db} serviceId={serviceId} onService={selectService} onAdd={() => setDialog({ kind: 'target', value: newTarget() })} renderActions={targetActions} />}
+          {page === 'servers' && (
+            <ServersWorkspace
+              db={db}
+              desktop={!!desktop}
+              checks={serverChecks}
+              onAdd={() =>
+                      setDialog({
+                        kind: 'server',
+                        value: {
+                          id: uid(),
+                          name: '',
+                          host: '',
+                          port: 22,
+                          user: '',
+                          auth: 'password',
+                          credentialMode: 'ask',
+                          alias: '',
+                          keyPath: '',
+                          note: '',
+                        },
+                      })}
+              renderActions={serverActions}
+            />
+          )}
+          {page === 'tools' && (
+            <>
+              {header('构建环境', '服务分别选择 JDK、工作目录、Maven、Profiles 和构建参数。')}
+                <BuildEnvironment
+                  api={desktop}
+                  db={db}
+                  onEdit={(value) => setDialog({ kind: 'service', value })}
+                  onAdd={() => setDialog({ kind: 'jdk' })}
+                  onDelete={(name) => setDialog({ kind: 'delete', entity: 'jdk', id: name })}
+                  deletionReason={(name) => entityRemovalReason('jdk', name)}
+                  onScan={desktop ? () =>
+                    void nativeAction(async () => {
+                      const found = await desktop!.detectJdks();
+                      setDb((old) => ({
+                        ...old,
+                        jdks: [
+                          ...old.jdks,
+                          ...found.filter(
+                            (j) =>
+                              !old.jdks.some(
+                                (x) =>
+                                  x.name === j.name ||
+                                  x.path.toLowerCase() === j.path.toLowerCase(),
+                              ),
+                          ),
+                        ],
+                      }));
+                      notify('检测到 ' + found.length + ' 个完整 JDK，已添加未配置项');
+                    }) : undefined
+                  }
+                />
             </>
+          )}
+          {page === 'history' && renderHistory()}
+          {page === 'settings' && (
+            <SettingsWorkspace
+              desktop={desktop}
+              db={db}
+              setDb={setDb}
+              section={settingsSection}
+              onSection={setSettingsSection}
+              density={density}
+              onDensity={setDensity}
+              migrationBlock={isActive(task) ? '任务执行或取消中，不能迁移数据目录。' : unfinished.length ? '有未处理的中断任务，请先核实结果再迁移。' : undefined}
+              busy={isActive(task)}
+              version={boot?.version || '2.0.0'}
+              showDemo={fixture}
+              onImport={() => {
+                if (desktop) void importNative();
+                else if (fixture) importRef.current?.click();
+              }}
+              onExport={() => {
+                const api = desktop;
+                if (api) void nativeAction(async () => { await api.save(db); await api.exportConfig(); });
+                else if (fixture) download('deploy-center-config-v3.json', safeConfigJson(db), 'application/json');
+              }}
+            />
           )}
           {page === 'task' && task && (
                 <TaskView
@@ -3034,7 +1881,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                   inspected={viewedTarget}
                   setInspected={setInspected}
                   backLabel={taskReturnPage === 'schedules' ? '返回发布计划' : taskReturnPage === 'history' ? '返回部署历史' : taskReturnPage === 'deploy' ? '返回部署' : '返回'}
-                  onBack={() => setPage(taskReturnPage)}
+                  onBack={returnFromTask}
                   onHealth={db.targets.some((target) => target.id === task.targets[viewedTarget]?.target.id) ? () => {
                     const target = db.targets.find((target) => target.id === task.targets[viewedTarget].target.id)!;
                     setDialog({ kind: 'target', value: target, initialTab: '健康检查' });
@@ -3050,8 +1897,9 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                     ? () => setBackupTarget(db.targets.find((target) => target.id === task.targets[viewedTarget]?.target.id))
                     : undefined}
                   onCancel={() => setDialog({ kind: 'cancel' })}
-                  demoMode={prototype && !desktop && db.settings.demoMode}
+                  demoMode={fixture && db.settings.demoMode}
                   onFailure={(kind) => {
+                    if (!fixture) return;
                     setTask((t) => (t ? requestFailure(t, kind) : null));
                     notify('将在当前目标启动或健康检查阶段触发模拟故障。');
                   }}
@@ -3119,33 +1967,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 />
           )}
         </main>
-        <footer className="workspace-footer" aria-label="应用状态">
-          <span className="footer-version">
-            {desktop ? 'v' + (boot?.version || '1.7.0') : '界面原型 v0.3'}
-          </span>
-          <button
-            className="footer-directory"
-            title={boot?.dataDir || '浏览器本地数据'}
-            disabled={!desktop}
-            onClick={() => void desktop?.openDataDir()}
-          >
-            数据目录：{boot?.dataDir || '浏览器本地数据'}
-          </button>
-          <button
-            className="footer-task"
-            disabled={!task}
-            onClick={() => {
-              if (page !== 'task') setTaskReturnPage(page);
-              setPage('task');
-            }}
-            title={task?.service.name}
-          >
-            {task
-              ? task.service.name + ' · ' + taskResult(task) + ' · ' + taskProgress(task) + '%'
-              : '当前无任务'}
-          </button>
-        </footer>
       </div>
+      {fixture && <>
       <input
         hidden
         type="file"
@@ -3202,9 +2025,9 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         <Modal title="备份清理详情" onClose={() => setBackupAudit(undefined)} wide>
           <BackupAudit value={backupAudit} />
           <div className="modal-actions">
-            <button className="button" onClick={() => setBackupAudit(undefined)}>
+            <Button variant="neutral" size="compact" onClick={() => setBackupAudit(undefined)}>
               返回
-            </button>
+            </Button>
           </div>
         </Modal>
       )}
@@ -3215,6 +2038,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           onClose={() => setLegacyReview(false)}
         />
       )}
+      </>}
       {dialog?.kind === 'service' && (
         <Modal title="服务与构建配置" onClose={() => setDialog(null)} wide>
           <ServiceForm
@@ -3226,7 +2050,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 setDb((old) => ({ ...old, services: upsert(old.services, s) }));
                 if (s.id === serviceId || !db.services.length) {
                   setServiceId(s.id);
-                  setArtifact((desktop ? initialArtifact : artifactFor)(s));
+                  setArtifact((fixture ? artifactFor : initialArtifact)(s));
                   setJarSelection(undefined);
                   setLocalInfo(null);
                   setInfoRefresh((n) => n + 1);
@@ -3276,12 +2100,20 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           />
         </Modal>
       )}
+      {dialog?.kind === 'presets' && (
+        <Modal title="部署预设" onClose={() => setDialog(null)} wide>
+          {presetShelf()}
+        </Modal>
+      )}
       {dialog?.kind === 'picker' && (
         <Modal title="选择服务" onClose={() => setDialog(null)}>
           <ServicePicker
             db={db}
             onChoose={(id) => {
               selectService(id);
+              setServiceTab('deploy');
+              setEnvironment('all');
+              setPage('deploy');
               setDialog(null);
             }}
           />
@@ -3317,14 +2149,13 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
             if (desktop) {
               const started = await desktop!.start(dialog.token!, values, approval);
               setTask(started);
-            } else {
+            } else if (fixture) {
               credentials.current.set(values);
               setTask(startTask(t));
             }
             setFailureOverride(null);
-            if (page !== 'task') setTaskReturnPage(page);
             setInspected(-1);
-            setPage('task');
+            openTask();
             setDialog(null);
           }}
         />
@@ -3345,19 +2176,19 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               : '将在下一个安全边界停止，清理本任务临时上传文件。当前运行版本保持不变。'}
           </p>
           <footer className="modal-actions">
-            <button className="button" onClick={() => setDialog(null)}>
+            <Button variant="neutral" size="compact" onClick={() => setDialog(null)}>
               继续部署
-            </button>
-            <button
-              className="button danger"
+            </Button>
+            <Button
+              variant="danger" size="compact"
               onClick={() => {
                 if (desktop) void nativeAction(() => desktop!.cancel(task.id));
-                else setTask((t) => (t ? cancelTask(t) : null));
+                else if (fixture) setTask((t) => (t ? cancelTask(t) : null));
                 setDialog(null);
               }}
             >
               请求取消
-            </button>
+            </Button>
           </footer>
         </Modal>
       )}
@@ -3391,10 +2222,10 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
             }
           />
           <footer className="modal-actions">
-            <button className="button" onClick={() => setDialog(null)}>
+            <Button variant="neutral" size="compact" onClick={() => setDialog(null)}>
               <ArrowLeft size={16} />
               返回
-            </button>
+            </Button>
           </footer>
         </Modal>
       )}
@@ -3456,12 +2287,12 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               <input required name="path" placeholder="E:\dev\jdk\jdk11" />
             </Field>
             <p className="note">
-              {desktop
-                ? '保存后可在构建环境页检测 java 与 javac。'
-                : '本原型保存配置，不执行 java 检测。'}
+              {fixture
+                ? '本原型保存配置，不执行 java 检测。'
+                : '保存后可在构建环境页检测 java 与 javac。'}
             </p>
             <footer className="modal-actions">
-              <button className="button primary">保存</button>
+              <Button variant="default" size="compact">保存</Button>
             </footer>
           </form>
         </Modal>
@@ -3561,9 +2392,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                   }
                 } else {
                   setTask(await desktop!.recover(nativeDialog.recover!.id, values));
-                  if (page !== 'task') setTaskReturnPage(page);
                   setInspected(-1);
-                  setPage('task');
+                  openTask();
                   setNativeDialog(null);
                 }
               }}
@@ -3680,19 +2510,19 @@ function Confirm({
         </p>
       )}
       <div className="row wrap end">
-        <button
-          className="button"
+        <Button
+          variant="neutral" size="compact"
           data-autofocus={(!production && !firstPassword && !degraded) || undefined}
           onClick={onClose}
         >
           返回检查
-        </button>
-        <button
+        </Button>
+        <Button
           data-confirm
-          className="button primary"
+          variant="default" size="compact"
           disabled={
             starting ||
-            (production && (desktop ? !confirmProduction(initial, names) : word !== 'DEPLOY')) ||
+            (production && (fixture ? word !== 'DEPLOY' : !confirmProduction(initial, names))) ||
             (degraded && !fallback) ||
             servers.some((s) => needsPassword(s) && !credentials[s.id])
           }
@@ -3742,7 +2572,7 @@ function Confirm({
               : initial.operation === 'rollback'
                 ? '回滚'
                 : '部署'}
-        </button>
+        </Button>
       </div>
     </>
   );
@@ -3863,11 +2693,11 @@ function Confirm({
         ))}
       </div>
       <p className="note">
-        {desktop
-          ? initial.dryRun
+        {fixture
+          ? '所有执行均为本地模拟。'
+          : initial.dryRun
             ? '本次仅执行只读检查，不上传或修改远程文件。'
-            : '确认后将执行真实部署。'
-          : '所有执行均为本地模拟。'}
+            : '确认后将执行真实部署。'}
       </p>
       {degraded && (
         <label className="check-row warning">
@@ -3885,11 +2715,11 @@ function Confirm({
           <h3>{s.name} · 本次认证</h3>
           {s.credentialMode === 'windows' && (
             <p className="warning">
-              {desktop
-                ? saved.includes(s.id)
+              {fixture
+                ? 'Windows 凭据管理器是正式版能力。原型仍需本次输入，不会保存。'
+                : saved.includes(s.id)
                   ? '已保存本机 DPAPI 加密凭据；留空复用，输入新值将更新。'
-                  : '输入后使用当前 Windows 用户的 DPAPI 加密保存到本机。'
-                : 'Windows 凭据管理器是正式版能力。原型仍需本次输入，不会保存。'}
+                  : '输入后使用当前 Windows 用户的 DPAPI 加密保存到本机。'}
             </p>
           )}
           <Field
@@ -3908,7 +2738,7 @@ function Confirm({
           </Field>
         </div>
       ))}
-      {production && desktop && (
+      {production && !fixture && (
         <div className="production-confirm">
           <strong>正式环境确认</strong>
           <p>逐个输入环境名称，确认本次会修改的位置；回滚也需要同样核对。</p>
@@ -3925,7 +2755,7 @@ function Confirm({
           ))}
         </div>
       )}
-      {production && !desktop && (
+      {production && fixture && (
         <div className="production-confirm">
           <label className="field">
             <strong>正式环境确认</strong>
@@ -4046,15 +2876,15 @@ function HistoryDetail({
         </p>
       )}
       <footer className="modal-actions">
-        <button className="button" onClick={onExport}>
+        <Button variant="neutral" size="compact" onClick={onExport}>
           <Download size={15} />
           导出日志
-        </button>
+        </Button>
         {h.id !== 'logs' && (
-          <button className="button primary" disabled={!canRollback} onClick={onRollback}>
+          <Button variant="default" size="compact" disabled={!canRollback} onClick={onRollback}>
             <RotateCcw size={15} />
             回滚到此备份
-          </button>
+          </Button>
         )}
       </footer>
     </>

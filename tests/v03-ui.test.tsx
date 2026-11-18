@@ -56,10 +56,11 @@ describe('v0.3 组件回归', () => {
     expect(modal.textContent).toContain('继续其他目标');
     fireEvent.click(within(modal).getByRole('button', { name: '返回检查' }));
     await user.click(screen.getByRole('button', { name: '设置' }));
+    await user.click(screen.getByRole('tab', { name: '部署与构建' }));
     expect(
       (screen.getByRole('combobox', { name: '某个目标失败后' }) as HTMLSelectElement).value,
     ).toBe('stop');
-    await user.click(screen.getByRole('button', { name: '一键部署' }));
+    await user.click(screen.getByRole('link', { name: 'YOTOO 部署中心' }));
     await user.click(screen.getByRole('button', { name: '恢复默认' }));
     expect(screen.queryByText('本次覆盖', { exact: true })).toBeNull();
   });
@@ -86,7 +87,7 @@ describe('v0.3 组件回归', () => {
       target: { value: 'continue' },
     });
     start();
-    fireEvent.click(screen.getByRole('button', { name: '一键部署' }));
+    fireEvent.click(screen.getByRole('link', { name: 'YOTOO 部署中心' }));
     expect(
       (screen.getByRole('combobox', { name: '某个目标失败后' }) as HTMLSelectElement).value,
     ).toBe('stop');
@@ -95,6 +96,7 @@ describe('v0.3 组件回归', () => {
   it('B7 设置保留条数立即清理最旧历史与孤立任务日志', () => {
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: '设置' }));
+    fireEvent.click(screen.getByRole('tab', { name: '数据与存储' }));
     fireEvent.change(screen.getByRole('spinbutton', { name: /历史保留条数/ }), {
       target: { value: '1' },
     });
@@ -127,6 +129,7 @@ describe('v0.3 组件回归', () => {
     expect(setSpy).toHaveBeenCalledWith({ s19: 'only-in-memory-credential' });
     expect(localStorage.getItem('deploy-center-v2')).not.toContain('only-in-memory-credential');
     fireEvent.click(screen.getByRole('button', { name: '设置' }));
+    fireEvent.click(screen.getByRole('tab', { name: '配置与帮助' }));
     fireEvent.click(screen.getByRole('button', { name: '导出配置' }));
     expect(exportSpy.mock.calls[0][1]).not.toContain('only-in-memory-credential');
     const clearCount = clearSpy.mock.calls.length;
@@ -158,7 +161,7 @@ describe('v0.3 组件回归', () => {
     ).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '设置' }));
     fireEvent.click(screen.getByRole('switch', { name: '演示模式' }));
-    fireEvent.click(screen.getByRole('button', { name: '一键部署' }));
+    fireEvent.click(screen.getByRole('link', { name: 'YOTOO 部署中心' }));
     expect(screen.queryByRole('button', { name: '使用示例产物' })).toBeNull();
     expect(screen.queryByRole('button', { name: '查看旧产物提醒' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '展开测试环境详情' }));
@@ -188,10 +191,10 @@ describe('v0.3 组件回归', () => {
     expect(modal.textContent).toContain('E:\\dev\\jdk\\jdk21');
     expect(modal.textContent).toContain('backend\\app\\target\\cordys-crm.jar');
   });
-  it('E12/E14 现有 JAR 显示元信息、旧提交提醒和桌面选择器限制', () => {
+  it('E12/E14 现有 JAR 显示元信息、旧提交提醒和测试夹具限制', () => {
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: '使用现有 JAR' }));
-    expect(screen.getByText(/桌面版将使用系统文件对话框并检查 JAR 有效性/)).toBeTruthy();
+    expect(screen.getByText('测试夹具只提供文件名、大小和修改时间。')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '查看旧产物提醒' }));
     const modal = showConfirmation();
     const details = within(modal).getByText('产物与 Git 详情', { exact: true });

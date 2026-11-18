@@ -1,3 +1,4 @@
+import { Button } from './design/ui/button';
 import { useCallback, useEffect, useState } from 'react';
 import { Download, RefreshCw, Loader2, CheckCircle2 } from 'lucide-react';
 import { Card, Modal } from './ui';
@@ -91,41 +92,41 @@ export function AppUpdateSettings({
           </div>
           <div className="row wrap">
             {state.stage === 'ready' ? (
-              <button
-                className="button primary"
+              <Button
+                variant="default" size="compact"
                 disabled={!api || active}
                 onClick={() => setConfirm(true)}
               >
                 退出并安装
-              </button>
+              </Button>
             ) : hasUpdate && state.stage !== 'installing' ? (
-              <button
-                className="button primary"
+              <Button
+                variant="default" size="compact"
                 disabled={working || !api}
                 onClick={() => void action(() => api!.downloadUpdate())}
               >
                 <Download size={16} />
                 {state.stage === 'error' ? '重新下载' : '下载更新'}
-              </button>
+              </Button>
             ) : (
-              <button
-                className="button primary"
+              <Button
+                variant="default" size="compact"
                 disabled={working || !api}
                 onClick={() => void action(() => api!.checkUpdate())}
               >
                 {working ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
                 检查更新
-              </button>
+              </Button>
             )}
             {downloading && (
-              <button className="button" onClick={() => void action(() => api!.cancelUpdate())}>
+              <Button variant="neutral" size="compact" onClick={() => void action(() => api!.cancelUpdate())}>
                 取消下载
-              </button>
+              </Button>
             )}
             {!working && hasUpdate && (
-              <button className="button" onClick={() => void action(() => api!.checkUpdate())}>
+              <Button variant="neutral" size="compact" onClick={() => void action(() => api!.checkUpdate())}>
                 重新检查
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -181,13 +182,13 @@ export function AppUpdateSettings({
               <span className="muted">{state.installerPath ? '已下载安装包' : '下载目录'}</span>
               <code>{state.installerPath || state.cacheDirectory}</code>
             </div>
-            <button
-              className="button"
+            <Button
+              variant="neutral" size="compact"
               disabled={!api}
               onClick={() => void action(() => api!.openUpdateCache())}
             >
               打开下载位置
-            </button>
+            </Button>
           </div>
         )}
         {(error || state.message) && (
@@ -207,21 +208,21 @@ export function AppUpdateSettings({
           closeDisabled={state.stage === 'installing'}
           footer={
             <>
-              <button
-                className="button"
+              <Button
+                variant="neutral" size="compact"
                 disabled={state.stage === 'installing'}
                 onClick={() => setConfirm(false)}
               >
                 暂不安装
-              </button>
-              <button
-                className="button primary"
+              </Button>
+              <Button
+                variant="default" size="compact"
                 data-autofocus
                 disabled={active || state.stage === 'installing'}
                 onClick={() => void action(() => api!.installUpdate())}
               >
                 确认退出并安装
-              </button>
+              </Button>
             </>
           }
         >

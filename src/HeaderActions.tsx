@@ -1,4 +1,5 @@
 import { Moon, Monitor, Settings, Sun } from 'lucide-react';
+import { Button } from './design/ui/button';
 import type { Database } from './model';
 import { MoreMenu } from './EntityActions';
 
@@ -34,16 +35,18 @@ export function HeaderActions({
           onClick: () => onTheme(item.value),
         }))}
       />
-      <button
+      <Button
         type="button"
-        className={'icon-button header-icon-button' + (settingsActive ? ' selected' : '')}
+        variant="ghost"
+        size="icon-compact"
+        className={'header-icon-button' + (settingsActive ? ' selected' : '')}
         aria-label="设置"
         title="设置"
         aria-current={settingsActive ? 'page' : undefined}
         onClick={onSettings}
       >
         <Settings size={18} aria-hidden="true" />
-      </button>
+      </Button>
     </div>
   );
 }

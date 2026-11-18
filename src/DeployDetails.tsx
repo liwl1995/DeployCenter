@@ -1,3 +1,4 @@
+import { Button } from './design/ui/button';
 import type { LocalPrecheck, PrecheckItem } from './features';
 import { knownCommit, shortHash, validHash } from './presentation';
 import type { Target } from './model';
@@ -69,14 +70,14 @@ export function HashValue({
       {validHash(value) ? (
         <>
           <code title={value}>{shortHash(value)}</code>
-          <button
-            className="icon-button"
+          <Button
+            variant="ghost" size="icon-compact"
             aria-label={'复制' + label}
             title={'复制完整' + label}
             onClick={() => onCopy(value!)}
           >
             复制
-          </button>
+          </Button>
         </>
       ) : (
         <em>未记录</em>

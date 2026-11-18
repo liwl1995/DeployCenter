@@ -1,3 +1,4 @@
+import { Button } from './design/ui/button';
 import { useState } from 'react';
 import { copyText } from './clipboard';
 import type { DesktopAPI } from './platform';
@@ -100,9 +101,9 @@ export function DiagnosticPanel({
           />
         </Field>
       )}
-      <button className="button primary" disabled={busy} onClick={() => void execute()}>
+      <Button variant="default" size="compact" disabled={busy} onClick={() => void execute()}>
         {busy ? '读取中…' : '执行只读诊断'}
-      </button>
+      </Button>
       {error && (
         <p className="warning" role="alert">
           {error}
@@ -115,8 +116,8 @@ export function DiagnosticPanel({
           </p>
           <p className="path">执行命令：{result.command}</p>
           <pre className="terminal">{result.output || '没有输出'}</pre>
-          <button
-            className="button mt"
+          <Button
+            variant="neutral" size="compact" className="mt"
             onClick={() => {
               const text = result.command + '\n' + result.output;
               void (async () => {
@@ -130,7 +131,7 @@ export function DiagnosticPanel({
             }}
           >
             复制命令和结果
-          </button>
+          </Button>
           {copyMessage && (
             <p role="status" className="note">
               {copyMessage}
@@ -164,28 +165,28 @@ export function FailureActions({
       {advice.action === 'diagnose' && (
         <>
           <p className="path">目标目录：{directory}</p>
-          <button
-            className="button"
+          <Button
+            variant="neutral" size="compact"
             onClick={() => onDiagnose(/空间/.test(advice.reason) ? 'disk' : 'directory')}
           >
             查看{/空间/.test(advice.reason) ? '磁盘剩余' : '目录权限'}
-          </button>
+          </Button>
         </>
       )}
       {advice.action === 'logs' && (
-        <button className="button" onClick={onLogs}>
+        <Button variant="neutral" size="compact" onClick={onLogs}>
           查看应用日志
-        </button>
+        </Button>
       )}
       {advice.action === 'identity' && (
-        <button className="button" onClick={onIdentity}>
+        <Button variant="neutral" size="compact" onClick={onIdentity}>
           查看服务器配置
-        </button>
+        </Button>
       )}
       {advice.action === 'build' && (
-        <button className="button" onClick={onBuild}>
+        <Button variant="neutral" size="compact" onClick={onBuild}>
           定位第一处错误
-        </button>
+        </Button>
       )}
     </div>
   );

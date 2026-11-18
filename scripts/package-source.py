@@ -4,10 +4,10 @@ import zipfile
 import argparse
 import json
 
-# 交付包只收录源码、测试、构建产物及必要配置，不包含依赖、安装输出或测试数据。
+# 源码包收录源码、测试及构建所需资源。
 ROOT = Path(__file__).resolve().parent.parent
-DIRECTORIES = ('src', 'electron', 'tests', 'smoke', 'scripts', 'installer', 'assets', 'dist', 'dist-electron', 'docs')
-FILES = ('package.json', 'package-lock.json', 'README.md', 'index.html', 'tsconfig.json', 'vite.config.ts', 'vitest.config.ts', 'playwright.config.ts', '.gitignore', '.prettierrc.json')
+DIRECTORIES = ('src', 'electron', 'tests', 'smoke', 'scripts', 'installer', 'assets', 'docs')
+FILES = ('package.json', 'package-lock.json', 'README.md', 'index.html', 'tsconfig.json', 'vite.config.ts', 'vitest.config.ts', 'playwright.config.ts', 'postcss.config.cjs', 'tailwind.config.cjs', '.gitignore', '.prettierrc.json', '.npmrc')
 
 def package(output: Path):
     entries = [ROOT / name for name in FILES]
@@ -29,7 +29,10 @@ def package(output: Path):
         for line in manifest.splitlines():
             digest, name = line.split('  ', 1)
             assert hashlib.sha256(archive.read(prefix + name)).hexdigest() == digest, name
-        assert not any('/node_modules/' in name or '/.test-data/' in name for name in archive.namelist())
+        assert not any(
+            name.removeprefix(prefix).split('/')[0] in {'node_modules', '.test-data', 'dist', 'dist-electron'}
+            for name in archive.namelist()
+        )
     print(f'{output}: {len(entries)} files, SHA-256 and ZIP CRC passed')
 
 if __name__ == '__main__':

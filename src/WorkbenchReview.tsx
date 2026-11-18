@@ -1,3 +1,4 @@
+import { Button } from './design/ui/button';
 import { useEffect, useState } from 'react';
 import type { WorkbenchAction, WorkbenchReview } from './features';
 import { desktop } from './platform';
@@ -120,12 +121,12 @@ export function WorkbenchReviewPanel({
             </p>
           )}
           <footer className="modal-actions">
-            <button
-              className="button primary"
+            <Button
+              variant="default" size="compact"
               disabled={busy || !!error || typed !== review.target}
             >
               {busy ? '正在处理…' : actionLabel[review.action]}
-            </button>
+            </Button>
           </footer>
         </form>
       )}

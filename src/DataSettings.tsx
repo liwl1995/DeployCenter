@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { Button } from './design/ui/button';
+import { useEffect, useState, type ReactNode, type Ref } from 'react';
 import type { ArtifactPolicy } from './model';
 import type { CleanupKind, CleanupPlan, DataUsage } from './features';
 import type { DesktopAPI } from './platform';
@@ -15,12 +16,14 @@ export function DataSettings({
   api,
   section = 'all',
   historyFields,
+  usageRef,
   policy,
   onPolicy,
 }: {
   api: DesktopAPI;
   section?: 'all' | 'usage' | 'retention';
   historyFields?: ReactNode;
+  usageRef?: Ref<HTMLDListElement>;
   policy?: ArtifactPolicy;
   onPolicy: (policy: ArtifactPolicy) => void;
 }) {
@@ -81,13 +84,13 @@ export function DataSettings({
       className="mt"
       action={
         section !== 'retention' && (
-          <button
-            className="link"
+          <Button
+            variant="link" size="compact"
             disabled={busy}
             onClick={() => void refresh().catch((e) => setError(String(e)))}
           >
             刷新占用
-          </button>
+          </Button>
         )
       }
     >
@@ -100,7 +103,7 @@ export function DataSettings({
       </p>
       {section !== 'retention' && usage && (
         <>
-          <dl className="storage-usage">
+          <dl className="storage-usage" ref={usageRef}>
             {(
               [
                 ['数据库', usage.database],
@@ -129,13 +132,13 @@ export function DataSettings({
                 {storageSize(usage.legacy.successBytes)}
                 。建议先清理成功任务的产物；失败和中断任务默认保留。
               </p>
-              <button
-                className="button"
+              <Button
+                variant="neutral" size="compact"
                 disabled={busy}
                 onClick={() => void preview('legacy-success')}
               >
                 查看旧版成功产物清理范围
-              </button>
+              </Button>
             </div>
           )}
           {!!usage.legacy.warnings.length && (
@@ -204,13 +207,13 @@ export function DataSettings({
             </Field>
           </div>
           <div className="row wrap mt">
-            <button
-              className="button primary"
+            <Button
+              variant="default" size="compact"
               disabled={busy}
               onClick={() => void preview('policy')}
             >
               预览并应用保留策略
-            </button>
+            </Button>
           </div>
         </section>
       )}
@@ -221,12 +224,12 @@ export function DataSettings({
             只清理本机文件。确认前会显示释放空间与受影响任务，正在执行或待核实的任务受到保护。
           </p>
           <div className="row wrap">
-            <button className="button" disabled={busy} onClick={() => void preview('artifacts')}>
+            <Button variant="neutral" size="compact" disabled={busy} onClick={() => void preview('artifacts')}>
               清理产物快照
-            </button>
-            <button className="button" disabled={busy} onClick={() => void preview('temporary')}>
+            </Button>
+            <Button variant="neutral" size="compact" disabled={busy} onClick={() => void preview('temporary')}>
               清理临时文件
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -274,17 +277,17 @@ export function DataSettings({
             </p>
           ))}
           <div className="row end mt">
-            <button className="button" disabled={busy} onClick={() => setPlan(undefined)}>
+            <Button variant="neutral" size="compact" disabled={busy} onClick={() => setPlan(undefined)}>
               取消
-            </button>
-            <button
+            </Button>
+            <Button
               data-autofocus
-              className="button primary"
+              variant="default" size="compact"
               disabled={busy}
               onClick={() => void apply()}
             >
               {busy ? '处理中…' : '确认应用'}
-            </button>
+            </Button>
           </div>
         </Modal>
       )}
@@ -335,11 +338,11 @@ export function LegacyArtifactReview({
         </p>
       )}
       <div className="row end mt">
-        <button className="button" disabled={busy} onClick={onClose}>
+        <Button variant="neutral" size="compact" disabled={busy} onClick={onClose}>
           暂不清理
-        </button>
-        <button
-          className="button primary"
+        </Button>
+        <Button
+          variant="default" size="compact"
           disabled={busy}
           onClick={() => {
             setBusy(true);
@@ -360,7 +363,7 @@ export function LegacyArtifactReview({
           }}
         >
           {plan ? '确认清理成功任务产物' : '查看建议清理范围'}
-        </button>
+        </Button>
       </div>
     </Modal>
   );

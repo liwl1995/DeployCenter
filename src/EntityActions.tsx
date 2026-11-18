@@ -1,3 +1,4 @@
+import { Button } from './design/ui/button';
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Check } from 'lucide-react';
@@ -63,9 +64,11 @@ export function MoreMenu({
   }, [open]);
   return (
     <div className="more-menu">
-      <button
+      <Button
         ref={trigger}
-        className={iconOnly ? 'icon-button header-icon-button' : 'button'}
+        variant={iconOnly ? 'ghost' : 'neutral'}
+        size={iconOnly ? 'icon-compact' : 'compact'}
+        className={iconOnly ? 'header-icon-button' : undefined}
         title={iconOnly ? label : undefined}
         aria-label={label}
         aria-haspopup="menu"
@@ -79,7 +82,7 @@ export function MoreMenu({
         }}
       >
         {content ?? '更多'}
-      </button>
+      </Button>
       {open &&
         createPortal(
           <div
@@ -209,16 +212,16 @@ export function DeleteEntity({
         </p>
       )}
       <footer className="modal-actions">
-        <button
-          className="button"
+        <Button
+          variant="neutral" size="compact"
           data-autofocus={!hasHistory || undefined}
           disabled={busy}
           onClick={onClose}
         >
           取消
-        </button>
-        <button
-          className="button"
+        </Button>
+        <Button
+          variant="neutral" size="compact"
           disabled={busy || !!reason || (hasHistory && value !== name)}
           onClick={() => {
             setBusy(true);
@@ -229,7 +232,7 @@ export function DeleteEntity({
           }}
         >
           {busy ? '删除中…' : '删除配置'}
-        </button>
+        </Button>
       </footer>
     </Modal>
   );

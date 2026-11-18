@@ -1,3 +1,4 @@
+import { Button } from './design/ui/button';
 import type { ReactNode } from 'react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fmtTime } from './model';
@@ -230,12 +231,12 @@ export function VirtualLogs({
             <span role="status">
               {hits.length} 处命中{hit >= 0 && hits.length ? ' · 第 ' + (hit + 1) + ' 处' : ''}
             </span>
-            <button className="button" disabled={!hits.length} onClick={() => move(-1)}>
+            <Button variant="neutral" size="compact" disabled={!hits.length} onClick={() => move(-1)}>
               上一处
-            </button>
-            <button className="button" disabled={!hits.length} onClick={() => move(1)}>
+            </Button>
+            <Button variant="neutral" size="compact" disabled={!hits.length} onClick={() => move(1)}>
               下一处
-            </button>
+            </Button>
             <select aria-label="日志级别" value={level} onChange={(e) => setLevel(e.target.value)}>
               <option value="all">全部级别</option>
               <option value="warning">警告及错误</option>
@@ -252,8 +253,8 @@ export function VirtualLogs({
               跟随最新
             </label>
             {!follow && (
-              <button
-                className="button"
+              <Button
+                variant="neutral" size="compact"
                 onClick={() => {
                   setQuery('');
                   setHit(-1);
@@ -263,15 +264,15 @@ export function VirtualLogs({
                 }}
               >
                 跳到最新
-              </button>
+              </Button>
             )}
-            <button className="button" onClick={() => void copy()}>
+            <Button variant="neutral" size="compact" onClick={() => void copy()}>
               复制已加载日志
-            </button>
+            </Button>
             {onExport && (
-              <button className="button" onClick={onExport}>
+              <Button variant="neutral" size="compact" onClick={onExport}>
                 导出完整日志
-              </button>
+              </Button>
             )}
           </div>
           <p className="note">

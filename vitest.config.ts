@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config';
 import fs from 'node:fs';
 export default defineConfig({
+  define: { __PROTOTYPE__: 'true' },
   plugins: [
     {
       name: 'shell-as-text',
@@ -16,6 +17,6 @@ export default defineConfig({
     fileParallelism: false,
     pool: 'forks',
     maxWorkers: 1,
-    exclude: ['**/node_modules/**', '**/dist/**', 'smoke/**'],
+    exclude: ['**/node_modules/**', '**/dist/**', '**/.test-data/**', 'smoke/**'],
   },
 });

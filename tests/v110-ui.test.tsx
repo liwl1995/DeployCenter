@@ -53,7 +53,7 @@ it('任务页与历史详情都有可用的返回入口', async () => {
   await user.click(screen.getByRole('button', { name: '部署' }));
   await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '部署' }));
   await user.click(screen.getByRole('button', { name: '返回部署' }));
-  expect(screen.getByRole('heading', { name: '准备好，发布下一版本' })).toBeTruthy();
+  expect(screen.getByRole('region', { name: '服务工作台' })).toBeTruthy();
   await user.click(screen.getByRole('button', { name: '部署历史' }));
   await user.click(screen.getAllByRole('button', { name: '详情' })[0]);
   await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '返回' }));

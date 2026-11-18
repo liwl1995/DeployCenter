@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ReleaseSchedules } from '../src/ReleaseSchedules';
 import { seed } from '../src/model';
@@ -53,13 +53,17 @@ it('计划提供准备日志、改期、重新准备与取消，执行中只提�
       onPrepare={prepare}
     />,
   );
-  await user.click(screen.getByRole('button', { name: '准备日志' }));
+  const menu = () => screen.getByRole('button', { name: /发布计划操作/ });
+  await user.click(menu());
+  await user.click(screen.getByRole('menuitem', { name: '准备日志' }));
   expect(open).toHaveBeenCalledWith(value.preparationId);
   await user.click(screen.getByRole('button', { name: '调整时间' }));
   expect(change).toHaveBeenCalledWith(value);
-  await user.click(screen.getByRole('button', { name: '重新构建' }));
+  await user.click(menu());
+  await user.click(screen.getByRole('menuitem', { name: '重新构建' }));
   expect(prepare).toHaveBeenCalledWith(value);
-  await user.click(screen.getByRole('button', { name: '取消计划' }));
+  await user.click(menu());
+  await user.click(screen.getByRole('menuitem', { name: '取消计划' }));
   expect(cancel).toHaveBeenCalledWith(value.id);
   view.rerender(
     <ReleaseSchedules
@@ -71,9 +75,10 @@ it('计划提供准备日志、改期、重新准备与取消，执行中只提�
       onPrepare={prepare}
     />,
   );
-  expect(screen.queryByRole('button', { name: '取消计划' })).toBeNull();
+  await user.click(menu());
+  expect(screen.queryByRole('menuitem', { name: '取消计划' })).toBeNull();
   expect(screen.queryByRole('button', { name: '调整时间' })).toBeNull();
-  await user.click(screen.getByRole('button', { name: '部署任务' }));
+  await user.click(screen.getByRole('menuitem', { name: '部署任务' }));
   expect(open).toHaveBeenCalledWith('DC-task');
 });
 it('需重新确认的计划不允许仅改时间绕过检查，忙时禁止重新准备', () => {
@@ -88,7 +93,8 @@ it('需重新确认的计划不允许仅改时间绕过检查，忙时禁止重�
     />,
   );
   expect(screen.queryByRole('button', { name: '调整时间' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: /发布计划操作/ }));
   expect(
-    (screen.getByRole('button', { name: '重新构建' }) as HTMLButtonElement).disabled,
+    (screen.getByRole('menuitem', { name: '重新构建' }) as HTMLButtonElement).disabled,
   ).toBe(true);
 });

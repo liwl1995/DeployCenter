@@ -59,7 +59,7 @@ test.beforeEach(async () => {
     );
   }
   const page = await app.firstWindow();
-  await page.getByRole('heading', { name: '准备好，发布下一版本', exact: true }).waitFor();
+  await page.getByRole('region', { name: '服务工作台', exact: true }).waitFor();
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByRole('tab', { name: '数据与存储', exact: true }).click();
 });
@@ -175,6 +175,7 @@ test('迁移后实际解密Windows保存凭据并认证回环SSH；导出不含�
     const startup = await page.evaluate(() => window.deployCenter!.load());
     expect(startup.encryptionAvailable).toBe(true);
     // 使用真实表单写入，等待其防抖保存；不在界面背后改库而与旧自动保存竞争。
+    await page.getByRole('button', { name: '返回应用', exact: true }).click();
     await page
       .getByRole('navigation', { name: '主导航' })
       .getByRole('button', { name: '服务器', exact: true })
@@ -215,7 +216,7 @@ test('迁移后实际解密Windows保存凭据并认证回环SSH；导出不含�
     await app.close();
     app = await launch();
     page = await app.firstWindow();
-    await page.getByRole('heading', { name: '准备好，发布下一版本', exact: true }).waitFor();
+    await page.getByRole('region', { name: '服务工作台', exact: true }).waitFor();
     const connection = page.evaluate((id) => window.deployCenter!.testConnection(id), serverId);
     await page.getByRole('button', { name: '信任并继续', exact: true }).click();
     expect(await connection).toContain('SSH 连接成功');

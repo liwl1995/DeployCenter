@@ -1,3 +1,4 @@
+import { Button } from './design/ui/button';
 import { useState } from 'react';
 import type { Database, Preset } from './model';
 import type { TaskSummary } from './platform';
@@ -27,9 +28,9 @@ export function FirstGuide({
       <Card
         title="开始使用"
         action={
-          <button className="link" onClick={onImport}>
+          <Button variant="link" size="compact" onClick={onImport}>
             导入配置
-          </button>
+          </Button>
         }
       >
         <p className="note">先配置本机构建环境和目标，再执行只读试运行。不会自动连接服务器。</p>
@@ -70,13 +71,13 @@ export function PresetShelf({
       title="部署预设"
       action={
         choice && (
-          <button
-            className="link"
+          <Button
+            variant="link" size="compact"
             disabled={disabled || !choice.targetIds.length}
             onClick={() => setEditing({ name: '', pinned: true })}
           >
             保存当前选择
-          </button>
+          </Button>
         )
       }
     >
@@ -95,13 +96,13 @@ export function PresetShelf({
               </p>
             </div>
             <span title={presetReason(db, p)}>
-              <button
-                className="button"
+              <Button
+                variant="neutral" size="compact"
                 disabled={disabled || !!presetReason(db, p)}
                 onClick={() => onLoad(p)}
               >
                 载入
-              </button>
+              </Button>
             </span>
             <MoreMenu
               label={p.name + '预设操作'}
@@ -169,12 +170,12 @@ export function PresetShelf({
               仅保存服务、目标、构建方式、备份选择和失败策略，不保存认证口令或本地快照。
             </p>
             <div className="modal-actions">
-              <button className="button" type="button" onClick={() => setEditing(undefined)}>
+              <Button variant="neutral" size="compact" type="button" onClick={() => setEditing(undefined)}>
                 取消
-              </button>
-              <button className="button primary" type="submit">
+              </Button>
+              <Button variant="default" size="compact" type="submit">
                 保存预设
-              </button>
+              </Button>
             </div>
           </form>
         </Modal>
@@ -183,18 +184,18 @@ export function PresetShelf({
         <Modal title="删除预设" onClose={() => setRemoving(undefined)}>
           <p>删除「{removing.name}」？服务、目标和部署历史会保留。</p>
           <div className="modal-actions">
-            <button className="button" onClick={() => setRemoving(undefined)}>
+            <Button variant="neutral" size="compact" onClick={() => setRemoving(undefined)}>
               取消
-            </button>
-            <button
-              className="button danger"
+            </Button>
+            <Button
+              variant="danger" size="compact"
               onClick={() => {
                 onChange(presets.filter((p) => p.id !== removing.id));
                 setRemoving(undefined);
               }}
             >
               确认删除
-            </button>
+            </Button>
           </div>
         </Modal>
       )}

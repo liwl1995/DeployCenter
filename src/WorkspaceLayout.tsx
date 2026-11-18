@@ -1,5 +1,8 @@
+import { Button } from './design/ui/button';
 import { useEffect, useLayoutEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Search, ArrowLeft } from 'lucide-react';
+import { Search, ArrowLeft, Box, Settings, Rocket, HardDrive, CircleHelp } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Input } from './design/ui/input';
 
 /** 卡片入口和单项详情共用状态，返回时恢复列表位置与键盘焦点。 */
 export function EntityWorkspace<T extends { id: string }>({
@@ -77,11 +80,11 @@ export function EntityWorkspace<T extends { id: string }>({
     setSelected(id);
   };
   return (
-    <div className="entity-workspace entity-cards-workspace" ref={root}>
+    <div className="entity-workspace" ref={root}>
       {current ? (
         <>
-          <button
-            className="button entity-back"
+          <Button
+            variant="neutral" size="compact" className="entity-back"
             onClick={() => {
               returning.current = true;
               setSelected(undefined);
@@ -89,7 +92,7 @@ export function EntityWorkspace<T extends { id: string }>({
           >
             <ArrowLeft size={16} />
             返回列表
-          </button>
+          </Button>
           <div className="entity-detail" aria-label={label + '详情'} tabIndex={-1}>
             {children(current)}
           </div>
@@ -99,7 +102,7 @@ export function EntityWorkspace<T extends { id: string }>({
           <div className="entity-toolbar">
             <label htmlFor={searchId} className="search-box">
               <Search size={16} aria-hidden="true" />
-              <input
+              <Input
                 id={searchId}
                 aria-label={'搜索' + label}
                 placeholder={'搜索' + label}
@@ -110,10 +113,13 @@ export function EntityWorkspace<T extends { id: string }>({
             {filters}
             {actions}
           </div>
-          <div className="entity-card-grid" aria-label={label + '列表'}>
+          <div className="entity-list" aria-label={label + '列表'}>
             {visible.map((item) => (
-              <article key={item.id} className="entity-card">
-                <div className="entity-card-title">
+              <article key={item.id} className="entity-record">
+                <span className="record-icon">
+                  <Box size={18} strokeWidth={1.5} />
+                </span>
+                <div className="entity-record-identity">
                   <button
                     className="entity-name"
                     data-entity-id={item.id}
@@ -122,19 +128,19 @@ export function EntityWorkspace<T extends { id: string }>({
                   >
                     {title(item)}
                   </button>
-                  {cardState && (
-                    <span className={'entity-state' + (cardState(item).good ? ' good' : '')}>
-                      <span aria-hidden="true" />
-                      {cardState(item).label}
-                    </span>
+                  {subtitle(item) && (
+                    <p className="entity-card-subtitle" title={subtitle(item)}>
+                      {subtitle(item)}
+                    </p>
                   )}
+                  <div className="entity-card-summary">{summary?.(item)}</div>
                 </div>
-                {subtitle(item) && (
-                  <p className="entity-card-subtitle" title={subtitle(item)}>
-                    {subtitle(item)}
-                  </p>
+                {cardState && (
+                  <span className={'entity-state' + (cardState(item).good ? ' good' : '')}>
+                    <span aria-hidden="true" />
+                    {cardState(item).label}
+                  </span>
                 )}
-                <div className="entity-card-summary">{summary?.(item)}</div>
                 {cardMeta && <div className="entity-card-meta">{cardMeta(item)}</div>}
                 {cardActions?.(item)}
               </article>
@@ -157,12 +163,18 @@ export function WorkspaceTabs({
   sections,
   value,
   onChange,
+  navigationTarget,
 }: {
   label: string;
   sections: { id: string; label: string; description?: string; content: ReactNode }[];
   value?: string;
   onChange?: (id: string) => void;
+  navigationTarget?: string;
 }) {
+  const [directory, setDirectory] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    setDirectory(navigationTarget ? document.getElementById(navigationTarget) : null);
+  }, [navigationTarget]);
   const [local, setLocal] = useState(sections[0]?.id);
   const active = value ?? local;
   const id = useId();
@@ -170,13 +182,23 @@ export function WorkspaceTabs({
     setLocal(next);
     onChange?.(next);
   };
-  return (
-    <div className="workspace-tabs">
-      <div className="workspace-tab-list" role="tablist" aria-label={label}>
-        {sections.map((section, index) => (
+  const icons = { general: Settings, deploy: Rocket, data: HardDrive, help: CircleHelp };
+  const navigation = (
+    <div
+      className={directory ? 'sidebar-settings-tabs' : 'workspace-tab-list'}
+      role="tablist"
+      aria-label={label}
+      aria-orientation={directory ? 'vertical' : 'horizontal'}
+    >
+      {sections.map((section, index) => {
+        const Icon = icons[section.id as keyof typeof icons] || Settings;
+        return (
           <button
             key={section.id}
             role="tab"
+            className={directory ? 'sidebar-link' : undefined}
+            aria-label={section.label}
+            title={directory ? section.label : undefined}
             id={id + '-tab-' + section.id}
             aria-controls={id + '-panel-' + section.id}
             aria-selected={active === section.id}
@@ -184,9 +206,9 @@ export function WorkspaceTabs({
             onClick={() => choose(section.id)}
             onKeyDown={(e) => {
               const next =
-                e.key === 'ArrowRight'
+                e.key === (directory ? 'ArrowDown' : 'ArrowRight')
                   ? (index + 1) % sections.length
-                  : e.key === 'ArrowLeft'
+                  : e.key === (directory ? 'ArrowUp' : 'ArrowLeft')
                     ? (index + sections.length - 1) % sections.length
                     : e.key === 'Home'
                       ? 0
@@ -199,10 +221,16 @@ export function WorkspaceTabs({
               document.getElementById(id + '-tab-' + sections[next].id)?.focus();
             }}
           >
-            {section.label}
+            {directory && <Icon size={16} strokeWidth={1.6} />}
+            <span>{section.label}</span>
           </button>
-        ))}
-      </div>
+        );
+      })}
+    </div>
+  );
+  return (
+    <div className="workspace-tabs">
+      {directory ? createPortal(navigation, directory) : navigation}
       {sections.map((section) => (
         <section
           key={section.id}

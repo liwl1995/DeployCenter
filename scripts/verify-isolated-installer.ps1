@@ -15,6 +15,24 @@ $sharedCache=Join-Path $env:LOCALAPPDATA 'deploy-center-updater/installer.exe'
 $sharedHash=if(Test-Path -LiteralPath $sharedCache){(Get-FileHash -LiteralPath $sharedCache -Algorithm SHA256).Hash}else{''}
 $appId="local.deploycenter.desktop.qa.$id"
 $report=Join-Path $repoRoot "release/installer-qa-$version.json"
+$source=$null
+if($Prepackaged){
+  $releaseRoot=[IO.Path]::GetFullPath((Join-Path $repoRoot 'release'))
+  $source=[IO.Path]::GetFullPath($Prepackaged)
+  $relative=[IO.Path]::GetRelativePath($releaseRoot,$source)
+  if($relative -notmatch '^(?:[a-zA-Z0-9][a-zA-Z0-9._-]*[\\/])?win-unpacked$'){
+    throw '只接受 release 下的 win-unpacked 正式构建'
+  }
+  $directory=Get-Item -LiteralPath $releaseRoot
+  foreach($segment in $relative -split '[\\/]'){
+    if($directory.Attributes -band [IO.FileAttributes]::ReparsePoint){throw '正式构建目录不能是链接'}
+    $directory=Get-Item -LiteralPath (Join-Path $directory.FullName $segment)
+  }
+  if(-not $directory.PSIsContainer -or ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint)){
+    throw '正式构建目录无效'
+  }
+  $report=Join-Path $directory.Parent.FullName "installer-qa-$version.json"
+}
 $checks=[System.Collections.Generic.List[object]]::new()
 function Check([string]$Name,[bool]$Passed){$checks.Add(@{name=$Name;passed=$Passed});if(-not $Passed){throw "验收失败：$Name"};Write-Output "PASS $Name"}
 function Run([string]$File,[string]$Arguments){$p=Start-Process -FilePath $File -ArgumentList $Arguments -PassThru -WindowStyle Hidden;if(-not $p.WaitForExit(180000)){throw '隔离安装程序未正常退出'};return $p.ExitCode}
@@ -34,9 +52,7 @@ try{
   New-Item -Path "HKCU:\$locationKey" -Force | Out-Null
   Set-ItemProperty -LiteralPath "HKCU:\$locationKey" -Name DataDirectory -Value $data
   $builderArgs=@("--config.extraMetadata.name=$qaPackage",'--win','nsis','--x64',"--config.appId=$appId","--config.productName=$product","--config.nsis.shortcutName=$product","--config.nsis.include=$wrapper","--config.directories.output=$build",'--config.win.artifactName=QA-Setup.exe','--publish','never')
-  if($Prepackaged){
-    $source=[IO.Path]::GetFullPath($Prepackaged)
-    if($source -ne [IO.Path]::GetFullPath((Join-Path $repoRoot 'release/win-unpacked'))){throw '只接受源码 release/win-unpacked 正式构建'}
+  if($source){
     $clone=Join-Path $qaRoot 'packaged'
     New-Item -ItemType Directory -Path $clone -Force | Out-Null
     Get-ChildItem -LiteralPath $source -Force | Copy-Item -Destination $clone -Recurse

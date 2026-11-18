@@ -75,7 +75,7 @@ it('删除首页与重复上次部署入口，品牌按钮返回一键部署', (
   fireEvent.click(screen.getByRole('button', { name: '服务管理' }));
   const brand = screen.getByText('YOTOO 部署中心').closest('a')!;
   fireEvent.click(brand);
-  expect(screen.getByRole('heading', { name: '准备好，发布下一版本' })).toBeTruthy();
+  expect(screen.getByRole('region', { name: '服务工作台' })).toBeTruthy();
 });
 
 it('多目标部分完成时，查看成功目标仍显示整个任务的部分完成状态', () => {

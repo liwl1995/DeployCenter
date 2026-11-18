@@ -1,3 +1,4 @@
+import { Button } from './design/ui/button';
 import { useEffect, useRef, useState } from 'react';
 import type { DesktopAPI } from './platform';
 import type { DirectoryCheck, DirectoryInfo, MigrationProgress } from './features';
@@ -29,9 +30,9 @@ function ParentDirectoryInput({
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
       />
-      <button type="button" className="button" disabled={browseDisabled} onClick={onBrowse}>
+      <Button type="button" variant="neutral" size="compact" disabled={browseDisabled} onClick={onBrowse}>
         浏览目录
-      </button>
+      </Button>
     </div>
   );
 }
@@ -157,8 +158,8 @@ export function DirectorySettings({
       <Card
         title="数据位置"
         action={
-          <button
-            className="button"
+          <Button
+            variant="neutral" size="compact"
             disabled={!!blocked && !active && !pending}
             onClick={() => {
               setError('');
@@ -166,7 +167,7 @@ export function DirectorySettings({
             }}
           >
             {active || pending ? '查看迁移进度' : '更换数据目录'}
-          </button>
+          </Button>
         }
       >
         <Field label="当前目录">
@@ -176,9 +177,9 @@ export function DirectorySettings({
           当前占用 {info ? storageSize(info.bytes) : '读取中…'}
           。配置、历史、完整日志、产物、临时文件和备份全部随目录迁移。
         </p>
-        <button className="link" onClick={() => void api.openDataDir()}>
+        <Button variant="link" size="compact" onClick={() => void api.openDataDir()}>
           打开当前目录
-        </button>
+        </Button>
         {blocked && (
           <p className="warning" role="status">
             {blocked}
@@ -200,8 +201,8 @@ export function DirectorySettings({
               。旧目录默认保留；核对新目录的配置、历史、日志和凭据后，是否删除旧副本？
             </p>
             <div className="row wrap">
-              <button
-                className="button"
+              <Button
+                variant="neutral" size="compact"
                 disabled={busy}
                 onClick={() =>
                   void action(async () => {
@@ -211,9 +212,9 @@ export function DirectorySettings({
                 }
               >
                 保留旧目录（默认）
-              </button>
-              <button
-                className="link"
+              </Button>
+              <Button
+                variant="link" size="compact"
                 disabled={busy || !!blocked}
                 onClick={() => {
                   setTyped('');
@@ -221,7 +222,7 @@ export function DirectorySettings({
                 }}
               >
                 查看旧目录清理确认
-              </button>
+              </Button>
             </div>
           </div>
         )}
@@ -374,8 +375,8 @@ export function DirectorySettings({
             </div>
             <footer className="wizard-actions">
               {active ? (
-                <button
-                  className="button"
+                <Button
+                  variant="neutral" size="compact"
                   ref={cancelButton}
                   disabled={cancelling}
                   onClick={() => {
@@ -388,26 +389,26 @@ export function DirectorySettings({
                   }}
                 >
                   {cancelling ? '正在取消，等待安全清理…' : '取消迁移，保留原目录'}
-                </button>
+                </Button>
               ) : pending ? (
                 <>
-                  <button className="button" onClick={() => setWizard(false)}>
+                  <Button variant="neutral" size="compact" onClick={() => setWizard(false)}>
                     稍后重启
-                  </button>
-                  <button
-                    className="button primary"
+                  </Button>
+                  <Button
+                    variant="default" size="compact"
                     onClick={() => void action(() => api.restart())}
                   >
                     重启并使用新目录
-                  </button>
+                  </Button>
                 </>
               ) : finished ? (
                 <>
-                  <button className="button" onClick={() => setWizard(false)}>
+                  <Button variant="neutral" size="compact" onClick={() => setWizard(false)}>
                     关闭
-                  </button>
-                  <button
-                    className="button primary"
+                  </Button>
+                  <Button
+                    variant="default" size="compact"
                     onClick={() => {
                       setProgress(undefined);
                       setCheck(undefined);
@@ -415,24 +416,24 @@ export function DirectorySettings({
                     }}
                   >
                     重新选择目录
-                  </button>
+                  </Button>
                 </>
               ) : (
                 <>
-                  <button className="button" disabled={busy} onClick={() => setWizard(false)}>
+                  <Button variant="neutral" size="compact" disabled={busy} onClick={() => setWizard(false)}>
                     取消
-                  </button>
-                  <button
-                    className="button primary"
+                  </Button>
+                  <Button
+                    variant="default" size="compact"
                     disabled={busy || !!blocked || !parent || (!!check && !check.valid)}
                     onClick={() => void (check?.valid ? start() : propose())}
                   >
                     {busy ? '检查中…' : check?.valid ? '开始迁移' : '检查并准备迁移'}
-                  </button>
+                  </Button>
                   {check && (
-                    <button className="link" disabled={busy} onClick={() => setCheck(undefined)}>
+                    <Button variant="link" size="compact" disabled={busy} onClick={() => setCheck(undefined)}>
                       修改目录
-                    </button>
+                    </Button>
                   )}
                 </>
               )}
@@ -447,11 +448,11 @@ export function DirectorySettings({
             。具体范围和重试影响会在清理确认中列出，不强制清理。
           </p>
           <footer className="modal-actions">
-            <button className="button" onClick={() => void inspect()}>
+            <Button variant="neutral" size="compact" onClick={() => void inspect()}>
               保持现状，继续检查目录
-            </button>
-            <button
-              className="button primary"
+            </Button>
+            <Button
+              variant="default" size="compact"
               onClick={() => {
                 setSuggestion(undefined);
                 setWizard(false);
@@ -459,7 +460,7 @@ export function DirectorySettings({
               }}
             >
               先查看占用与清理
-            </button>
+            </Button>
           </footer>
         </Modal>
       )}
@@ -481,11 +482,11 @@ export function DirectorySettings({
             <input data-autofocus value={typed} onChange={(e) => setTyped(e.target.value)} />
           </Field>
           <footer className="modal-actions">
-            <button className="button" disabled={busy} onClick={() => setOldConfirm(false)}>
+            <Button variant="neutral" size="compact" disabled={busy} onClick={() => setOldConfirm(false)}>
               保留
-            </button>
-            <button
-              className="button"
+            </Button>
+            <Button
+              variant="neutral" size="compact"
               disabled={busy || typed !== info.previous}
               onClick={() =>
                 void action(async () => {
@@ -496,7 +497,7 @@ export function DirectorySettings({
               }
             >
               删除已核对的旧副本
-            </button>
+            </Button>
           </footer>
         </Modal>
       )}

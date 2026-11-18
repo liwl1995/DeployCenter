@@ -125,8 +125,9 @@ test.afterEach(async () => {
 test('定时发布入口、确认时间、计划改期取消与日志返回', async () => {
   const page = await app.firstWindow();
   await page.getByRole('button', { name: '使用现有 JAR', exact: true }).click();
-  await expect(page.getByRole('button', { name: '定时发布', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: '定时发布', exact: true }).click();
+  await expect(page.getByRole('button', { name: '部署', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '发布选项', exact: true }).click();
+  await page.getByRole('menuitem', { name: '定时发布', exact: true }).click();
   await expect(page.getByRole('heading', { name: '确认定时发布', exact: true })).toBeVisible();
   await expect(page.getByLabel('发布时间', { exact: true })).toBeVisible();
   await expect(page.getByText(/退出或休眠错过时间不补发/)).toBeVisible();
@@ -140,14 +141,17 @@ test('定时发布入口、确认时间、计划改期取消与日志返回', as
     .slice(0, 16);
   await page.getByLabel('发布时间', { exact: true }).fill(local);
   await page.getByRole('button', { name: '确认计划', exact: true }).click();
+  await page.getByText('产物与计划详情', { exact: true }).click();
   await expect(page.getByText('已重新确认发布时间', { exact: false })).toBeVisible();
   expect((await page.evaluate(() => window.deployCenter!.listSchedules()))[0].scheduledAt).toBe(
     new Date(local).getTime(),
   );
-  await page.getByRole('button', { name: '准备日志', exact: true }).click();
+  await page.getByRole('button', { name: /发布计划操作/ }).click();
+  await page.getByRole('menuitem', { name: '准备日志', exact: true }).click();
   await expect(page.getByText(/定时发布准备完成，尚未上传或修改远端/)).toBeVisible();
   await page.getByRole('button', { name: /返回发布计划/ }).click();
-  await page.getByRole('button', { name: '取消计划', exact: true }).click();
+  await page.getByRole('button', { name: /发布计划操作/ }).click();
+  await page.getByRole('menuitem', { name: '取消计划', exact: true }).click();
   await expect(page.getByText('已取消', { exact: true })).toBeVisible();
 });
 test('计划页面在三个尺寸下可用，重新准备仍需确认', async () => {
@@ -162,12 +166,16 @@ test('计划页面在三个尺寸下可用，重新准备仍需确认', async ()
       ({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setContentSize(w, h),
       [width, height],
     );
-    await expect(page.getByRole('button', { name: '准备日志', exact: true })).toBeInViewport();
+    const menu = page.getByRole('button', { name: /发布计划操作/ });
+    await menu.click();
+    await expect(page.getByRole('menuitem', { name: '准备日志', exact: true })).toBeInViewport();
+    await page.keyboard.press('Escape');
     expect(
       await page.getByRole('main').evaluate((el) => el.scrollWidth - el.clientWidth),
     ).toBeLessThanOrEqual(1);
   }
-  await page.getByRole('button', { name: '重新构建' }).click();
+  await page.getByRole('button', { name: /发布计划操作/ }).click();
+  await page.getByRole('menuitem', { name: '重新构建' }).click();
   await expect(page.getByRole('heading', { name: '确认定时发布', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '返回检查' }).click();
   expect(await page.evaluate(() => window.deployCenter!.listTasks())).toEqual([]);
@@ -176,7 +184,9 @@ test('计划页面在三个尺寸下可用，重新准备仍需确认', async ()
 test('创建计划通过真实 IPC 和 utilityProcess 准备，认证失败不上传且不产生部署历史', async () => {
   const page = await app.firstWindow();
   await page.getByRole('button', { name: '使用现有 JAR', exact: true }).click();
-  await page.getByRole('button', { name: '定时发布', exact: true }).click();
+  await expect(page.getByRole('button', { name: '部署', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '发布选项', exact: true }).click();
+  await page.getByRole('menuitem', { name: '定时发布', exact: true }).click();
   await page
     .getByLabel('登录密码 · 离线配置夹具', { exact: true })
     .fill('schedule-isolated-fixture');

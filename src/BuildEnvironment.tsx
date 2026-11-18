@@ -1,3 +1,4 @@
+import { Button } from './design/ui/button';
 import { Fragment, useEffect, useState } from 'react';
 import type { Database, Service } from './model';
 import { fmtTime } from './model';
@@ -18,11 +19,11 @@ export function BuildEnvironment({
   onDelete,
   deletionReason,
 }: {
-  api: DesktopAPI;
+  api?: DesktopAPI;
   db: Database;
   onEdit: (service: Service) => void;
   onAdd: () => void;
-  onScan: () => void;
+  onScan?: () => void;
   onDelete: (name: string) => void;
   deletionReason: (name: string) => string;
 }) {
@@ -42,6 +43,7 @@ export function BuildEnvironment({
     });
   const key = JSON.stringify([db.jdks, db.services]);
   useEffect(() => {
+    if (!api) return;
     let alive = true;
     setJdks({});
     setTools({});
@@ -121,13 +123,13 @@ export function BuildEnvironment({
                 title="本机 JDK"
                 action={
                   <div className="row">
-                    <MoreMenu
+                    {onScan && <MoreMenu
                       label="更多构建环境操作"
                       actions={[{ label: '扫描本机 JDK', onClick: onScan }, refreshAction]}
-                    />
-                    <button className="button primary" onClick={onAdd}>
+                    />}
+                    <Button variant="default" size="compact" onClick={onAdd}>
                       添加 JDK
-                    </button>
+                    </Button>
                   </div>
                 }
               >
@@ -291,7 +293,7 @@ export function BuildEnvironment({
               <Card
                 className="compact-records tools-records"
                 title="服务构建工具"
-                action={<MoreMenu label="更多构建工具操作" actions={[refreshAction]} />}
+                action={api && <MoreMenu label="更多构建工具操作" actions={[refreshAction]} />}
               >
                 <table className="compact-table maven-table" aria-label="服务构建工具列表">
                   <colgroup>
@@ -400,12 +402,12 @@ export function BuildEnvironment({
                               </span>
                             </td>
                             <td>
-                              <button
-                                className="button compact-edit"
+                              <Button
+                                variant="neutral" size="compact" className="compact-edit"
                                 onClick={() => onEdit(service)}
                               >
                                 编辑配置
-                              </button>
+                              </Button>
                             </td>
                           </tr>
                           {isExpanded && (

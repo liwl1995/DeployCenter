@@ -1,3 +1,4 @@
+import { Button } from './design/ui/button';
 import { fmtTime } from './model';
 import { useEffect, useRef, useState } from 'react';
 import type { Server } from './model';
@@ -65,21 +66,21 @@ export function TrustDialog({ request, onClose }: { request: TrustRequest; onClo
         </p>
       )}
       <footer className="modal-actions">
-        <button
-          className="button"
+        <Button
+          variant="neutral" size="compact"
           disabled={busy}
           data-autofocus={!request.changed || undefined}
           onClick={() => void decide(false)}
         >
           拒绝连接
-        </button>
-        <button
-          className="button primary"
+        </Button>
+        <Button
+          variant="default" size="compact"
           disabled={busy || (request.changed && word !== 'TRUST')}
           onClick={() => void decide(true)}
         >
           {busy ? '正在处理…' : request.changed ? '确认更新信任并继续' : '信任并继续'}
-        </button>
+        </Button>
       </footer>
     </Modal>
   );
@@ -143,9 +144,9 @@ export function CredentialPrompt({
         </p>
       )}
       <footer className="modal-actions">
-        <button className="button primary" disabled={busy}>
+        <Button variant="default" size="compact" disabled={busy}>
           {busy ? '处理中…' : label}
-        </button>
+        </Button>
       </footer>
     </form>
   );
@@ -247,11 +248,11 @@ export function ContainerLogs({
         </Field>
       )}
       <div className="row wrap">
-        <button className="button primary" disabled={active || busy} onClick={() => void begin()}>
+        <Button variant="default" size="compact" disabled={active || busy} onClick={() => void begin()}>
           {busy ? '连接中…' : '跟随应用日志'}
-        </button>
-        <button
-          className="button"
+        </Button>
+        <Button
+          variant="neutral" size="compact"
           disabled={!active}
           onClick={() => {
             void desktop!.stopLogs(session.current);
@@ -259,7 +260,7 @@ export function ContainerLogs({
           }}
         >
           停止跟随
-        </button>
+        </Button>
         <Badge>{active ? '正在跟随' : '已停止'}</Badge>
       </div>
       {endsAt && (
@@ -305,8 +306,8 @@ export function LockTakeover({
           <Field label="确认原任务已停止，输入 TAKEOVER">
             <input value={word} onChange={(e) => setWord(e.target.value)} />
           </Field>
-          <button
-            className="button danger"
+          <Button
+            variant="danger" size="compact"
             disabled={word !== 'TAKEOVER'}
             onClick={() =>
               void desktop!
@@ -316,7 +317,7 @@ export function LockTakeover({
             }
           >
             归档旧锁并允许重新部署
-          </button>
+          </Button>
         </>
       )}
       {error && (

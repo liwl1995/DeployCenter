@@ -196,7 +196,7 @@ it('展开偏好按数据位置隔离，无效偏好不影响配置；快速前�
   expect(screen.queryByRole('button', { name: /快速前往/ })).toBeNull();
   fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
   expect(screen.queryByRole('dialog')).toBeNull();
-  expect(screen.getByRole('contentinfo', { name: '应用状态' })).toBeTruthy();
+  expect(screen.getByRole('navigation', { name: '主导航' })).toBeTruthy();
   await userEvent.setup().click(screen.getByRole('button', { name: '部署历史' }));
   expect(document.querySelector('input[type="date"]')).toBeNull();
 });
@@ -210,7 +210,7 @@ it('多目标任务在顶部使用状态条并同步日志目标，单目标没�
       {},
       'existing',
     );
-  task.status = 'success';
+  task.status = 'running';
   task.buildPhase = 3;
   task.targets.forEach((run) => {
     run.status = 'success';
@@ -226,8 +226,8 @@ it('多目标任务在顶部使用状态条并同步日志目标，单目标没�
   };
   const user = userEvent.setup(),
     view = render(<App boot={boot} />);
-  expect(screen.queryByRole('navigation', { name: '主导航' })?.textContent).not.toContain('当前任务');
-  await user.click(within(screen.getByRole('contentinfo', { name: '应用状态' })).getByRole('button', { name: /Cordys/ }));
+  const openTask = () => within(screen.getByRole('navigation', { name: '主导航' })).getByRole('button', { name: '当前任务' });
+  await user.click(openTask());
   const strip = screen.getByRole('group', { name: '选择任务目标' });
   expect(strip.querySelectorAll('button')).toHaveLength(2);
   const second = within(strip).getAllByRole('button')[1];
@@ -238,7 +238,7 @@ it('多目标任务在顶部使用状态条并同步日志目标，单目标没�
   expect(screen.queryByRole('tab', { name: '执行日志' })).toBeNull();
   view.unmount();
   render(<App boot={{ ...boot, task: { ...task, targets: task.targets.slice(0, 1) } }} />);
-  await user.click(within(screen.getByRole('contentinfo', { name: '应用状态' })).getByRole('button', { name: /Cordys/ }));
+  await user.click(openTask());
   expect(screen.queryByRole('group', { name: '选择任务目标' })).toBeNull();
 });
 

@@ -1,3 +1,4 @@
+import { Button } from './design/ui/button';
 import { useEffect, useRef, useState } from 'react';
 const iso = (year: number, month: number, day: number) =>
   year + '-' + String(month + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
@@ -43,35 +44,35 @@ export function DateFilter({
         }
       }}
     >
-      <button
+      <Button
         ref={trigger}
         id={id}
-        className="button"
+        variant="neutral" size="compact"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
       >
         {value || '全部日期'}
-      </button>
+      </Button>
       {open && (
         <div className="date-calendar" role="group" aria-label="选择部署日期">
           <div className="row spread">
-            <button
-              className="button"
+            <Button
+              variant="neutral" size="compact"
               aria-label="上个月"
               onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}
             >
               ‹
-            </button>
+            </Button>
             <strong>
               {month.getFullYear()} 年 {month.getMonth() + 1} 月
             </strong>
-            <button
-              className="button"
+            <Button
+              variant="neutral" size="compact"
               aria-label="下个月"
               onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}
             >
               ›
-            </button>
+            </Button>
           </div>
           <div className="date-days">
             {['日', '一', '二', '三', '四', '五', '六'].map((d) => (
@@ -97,15 +98,15 @@ export function DateFilter({
               </button>
             ))}
           </div>
-          <button
-            className="button block"
+          <Button
+            variant="neutral" size="compact" className="block"
             onClick={() => {
               onChange('');
               close();
             }}
           >
             清除日期筛选
-          </button>
+          </Button>
         </div>
       )}
     </div>

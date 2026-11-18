@@ -1,3 +1,4 @@
+import { Button } from './design/ui/button';
 import { stepNames as names } from './step-names';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft, Check, Circle, CircleAlert, Clock3, Loader2, Minus, X } from 'lucide-react';
@@ -354,14 +355,14 @@ export function TaskView({
           {seconds(task.elapsed)}
         </span>
         <div className="task-header-actions">
-          <button className="button" onClick={onBack}>
+          <Button variant="neutral" size="compact" onClick={onBack}>
             <ArrowLeft size={15} />
             {backLabel}
-          </button>
+          </Button>
           {primary && (
-            <button className="button primary" disabled={retrying} onClick={primary.action}>
+            <Button variant="default" size="compact" disabled={retrying} onClick={primary.action}>
               {primary.label}
-            </button>
+            </Button>
           )}
           {!!more.length && <MoreMenu label="更多任务操作" actions={more} />}
         </div>
@@ -371,9 +372,9 @@ export function TaskView({
         <div className={'task-result-banner task-tone-' + result.tone} role="status">
           <strong>{result.text}</strong>
           {bannerAction && (
-            <button className="link" onClick={bannerAction.action}>
+            <Button variant="link" size="compact" onClick={bannerAction.action}>
               {bannerAction.label}
-            </button>
+            </Button>
           )}
         </div>
       )}
@@ -390,28 +391,28 @@ export function TaskView({
       {retryIssue && (
         <div className="notice" role="status">
           <p>{retryIssue.reason}</p>
-          <button className="link" onClick={() => onPrepareAgain(retryIssue.failed)}>
+          <Button variant="link" size="compact" onClick={() => onPrepareAgain(retryIssue.failed)}>
             重新构建或选择现有 JAR
-          </button>
+          </Button>
         </div>
       )}
       {demoMode && task.status === 'running' && (
         <Demo>
-          <button className="link" onClick={() => onFailure()}>
+          <Button variant="link" size="compact" onClick={() => onFailure()}>
             模拟当前目标启动 / 健康检查失败
-          </button>
+          </Button>
           {task.targets[task.active]?.target.mode === 'docker' && (
-            <button className="link" onClick={() => onFailure('containerHash')}>
+            <Button variant="link" size="compact" onClick={() => onFailure('containerHash')}>
               模拟容器内哈希不一致
-            </button>
+            </Button>
           )}
         </Demo>
       )}
       {task.targets.length > 1 && (
         <div className="task-target-tabs" role="group" aria-label="选择任务目标">
           {task.targets.map((entry, index) => (
-            <button
-              className="button"
+            <Button
+              variant="neutral" size="compact"
               aria-pressed={inspected === index}
               key={entry.target.id}
               onClick={() => {
@@ -424,7 +425,7 @@ export function TaskView({
               <span className={'task-status-dot task-target-' + entry.status} aria-hidden="true" />
               {entry.target.name} ·{' '}
               {task.dryRun && entry.status === 'success' ? '检查通过' : targetStatus[entry.status]}
-            </button>
+            </Button>
           ))}
         </div>
       )}
@@ -474,13 +475,13 @@ export function TaskView({
                             className={status === 'running' ? 'spin' : undefined}
                             aria-label={statusText[status]}
                           />
-                          <button
-                            className="link"
+                          <Button
+                            variant="link" size="compact"
                             title={step.label}
                             onClick={() => setLogFocus({ names: [step.label], nonce: Date.now() })}
                           >
                             {label}
-                          </button>
+                          </Button>
                           {(status === 'running' || status === 'success') && (
                             <small>{seconds(step.elapsed || 0)}</small>
                           )}

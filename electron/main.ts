@@ -6,6 +6,7 @@ import {
   ipcMain,
   Menu,
   net,
+  nativeTheme,
   Notification,
   powerMonitor,
   safeStorage,
@@ -478,15 +479,22 @@ async function boot() {
     const page = path.join(__dirname, '..', 'dist', 'index.html');
     const url = pathToFileURL(page).href;
     const smoke = process.argv.includes('--smoke');
+    const toolbarColor = () => nativeTheme.shouldUseDarkColors ? '#e4e4e7' : '#18181b';
+    const windowsChrome = process.platform === 'win32';
+    nativeTheme.themeSource = storage.database().settings.theme;
     win = new BrowserWindow({
-      width: 1280,
-      height: 900,
-      minWidth: 1000,
+      width: 1000,
+      height: 650,
+      minWidth: 900,
       autoHideMenuBar: true,
-      minHeight: 620,
+      minHeight: 600,
       show: !smoke,
-      backgroundColor: '#f5f7f9',
+      backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff',
       title: 'YOTOO 部署中心',
+      ...(windowsChrome ? {
+        titleBarStyle: 'hidden',
+        titleBarOverlay: { color: '#00000000', symbolColor: toolbarColor(), height: 52 },
+      } : {}),
       icon: path.join(__dirname, '..', 'assets', 'icon.ico'),
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),
@@ -498,6 +506,11 @@ async function boot() {
         devTools: !app.isPackaged,
       },
     });
+    const syncToolbar = () => {
+      if (windowsChrome && win && !win.isDestroyed()) win.setTitleBarOverlay({ symbolColor: toolbarColor() });
+    };
+    nativeTheme.on('updated', syncToolbar);
+    win.once('closed', () => nativeTheme.removeListener('updated', syncToolbar));
     win.on('focus', () => win?.flashFrame(false));
     win.webContents.setWindowOpenHandler(({ url: destination }) => {
       // 仅将配置与帮助里的固定仓库链接交给系统浏览器，外部页面不进入桌面窗口。
@@ -639,7 +652,12 @@ async function boot() {
       taskIssues: storage.taskIssues,
       dataLocation: directories.state(),
     }));
-    handle('save', (value) => storage.saveConfig(validateDatabase(value)));
+    handle('save', (value) => {
+      const config = validateDatabase(value);
+      const saved = storage.saveConfig(config);
+      nativeTheme.themeSource = config.settings.theme;
+      return saved;
+    });
     handle('confirm-recovery', () => storage.confirmRecovery());
     handle('prepare', (value) => {
       const request = z.object({ jarPath: z.string().optional() }).passthrough().parse(value);

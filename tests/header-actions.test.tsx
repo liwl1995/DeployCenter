@@ -67,27 +67,20 @@ it('点击外部和调整窗口关闭菜单，不改变主题；设置有当前�
   expect(screen.queryByRole('menu')).toBeNull();
   expect(theme).not.toHaveBeenCalled();
 });
-it('侧栏不再包含设置；顶栏切换与完整设置页同步，使用已有存储且重新打开可恢复', async () => {
+it('从侧栏进入外观设置，主题通过已有存储保存并在重新打开时恢复', async () => {
   const user = userEvent.setup();
   let view = render(<App />);
-  expect(
-    within(screen.getByRole('navigation', { name: '主导航' })).queryByRole('button', {
-      name: '设置',
-    }),
-  ).toBeNull();
-  expect(screen.getAllByRole('button', { name: /^设置$/ })).toHaveLength(1);
-  await user.click(screen.getByRole('button', { name: /切换外观/ }));
-  await user.click(screen.getByRole('menuitemradio', { name: '深色' }));
-  expect(document.documentElement.dataset.theme).toBe('dark');
-  expect(JSON.parse(localStorage.getItem('deploy-center-v2')!).settings.theme).toBe('dark');
   await user.click(screen.getByRole('button', { name: '设置' }));
   const select = screen.getByLabelText('界面主题') as HTMLSelectElement;
+  await user.selectOptions(select, 'dark');
+  expect(document.documentElement.dataset.theme).toBe('dark');
+  expect(JSON.parse(localStorage.getItem('deploy-center-v2')!).settings.theme).toBe('dark');
   expect(select.value).toBe('dark');
   await user.selectOptions(select, 'light');
-  expect(screen.getByRole('button', { name: /切换外观/ }).getAttribute('title')).toContain('浅色');
   view.unmount();
   view = render(<App />);
   expect(document.documentElement.dataset.theme).toBe('light');
-  expect(screen.getByRole('button', { name: /切换外观/ }).getAttribute('title')).toContain('浅色');
+  await user.click(screen.getByRole('button', { name: '设置' }));
+  expect((screen.getByLabelText('界面主题') as HTMLSelectElement).value).toBe('light');
   view.unmount();
 });

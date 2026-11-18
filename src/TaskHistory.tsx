@@ -1,4 +1,5 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Button } from './design/ui/button';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { DesktopAPI, TaskSummary } from './platform';
 import type { Database, History } from './model';
 import { fmtTime, seconds } from './model';
@@ -27,6 +28,15 @@ const emptyFilters: HistoryFilters = {
   environment: 'all',
   date: { from: '', to: '' },
 };
+
+export type HistoryViewState = {
+  filters: HistoryFilters;
+  query: string;
+  expanded: Set<string>;
+  search?: HistorySearchResult;
+  openedTask?: string;
+};
+
 export function TaskHistory({
   rows,
   db,
@@ -36,6 +46,8 @@ export function TaskHistory({
   onHistory,
   onCopy,
   onMaintenance,
+  initialView,
+  onViewChange,
 }: {
   rows: TaskSummary[];
   db: Database;
@@ -45,10 +57,15 @@ export function TaskHistory({
   onHistory: (history: History) => void;
   onCopy: (text: string) => void;
   onMaintenance?: (record: import('./features').MaintenanceRecord) => void;
+  initialView?: HistoryViewState;
+  onViewChange?: (view: HistoryViewState) => void;
 }) {
-  const [filters, setFilters] = useState<HistoryFilters>(emptyFilters);
+  const initial = useRef(initialView);
+  const [filters, setFilters] = useState<HistoryFilters>(
+    () => initial.current?.filters ?? emptyFilters,
+  );
   const [draft, setDraft] = useState<HistoryFilters>();
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(() => initial.current?.query ?? '');
   const [showVersion, setShowVersion] = useState(
     () => window.matchMedia?.('(min-width: 1151px)').matches ?? true,
   );
@@ -63,13 +80,29 @@ export function TaskHistory({
   const { kind, status, service, server, environment, date } = filters;
   const changeDraft = <K extends keyof HistoryFilters>(key: K, value: HistoryFilters[K]) =>
     setDraft((old) => (old ? { ...old, [key]: value } : old));
-  const [expanded, setExpanded] = useState(new Set<string>()),
-    [search, setSearch] = useState<HistorySearchResult>(),
+  const [expanded, setExpanded] = useState(() => initial.current?.expanded ?? new Set<string>()),
+    [search, setSearch] = useState<HistorySearchResult | undefined>(() => initial.current?.search),
     [searching, setSearching] = useState(false),
     [error, setError] = useState('');
+  const [openedTask, setOpenedTask] = useState(initial.current?.openedTask);
+  const searchQuery = useRef(initial.current?.query);
+  const returnRow = useRef<HTMLTableRowElement>(null);
+  useLayoutEffect(() => {
+    onViewChange?.({
+      filters,
+      query,
+      expanded,
+      search: searchQuery.current === query ? search : undefined,
+      openedTask,
+    });
+  });
+  useLayoutEffect(() => {
+    returnRow.current?.focus({ preventScroll: true });
+  }, []);
   useEffect(() => {
     let alive = true;
-    setSearch(undefined);
+    if (searchQuery.current !== query) setSearch(undefined);
+    searchQuery.current = query;
     setError('');
     setSearching(!!query.trim());
     const timer = setTimeout(() => {
@@ -132,8 +165,10 @@ export function TaskHistory({
       onMaintenance?.(row.maintenance);
       return;
     }
-    if (!row.imported) onOpen(row.id, targetId);
-    else {
+    if (!row.imported) {
+      setOpenedTask(row.id);
+      onOpen(row.id, targetId);
+    } else {
       const h = db.history.find(
         (h) => h.taskId === row.id && (!targetId || h.target.id === targetId),
       );
@@ -209,14 +244,15 @@ export function TaskHistory({
             maxLength={200}
           />
         </label>
-        <button
-          className="button"
+        <Button
+          variant="neutral"
+          size="compact"
           aria-label="筛选部署历史"
           onClick={() => setDraft({ ...filters, date: { ...filters.date } })}
         >
           <SlidersHorizontal size={16} />
           筛选{chips.length > 0 && ' · ' + chips.length}
-        </button>
+        </Button>
       </div>
       {!!chips.length && (
         <div className="history-filter-chips" aria-label="已应用的筛选">
@@ -231,9 +267,9 @@ export function TaskHistory({
               <X size={13} aria-hidden="true" />
             </button>
           ))}
-          <button className="link" onClick={() => setFilters(emptyFilters)}>
+          <Button variant="link" size="compact" onClick={() => setFilters(emptyFilters)}>
             全部清除
-          </button>
+          </Button>
         </div>
       )}
       {draft && (
@@ -242,14 +278,15 @@ export function TaskHistory({
           onClose={() => setDraft(undefined)}
           footer={
             <>
-              <button className="button" onClick={() => setDraft(emptyFilters)}>
+              <Button variant="neutral" size="compact" onClick={() => setDraft(emptyFilters)}>
                 重置
-              </button>
-              <button className="button" onClick={() => setDraft(undefined)}>
+              </Button>
+              <Button variant="neutral" size="compact" onClick={() => setDraft(undefined)}>
                 取消
-              </button>
-              <button
-                className="button primary"
+              </Button>
+              <Button
+                variant="default"
+                size="compact"
                 data-confirm
                 onClick={() => {
                   setFilters(draft);
@@ -257,7 +294,7 @@ export function TaskHistory({
                 }}
               >
                 应用
-              </button>
+              </Button>
             </>
           }
         >
@@ -399,6 +436,7 @@ export function TaskHistory({
                   )}
                   <tr
                     className="history-task compact-data-row"
+                    ref={row.id === initial.current?.openedTask ? returnRow : undefined}
                     tabIndex={blocked ? -1 : 0}
                     aria-label={'查看任务：' + note}
                     aria-disabled={blocked}
@@ -534,13 +572,14 @@ export function TaskHistory({
                                     ? '检查通过'
                                     : targetLabels[target.status]}
                             </Badge>
-                            <button
-                              className="link"
+                            <Button
+                              variant="link"
+                              size="compact"
                               disabled={blocked}
                               onClick={() => open(row, target.id)}
                             >
                               查看目标详情
-                            </button>
+                            </Button>
                           </div>
                         ))}
                       </td>

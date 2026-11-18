@@ -2,7 +2,7 @@ import type { TaskSummary } from './platform';
 import { fmtTime } from './model';
 import { taskResult } from './presentation';
 
-export type CompactTone = 'good' | 'warn' | 'progress' | 'neutral';
+export type CompactTone = 'good' | 'warn' | 'bad' | 'progress' | 'neutral';
 export function CompactStatus({ label, tone }: { label: string; tone: CompactTone }) {
   return (
     <span className={'compact-status ' + tone} title={label}>

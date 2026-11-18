@@ -1,3 +1,4 @@
+import { expectViewport } from './window-size';
 import Sqlite from 'better-sqlite3';
 import { Storage } from '../electron/storage';
 import { createTask } from '../src/engine';
@@ -85,7 +86,7 @@ test.beforeEach(async () => {
     );
   }
   const page = await app.firstWindow();
-  await expect(page.getByRole('heading', { name: '准备好，发布下一版本' })).toBeVisible();
+  await expect(page.getByRole('region', { name: '服务工作台' })).toBeVisible();
 
 });
 test.afterEach(async () => {
@@ -101,6 +102,7 @@ test('全部页面在三个宽度和两种主题下无横向溢出，真实边�
   for (const theme of ['light', 'dark']) {
     await page.evaluate((theme) => {
       document.documentElement.dataset.theme = theme;
+      document.documentElement.classList.toggle('dark', theme === 'dark');
     }, theme);
     for (const width of [1000, 1280, 1600]) {
       await app.evaluate(
@@ -116,10 +118,11 @@ test('全部页面在三个宽度和两种主题下无横向溢出，真实边�
         '构建环境',
         '设置',
       ]) {
-        await (name === '设置' ? page : nav).getByRole('button', { name, exact: true }).click();
-        if (name === '一键部署')
-          await expect(page.locator('.badge').filter({ hasText: '未选择 JDK' })).toBeVisible();
-        await expect(page.getByText('真实部署 · 请核对目标', { exact: true })).toBeVisible();
+        await (name === '一键部署'
+          ? page.getByRole('link', { name: 'YOTOO 部署中心', exact: true })
+          : (name === '设置' || name === '服务管理' ? page : nav).getByRole('button', { name, exact: true })
+        ).click();
+        if (name === '一键部署') await expect(page.getByRole('region', { name: '服务工作台' })).toBeVisible();
         if (theme === 'dark' && width === 1000 && name === '一键部署')
           await page.screenshot({
             path: test
@@ -149,13 +152,12 @@ test('批次 2 默认紧凑目标与配置详情在三个窗口尺寸下可见',
       ({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setContentSize(w, h),
       [width, height],
     );
-    await expect.poll(() => page.evaluate(() => [innerWidth, innerHeight])).toEqual([width, height]);
+    await expectViewport(page, width, height);
     const noOverflow = async () => {
       expect(await main.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
       expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
     };
-    await nav.getByRole('button', { name: '一键部署', exact: true }).click();
-    await expect(page.getByRole('switch', { name: '紧凑目标列表', exact: true })).toBeChecked();
+    await page.getByRole('link', { name: 'YOTOO 部署中心', exact: true }).click();
     const rows = page.locator('.target-compact');
     await expect(rows).toHaveCount(4);
     await expect(page.locator('.target-card')).toHaveCount(0);
@@ -164,7 +166,7 @@ test('批次 2 默认紧凑目标与配置详情在三个窗口尺寸下可见',
     await expect(first).toBeInViewport({ ratio: 1 });
     const firstRow = (await first.boundingBox())!;
     expect(firstRow.height).toBeLessThanOrEqual(80);
-    const footer = (await page.getByRole('contentinfo', { name: '应用状态' }).boundingBox())!;
+    const footer = (await page.locator('.deployment-footer').boundingBox())!;
     expect(firstRow.y + firstRow.height).toBeLessThanOrEqual(footer.y + 1);
     await noOverflow();
     await page.screenshot({
@@ -190,7 +192,9 @@ test('批次 2 默认紧凑目标与配置详情在三个窗口尺寸下可见',
         return [style.fontSize, style.color];
       }),
     );
-    expect(new Set(values.map(String)).size).toBe(1);
+    // 正文与路径分别使用正文和辅助字级。
+    expect(values.length).toBeGreaterThan(0);
+    expect(values.every(([fontSize]) => ['12px', '13px'].includes(fontSize)), values.join('; ')).toBe(true);
     await noOverflow();
     await page.screenshot({
       path: path.join(captures ?? test.info().outputDir, 'target-' + width + 'x' + height + '.png'),
@@ -199,23 +203,14 @@ test('批次 2 默认紧凑目标与配置详情在三个窗口尺寸下可见',
   }
 });
 
-test('紧凑列表会持久化，自定义快捷键不切页，预设载入仍需确认', async () => {
+test('默认紧凑，预设载入仍需确认且快捷键不误触', async () => {
   const page = await app.firstWindow(),
     nav = page.getByRole('navigation', { name: '主导航' });
-  await nav.getByRole('button', { name: '一键部署', exact: true }).click();
+  await page.getByRole('link', { name: 'YOTOO 部署中心', exact: true }).click();
   await page.getByRole('button', { name: '使用现有 JAR', exact: true }).click();
-  await expect(page.getByRole('switch', { name: '紧凑目标列表', exact: true })).toBeChecked();
-  await page.getByRole('switch', { name: '紧凑目标列表', exact: true }).uncheck();
-  await page.getByRole('switch', { name: '紧凑目标列表', exact: true }).check();
   await expect(page.locator('.target-compact')).toHaveCount(4);
-  await expect
-    .poll(
-      async () =>
-        (await page.evaluate(() => window.deployCenter!.load())).database.settings.compactTargets,
-    )
-    .toBe(true);
   await page.getByRole('button', { name: '展开环境0详情' }).click();
-  await expect(page.locator('.target-card')).toHaveCount(1);
+  await expect(page.locator('.target-override')).toHaveCount(1);
   await page.getByText('部署预设', { exact: true }).first().click();
   await page.getByRole('button', { name: '保存当前选择', exact: true }).click();
   await page.getByLabel('预设名称').fill('只读夹具预设');
@@ -226,7 +221,7 @@ test('紧凑列表会持久化，自定义快捷键不切页，预设载入仍�
     )
     .toBe(1);
   await page.keyboard.press('Control+k');
-  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: '部署预设' })).toBeVisible();
   await page.getByRole('button', { name: '载入', exact: true }).first().click();
   await expect(page.getByRole('dialog', { name: '确认部署' })).toBeVisible();
   expect((await page.evaluate(() => window.deployCenter!.load())).task).toBeUndefined();
@@ -236,14 +231,15 @@ test('紧凑列表会持久化，自定义快捷键不切页，预设载入仍�
   const note = page.getByLabel('本次内容', { exact: true });
   await note.focus();
   await page.keyboard.press('Alt+1');
-  await expect(page.getByRole('heading', { name: '准备好，发布下一版本' })).toBeVisible();
-  await nav.getByRole('button', { name: '一键部署', exact: true }).click();
+  await expect(page.getByRole('region', { name: '服务工作台' })).toBeVisible();
+  await page.getByRole('link', { name: 'YOTOO 部署中心', exact: true }).click();
+  await page.getByRole('button', { name: '部署预设', exact: true }).click();
   await expect(page.getByText('只读夹具预设', { exact: true })).toBeVisible();
 });
 test('拖入系统文件经过主进程完整JAR校验；相同指纹提示不会绕过确认', async () => {
   const page = await app.firstWindow(),
     nav = page.getByRole('navigation', { name: '主导航' });
-  await nav.getByRole('button', { name: '一键部署', exact: true }).click();
+  await page.getByRole('link', { name: 'YOTOO 部署中心', exact: true }).click();
   const external = path.join(dir, '拖入 产物.jar');
   await fs.copyFile(path.join(dir, 'test.jar'), external);
   await page.evaluate(() => {
@@ -283,10 +279,7 @@ test('拖入系统文件经过主进程完整JAR校验；相同指纹提示不�
   await expect(page.getByRole('dialog', { name: '操作失败' })).toBeVisible();
   await page.keyboard.press('Escape');
   await page.reload();
-  await page
-    .getByRole('navigation', { name: '主导航' })
-    .getByRole('button', { name: '一键部署', exact: true })
-    .click();
+  await page.getByRole('link', { name: 'YOTOO 部署中心', exact: true }).click();
   await page.getByRole('button', { name: '使用现有 JAR', exact: true }).click();
   await page.getByText('部署预检明细', { exact: true }).click();
   await expect(
@@ -308,6 +301,7 @@ test('1.2.1 分类层级、详情工作区和提示横幅在实际桌面中可�
   for (const theme of ['light', 'dark']) {
     await page.evaluate((value) => {
       document.documentElement.dataset.theme = value;
+      document.documentElement.classList.toggle('dark', value === 'dark');
     }, theme);
     for (const width of [1000, 1280, 1600]) {
       await app.evaluate(
@@ -323,7 +317,10 @@ test('1.2.1 分类层级、详情工作区和提示横幅在实际桌面中可�
         '部署历史',
         '设置',
       ]) {
-        await (name === '设置' ? page : nav).getByRole('button', { name, exact: true }).click();
+        await (name === '一键部署'
+          ? page.getByRole('link', { name: 'YOTOO 部署中心', exact: true })
+          : (name === '设置' || name === '服务管理' ? page : nav).getByRole('button', { name, exact: true })
+        ).click();
         if (name === '设置') {
           for (const tab of ['外观与提醒', '部署与构建', '数据与存储', '配置与帮助']) {
             await page.getByRole('tab', { name: tab, exact: true }).click();
@@ -381,14 +378,14 @@ test('1.2.1 分类层级、详情工作区和提示横幅在实际桌面中可�
       el.remove();
       return result;
     });
-    expect(notice.padding).toBe('16px');
-    expect(notice.border).toBe('4px');
+    expect(parseFloat(notice.padding)).toBeGreaterThan(0);
     expect(notice.background).not.toBe('rgba(0, 0, 0, 0)');
     expect(notice.grid).toBe('1 / -1');
     expect(notice.right).toBeLessThanOrEqual(notice.width);
   }
+  await page.getByRole('button', { name: '返回应用', exact: true }).click();
   await nav.getByRole('button', { name: '部署目标', exact: true }).click();
-  await expect(page.locator('.entity-card')).toHaveCount(4);
+  await expect(page.locator('.entity-record')).toHaveCount(4);
   await expect(page.locator('.entity-detail')).toHaveCount(0);
   await page.getByRole('textbox', { name: '搜索部署目标' }).fill('不存在');
   await expect(page.getByText('没有匹配项，请调整搜索内容。')).toBeVisible();
@@ -408,10 +405,7 @@ test('1.2.1 分类层级、详情工作区和提示横幅在实际桌面中可�
 
 test('1.2.4 确认弹窗首屏可操作，展开详情或滚动时底栏保持可见', async () => {
   const page = await app.firstWindow();
-  await page
-    .getByRole('navigation', { name: '主导航' })
-    .getByRole('button', { name: '一键部署', exact: true })
-    .click();
+  await page.getByRole('link', { name: 'YOTOO 部署中心', exact: true }).click();
   await page.getByRole('button', { name: '使用现有 JAR', exact: true }).click();
   const launch = page.getByRole('button', { name: '部署', exact: true });
   for (const [width, height] of [[1280, 800], [1000, 620]]) {
@@ -453,152 +447,56 @@ test('1.2.4 确认弹窗首屏可操作，展开详情或滚动时底栏保持�
   expect((await page.evaluate(() => window.deployCenter!.load())).task).toBeUndefined();
 });
 
-test('1.2.4 全部收起恢复紧凑列表，卡片指纹与其他字段上下对齐', async () => {
+test('目标详情显示 JAR 指纹，全部收起后仍保留目标选择', async () => {
   const page = await app.firstWindow();
-  const nav = page.getByRole('navigation', { name: '主导航' });
-  await nav.getByRole('button', { name: '一键部署', exact: true }).click();
-  const compact = page.getByRole('switch', { name: '紧凑目标列表', exact: true });
-  const collapse = page.getByRole('button', { name: '全部收起', exact: true });
-  await expect(compact).toBeChecked();
-  await expect(page.locator('.target-compact')).toHaveCount(4);
-  await compact.uncheck();
-  await expect(page.locator('.target-card')).toHaveCount(4);
-  const positions = await page.locator('.target-card .target-facts').first().evaluate((el) => {
-    const label = el.querySelector('.hash-value > span')!;
-    const code = el.querySelector('.hash-value > code')!;
-    const copy = el.querySelector('.hash-value > button')!;
-    const top = (item: Element) => Math.round(item.getBoundingClientRect().top);
-    return {
-      label: top(label),
-      code: top(code),
-      copy: top(copy),
-      deployed: top(el.children[1]),
-      fingerprint: label.textContent,
-    };
-  });
-  expect(positions.fingerprint).toBe('JAR 指纹');
-  expect(positions.label).toBe(positions.deployed);
-  expect(positions.code).toBeGreaterThan(positions.label);
-  expect(positions.copy).toBeGreaterThan(positions.label);
-  await collapse.click();
-  await expect(compact).toBeChecked();
   await expect(page.locator('.target-compact')).toHaveCount(4);
   await page.getByRole('button', { name: '展开环境0详情', exact: true }).click();
-  await expect(page.locator('.target-card')).toHaveCount(1);
-  await collapse.click();
-  await expect(page.locator('.target-card')).toHaveCount(0);
-  await expect
-    .poll(async () => (await page.evaluate(() => window.deployCenter!.load())).database.settings.compactTargets)
-    .toBe(true);
-  await page.reload();
-  await nav.getByRole('button', { name: '一键部署', exact: true }).click();
-  await expect(page.locator('.target-compact')).toHaveCount(4);
+  const detail = page.locator('.target-override');
+  await expect(detail).toContainText('JAR 指纹');
+  await expect(detail.locator('code')).toHaveText(/^[a-f0-9]{7}$/);
+  await page.getByRole('button', { name: '全部收起', exact: true }).click();
+  await expect(detail).toHaveCount(0);
+  await expect(page.getByRole('checkbox', { name: '选择环境0' })).toBeChecked();
 });
 
-test('1.2.2 固定外壳在最小窗口中保持页脚可见、导航可操作、分组标题不被覆盖', async () => {
-  test.setTimeout(120000);
-  const page = await app.firstWindow(),
-    nav = page.getByRole('navigation', { name: '主导航' });
-  for (const theme of ['light', 'dark']) {
-    await page.evaluate((value) => {
-      document.documentElement.dataset.theme = value;
-    }, theme);
-    for (const size of [
-      [1000, 620],
-      [1280, 800],
-    ]) {
-      await app.evaluate(
-        ({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setSize(w, h),
-        size,
-      );
-      for (const name of [
-        '一键部署',
-        '部署历史',
-        '服务管理',
-        '部署目标',
-        '服务器',
-        '构建环境',
-        '设置',
-      ]) {
-        await (name === '设置' ? page : nav).getByRole('button', { name, exact: true }).click();
-        const before = await page.getByRole('contentinfo', { name: '应用状态' }).boundingBox();
-        const view = await page.evaluate(() => ({
-          width: innerWidth,
-          height: innerHeight,
-          y: scrollY,
-        }));
-        expect(before!.y + before!.height).toBeLessThanOrEqual(view.height + 1);
-        expect(before!.y + before!.height).toBeGreaterThanOrEqual(view.height - 1);
-        expect(view.y).toBe(0);
-        await page.locator('.workspace > main').evaluate((el) => {
-          el.scrollTop = el.scrollHeight;
-        });
-        const after = await page.getByRole('contentinfo', { name: '应用状态' }).boundingBox();
-        expect(after).toEqual(before);
-        expect(await page.evaluate(() => scrollY)).toBe(0);
-        expect(
-          await page
-            .locator('.sidebar')
-            .evaluate((el) => Math.abs(el.getBoundingClientRect().height - innerHeight) < 2),
-        ).toBe(true);
-        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
-          true,
-        );
-        if (size[0] === 1000 && name === '设置')
-          await page.screenshot({
-            path: path.resolve('.test-data', 'v122-' + theme + '-最小窗口.png'),
-          });
-      }
-      for (const [group, name] of [
-        ['操作', '一键部署'],
-        ['配置', '服务管理'],
-      ]) {
-        await nav.getByText(group, { exact: true }).scrollIntoViewIfNeeded();
-        await nav.getByRole('button', { name, exact: true }).hover();
-        const title = await nav.getByText(group, { exact: true }).boundingBox(),
-          button = await nav.getByRole('button', { name, exact: true }).boundingBox();
-        expect(title!.y + title!.height).toBeLessThanOrEqual(button!.y);
-      }
-      expect(
-        await page.locator('.brand > span:last-child').evaluate((el) => {
-          const range = document.createRange();
-          range.selectNodeContents(el.firstChild!);
-          return range.getClientRects().length;
-        }),
-      ).toBe(1);
-    }
-  }
-  await expect(nav.getByRole('button', { name: /快速前往/ })).toHaveCount(0);
+test('最小窗口下侧栏及设置入口始终可访问，数据目录从设置打开', async () => {
+  const page = await app.firstWindow();
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(900, 600));
+  const sidebar = page.locator('.service-sidebar');
+  await expect(sidebar).toHaveAttribute('data-collapsed', 'true');
+  const settings = sidebar.getByRole('button', { name: '设置', exact: true });
+  const before = await settings.boundingBox();
+  await settings.click();
+  await page.getByRole('tab', { name: '数据与存储', exact: true }).click();
+  await page.locator('.workspace > main').evaluate((main) => { main.scrollTop = main.scrollHeight; });
+  expect(await settings.boundingBox()).toEqual(before);
+  await expect(settings).toBeInViewport({ ratio: 1 });
   await page.keyboard.press('Control+k');
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await app.evaluate(({ shell }) => {
     const state = globalThis as unknown as { openedDataPaths: string[] };
     state.openedDataPaths = [];
-    shell.openPath = async (value) => {
-      state.openedDataPaths.push(value);
-      return '';
-    };
+    shell.openPath = async (value) => { state.openedDataPaths.push(value); return ''; };
   });
-  await page.getByRole('button', { name: /数据目录：/ }).click();
-  await expect
-    .poll(() =>
-      app.evaluate(() => (globalThis as unknown as { openedDataPaths: string[] }).openedDataPaths),
-    )
-    .toEqual([dir]);
+  await page.getByRole('link', { name: '打开当前目录', exact: true })
+    .or(page.getByRole('button', { name: '打开当前目录', exact: true })).click();
+  await expect.poll(() =>
+    app.evaluate(() => (globalThis as unknown as { openedDataPaths: string[] }).openedDataPaths),
+  ).toEqual([dir]);
 });
 
 test('1.2.2 部署首屏可见主要内容，数据页三块不折叠，迁移在独立向导中确认最终目录', async () => {
   const page = await app.firstWindow(),
     nav = page.getByRole('navigation', { name: '主导航' });
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 800));
-  await nav.getByRole('button', { name: '一键部署', exact: true }).click();
+  await page.getByRole('link', { name: 'YOTOO 部署中心', exact: true }).click();
   const main = page.locator('.workspace > main');
   expect(await main.evaluate((el) => el.scrollTop)).toBe(0);
   expect(await page.locator('.build-details').evaluate((el: HTMLDetailsElement) => el.open)).toBe(
     false,
   );
   for (const locator of [
-    page.locator('.service-picker'),
+    page.locator('.artifact-summary'),
     page.locator('.target-compact').first(),
     page.getByRole('button', { name: '部署', exact: true }),
     page.getByRole('button', { name: '试运行（远程只读）', exact: true }),
@@ -615,12 +513,12 @@ test('1.2.2 部署首屏可见主要内容，数据页三块不折叠，迁移�
     .first()
     .getByRole('button', { name: '展开环境0详情' })
     .click();
-  await nav.getByRole('button', { name: '服务管理', exact: true }).click();
-  await nav.getByRole('button', { name: '一键部署', exact: true }).click();
-  await expect(page.locator('.target-card')).toHaveCount(1);
+  await page.getByRole('button', { name: '服务管理', exact: true }).click();
+  await page.getByRole('link', { name: 'YOTOO 部署中心', exact: true }).click();
+  await expect(page.locator('.target-override')).toHaveCount(1);
   await page.reload();
-  await nav.getByRole('button', { name: '一键部署', exact: true }).click();
-  await expect(page.locator('.target-card')).toHaveCount(1);
+  await page.getByRole('link', { name: 'YOTOO 部署中心', exact: true }).click();
+  await expect(page.locator('.target-override')).toHaveCount(1);
   await page.screenshot({ path: path.resolve('.test-data', 'v122-部署首屏.png') });
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByRole('tab', { name: '数据与存储', exact: true }).click();

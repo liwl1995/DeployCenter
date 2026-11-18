@@ -1,3 +1,4 @@
+import { Button } from './design/ui/button';
 import { LogActivity } from './LogActivity';
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
@@ -220,13 +221,13 @@ export function NativeLogPanel({
       {(more || busy) && (
         <div className="row wrap log-load-actions">
           {more && (
-            <button className="button" disabled={busy} onClick={() => void readEarlier()}>
+            <Button variant="neutral" size="compact" disabled={busy} onClick={() => void readEarlier()}>
               加载更早日志
-            </button>
+            </Button>
           )}
           {busy && (
-            <button
-              className="button"
+            <Button
+              variant="neutral" size="compact"
               onClick={() => {
                 cancelled.current = true;
                 setBusy(false);
@@ -234,7 +235,7 @@ export function NativeLogPanel({
               }}
             >
               取消加载
-            </button>
+            </Button>
           )}
         </div>
       )}
