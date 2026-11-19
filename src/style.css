@@ -848,7 +848,7 @@ p.code,
   gap: var(--space-1);
   color: var(--text-2);
 }
-.preference-list > :is(.field, .switch-row, .preference-row) {
+.preference-list > :is(.field, .switch-row) {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -856,10 +856,29 @@ p.code,
   min-height: var(--h-control);
   padding: var(--space-2) 0;
 }
+.preference-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  min-height: var(--h-control);
+  padding: var(--space-2) 0;
+}
+.preference-row > [role='group'] {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: var(--h-control-sm);
+  max-width: 100%;
+  margin-inline-start: auto;
+}
+.preference-row > small {
+  flex-basis: 100%;
+}
 .preference-list > :is(.field, .switch-row, .preference-row) + :is(.field, .switch-row, .preference-row) {
   border-top: 1px solid var(--line);
 }
-.preference-list > .field > :is(select, input) {
+.preference-list > .field > input {
   width: min(208px, 28vw);
 }
 .preference-list > .field > small {
@@ -878,7 +897,7 @@ p.code,
   padding: 6px 12px;
   color: var(--inverse-fg);
   background: var(--inverse-bg);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-control);
   box-shadow: var(--shadow-md);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);

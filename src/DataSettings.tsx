@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode, type Ref } from 'react';
 import type { ArtifactPolicy } from './model';
 import type { CleanupKind, CleanupPlan, DataUsage } from './features';
 import type { DesktopAPI } from './platform';
+import { PreferenceChoice } from './PreferenceChoice';
 import { Card, Field, Modal } from './ui';
 
 export const storageSize = (bytes: number) =>
@@ -157,19 +158,17 @@ export function DataSettings({
         <section className="retention-policy">
           {historyFields}
           <h3>产物快照</h3>{' '}
+          <PreferenceChoice
+            label="产物保留方式"
+            value={value.mode}
+            onValueChange={(mode) => setValue((current) => ({ ...current, mode }))}
+            items={[
+              { value: 'success', label: '任务成功后删除（默认）' },
+              { value: 'count', label: '保留最近 N 个不同的 JAR' },
+              { value: 'size', label: '按总占用上限' },
+            ]}
+          />
           <div className="form-grid mt">
-            <Field label="产物保留方式">
-              <select
-                value={value.mode}
-                onChange={(e) =>
-                  setValue({ ...value, mode: e.target.value as ArtifactPolicy['mode'] })
-                }
-              >
-                <option value="success">任务成功后删除（默认）</option>
-                <option value="count">保留最近 N 个不同的 JAR</option>
-                <option value="size">按总占用上限</option>
-              </select>
-            </Field>
             {value.mode === 'count' && (
               <Field label="保留不同 JAR 的数量">
                 <input

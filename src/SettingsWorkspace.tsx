@@ -4,7 +4,7 @@ import { BookOpen, ChevronRight, Code2, Download, Info, Upload } from 'lucide-re
 import { AppUpdateSettings } from './AppUpdateSettings';
 import { DataSettings } from './DataSettings';
 import { DirectorySettings } from './DirectorySettings';
-import { SegmentedControl } from './design/ui/segmented-control';
+import { PreferenceChoice } from './PreferenceChoice';
 import type { Database } from './model';
 import type { DesktopAPI } from './platform';
 import { pruneHistory } from './records';
@@ -144,45 +144,34 @@ export function SettingsWorkspace({
       content: (
         <div className="stack">
           <Card title="外观" className="preference-list">
-            <Field label="界面主题">
-              <select
-                value={db.settings.theme}
-                onChange={(e) =>
-                  setDb((old) => ({
-                    ...old,
-                    settings: {
-                      ...old.settings,
-                      theme: e.target.value as Database['settings']['theme'],
-                    },
-                  }))
-                }
-              >
-                <option value="system">跟随系统</option>
-                <option value="light">浅色</option>
-                <option value="dark">深色</option>
-              </select>
-            </Field>
-            <div className="preference-row">
-              <span>界面密度</span>
-              <SegmentedControl
-              size="sm"
-              aria-label="界面密度"
+            <PreferenceChoice
+              label="界面主题"
+              value={db.settings.theme}
+              onValueChange={(theme) => setDb((old) => ({ ...old, settings: { ...old.settings, theme } }))}
+              items={[
+                { value: 'system', label: '跟随系统' },
+                { value: 'light', label: '浅色' },
+                { value: 'dark', label: '深色' },
+              ]}
+            />
+            <PreferenceChoice
+              label="界面密度"
               value={density}
               onValueChange={onDensity}
               items={[
                 { value: 'compact', label: '紧凑' },
                 { value: 'comfortable', label: '舒适' },
               ]}
+            />
+            {desktop && (
+              <PreferenceChoice
+                label="界面缩放"
+                value={preferences.zoom}
+                disabled={saving}
+                onValueChange={(zoom) => void changePreferences({ zoom })}
+                items={zoomOptions.map((zoom) => ({ value: zoom, label: zoom + '%' }))}
               />
-            </div>
-            {desktop && <Field label="界面缩放">
-              <select value={preferences.zoom} disabled={saving} onChange={(e) => {
-                const zoom = zoomOptions.find((option) => option === Number(e.target.value));
-                if (zoom) void changePreferences({ zoom });
-              }}>
-                {zoomOptions.map((zoom) => <option key={zoom} value={zoom}>{zoom}%</option>)}
-              </select>
-            </Field>}
+            )}
           </Card>
           {desktop && (
             <Card title="窗口与启动" className="preference-list">
@@ -245,23 +234,17 @@ export function SettingsWorkspace({
       content: (
         <div className="stack">
           <Card title="部署默认行为" className="preference-list">
-              <Field label="某个目标失败后">
-                <select
-                  value={db.settings.failurePolicy}
-                  onChange={(e) =>
-                    setDb((old) => ({
-                      ...old,
-                      settings: {
-                        ...old.settings,
-                        failurePolicy: e.target.value as Database['settings']['failurePolicy'],
-                      },
-                    }))
-                  }
-                >
-                  <option value="stop">停止后续目标</option>
-                  <option value="continue">继续其他目标</option>
-                </select>
-              </Field>
+              <PreferenceChoice
+                label="某个目标失败后"
+                value={db.settings.failurePolicy}
+                onValueChange={(failurePolicy) =>
+                  setDb((old) => ({ ...old, settings: { ...old.settings, failurePolicy } }))
+                }
+                items={[
+                  { value: 'stop', label: '停止后续目标' },
+                  { value: 'continue', label: '继续其他目标' },
+                ]}
+              />
               <Field label="陈旧锁阈值（分钟）">
                 <input
                   type="number"
@@ -345,15 +328,18 @@ export function SettingsWorkspace({
         <div className="stack">
           <AppUpdateSettings api={desktop} version={version} active={busy} />
           {desktop && <Card title="检查方式" className="preference-list">
-            <Field label="更新检查方式" hint="自动模式启动 1 分钟后检查，之后每 6 小时检查一次。安装由你确认。">
-              <select value={preferences.updatePolicy} disabled={saving} onChange={(e) =>
-                void changePreferences({ updatePolicy: e.target.value as DesktopPreferences['updatePolicy'] })
-              }>
-                <option value="manual">手动检查</option>
-                <option value="check">自动检查</option>
-                <option value="download">自动检查并下载</option>
-              </select>
-            </Field>
+            <PreferenceChoice
+              label="更新检查方式"
+              hint="自动模式启动 1 分钟后检查，之后每 6 小时检查一次。安装由你确认。"
+              value={preferences.updatePolicy}
+              disabled={saving}
+              onValueChange={(updatePolicy) => void changePreferences({ updatePolicy })}
+              items={[
+                { value: 'manual', label: '手动检查' },
+                { value: 'check', label: '自动检查' },
+                { value: 'download', label: '自动检查并下载' },
+              ]}
+            />
             {preferenceError && <p className="notice warning" role="alert">{preferenceError}</p>}
           </Card>}
         </div>

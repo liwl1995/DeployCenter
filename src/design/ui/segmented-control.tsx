@@ -7,7 +7,7 @@ import { SegmentThumb, useSlidingIndicator } from './sliding-indicator';
  * 轨道 --bg-subtle，内衬 3px；选中项 --bg-card + 小阴影。内圆角 = 外圆角 − 内衬。
  * 选中块是一块单独的滑块（SegmentThumb），切换时从上一项滑过去。
  */
-export interface SegmentedItem<T extends string> {
+export interface SegmentedItem<T extends string | number> {
   value: T;
   label: React.ReactNode;
   icon?: React.ComponentType<{
@@ -21,17 +21,18 @@ export interface SegmentedItem<T extends string> {
   disabled?: boolean;
 }
 
-export interface SegmentedControlProps<T extends string> {
+export interface SegmentedControlProps<T extends string | number> {
   items: SegmentedItem<T>[];
   value: T;
   onValueChange: (value: T) => void;
   'aria-label': string;
+  'aria-describedby'?: string;
   /** 36：模式 tab、页头下的子页面切换；28：面板里的小切换 */
   size?: 'md' | 'sm';
   className?: string;
 }
 
-export function SegmentedControl<T extends string>({
+export function SegmentedControl<T extends string | number>({
   items,
   value,
   onValueChange,
@@ -45,6 +46,7 @@ export function SegmentedControl<T extends string>({
       ref={indicator.ref}
       role="group"
       aria-label={rest['aria-label']}
+      aria-describedby={rest['aria-describedby']}
       className={cn(
         'relative inline-flex items-stretch bg-subtle p-[3px]',
         size === 'md' ? 'h-9 rounded-[10px]' : 'h-control-sm rounded-[8px]',

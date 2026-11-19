@@ -30,12 +30,15 @@ for (const scale of [1, 1.25, 1.5]) {
       await expect(page.getByRole('switch', { name: '任务日志默认跟随最新' })).toBeChecked();
       const captures = process.env.DEPLOY_CENTER_TEST_CAPTURES;
       if (captures) await fs.mkdir(captures, { recursive: true });
+      const option = (label: string, name: string) =>
+        page.getByRole('group', { name: label, exact: true }).getByRole('button', { name, exact: true });
       for (const theme of ['light', 'dark']) {
         await page.getByRole('tab', { name: '通用', exact: true }).click();
-        await page.getByLabel('界面主题').selectOption(theme);
+        await option('界面主题', theme === 'light' ? '浅色' : '深色').click();
         await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
         for (const name of ['通用', '部署与构建', '数据与备份', '软件更新', '关于与帮助']) {
           await page.getByRole('tab', { name, exact: true }).click();
+          await expect(page.getByRole('combobox')).toHaveCount(0);
           expect(await page.locator('main').evaluate((main) => main.scrollWidth - main.clientWidth)).toBeLessThanOrEqual(1);
           if (captures && ['通用', '软件更新'].includes(name))
             await page.screenshot({ path: path.join(captures, `settings-${name}-${scale}-${theme}.png`) });
@@ -43,12 +46,16 @@ for (const scale of [1, 1.25, 1.5]) {
       }
       if (scale !== 1) return;
       await page.getByRole('tab', { name: '软件更新', exact: true }).click();
-      await expect(page.getByLabel('更新检查方式')).toHaveValue('manual');
-      await page.getByLabel('更新检查方式').selectOption('download');
-      await expect(page.getByLabel('更新检查方式')).toBeEnabled();
+      await expect(option('更新检查方式', '手动检查')).toHaveAttribute('aria-pressed', 'true');
+      await option('更新检查方式', '自动检查并下载').click();
+      await expect(option('更新检查方式', '自动检查并下载')).toHaveAttribute('aria-pressed', 'true');
       await page.getByRole('tab', { name: '通用', exact: true }).click();
-      await page.getByLabel('界面缩放').selectOption('110');
-      await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.getZoomFactor())).toBeCloseTo(1.1);
+      await option('界面缩放', '125%').click();
+      await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.getZoomFactor())).toBeCloseTo(1.25);
+      await page.getByRole('tab', { name: '数据与备份', exact: true }).click();
+      await expect(option('产物保留方式', '按总占用上限')).toBeVisible();
+      expect(await page.locator('main').evaluate((main) => main.scrollWidth - main.clientWidth)).toBeLessThanOrEqual(1);
+      await page.getByRole('tab', { name: '通用', exact: true }).click();
       await page.getByRole('switch', { name: '任务日志默认跟随最新' }).click();
       await expect(page.getByRole('switch', { name: '任务日志默认跟随最新' })).not.toBeChecked();
       await page.getByRole('switch', { name: '关闭到托盘' }).click();
@@ -60,7 +67,7 @@ for (const scale of [1, 1.25, 1.5]) {
       page = await app.firstWindow();
       await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBounds().height)).toBe(600);
       await page.getByRole('button', { name: '设置', exact: true }).click();
-      await expect(page.getByLabel('界面缩放')).toHaveValue('110');
+      await expect(option('界面缩放', '125%')).toHaveAttribute('aria-pressed', 'true');
       await expect(page.getByRole('switch', { name: '任务日志默认跟随最新' })).not.toBeChecked();
       await expect(page.getByRole('switch', { name: '关闭到托盘' })).toBeChecked();
     } finally {

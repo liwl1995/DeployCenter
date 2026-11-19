@@ -1876,7 +1876,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               onDensity={setDensity}
               migrationBlock={isActive(task) ? '任务执行或取消中，不能迁移数据目录。' : unfinished.length ? '有未处理的中断任务，请先核实结果再迁移。' : undefined}
               busy={isActive(task)}
-              version={boot?.version || '2.1.0'}
+              version={boot?.version || '2.1.1'}
               preferences={desktopPreferences}
               onPreferences={setDesktopPreferences}
               showDemo={fixture}

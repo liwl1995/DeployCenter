@@ -66,7 +66,7 @@ test.beforeEach(async () => {
 test.afterEach(async () => {
   await app?.close();
   if (root && root.startsWith(path.resolve('.test-data') + path.sep))
-    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });
 });
 test('1.2.0 空间策略实际 IPC、三个宽度无横向溢出', async () => {
   const page = await app.firstWindow();
@@ -84,7 +84,8 @@ test('1.2.0 空间策略实际 IPC、三个宽度无横向溢出', async () => {
       )
       .toBe(true);
   }
-  await page.getByLabel('产物保留方式', { exact: true }).selectOption('count');
+  await page.getByRole('group', { name: '产物保留方式' })
+    .getByRole('button', { name: '保留最近 N 个不同的 JAR' }).click();
   await page.getByLabel('保留不同 JAR 的数量').fill('2');
   await page.getByRole('button', { name: '预览并应用保留策略' }).click();
   await expect(page.getByRole('dialog')).toContainText('将删除 0 个文件');

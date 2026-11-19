@@ -935,17 +935,17 @@ test('设置外观支持两种主题、跟随系统和重新启动后的偏好�
   const settings = page.getByRole('button', { name: '设置', exact: true });
   await settings.click();
   await page.getByRole('tab', { name: '通用', exact: true }).click();
-  const select = page.getByLabel('界面主题', { exact: true });
+  const themeOptions = page.getByRole('group', { name: '界面主题', exact: true });
   const colors: Record<string, string> = {};
   for (const theme of ['light', 'dark']) {
-    await select.selectOption(theme);
+    await themeOptions.getByRole('button', { name: theme === 'light' ? '浅色' : '深色' }).click();
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
     await expect.poll(async () => (await page.evaluate(() => window.deployCenter!.load())).database.settings.theme).toBe(theme);
     colors[theme] = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     for (const [width, height] of sizes) {
       await size(width, height);
       await expect(settings).toBeInViewport({ ratio: 1 });
-      await expect(select).toBeInViewport({ ratio: 1 });
+      await expect(themeOptions).toBeInViewport({ ratio: 1 });
       await boundaries();
       await shot('外观-' + theme + '-' + width + 'x' + height);
     }
@@ -955,7 +955,7 @@ test('设置外观支持两种主题、跟随系统和重新启动后的偏好�
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await settings.click();
   await page.getByRole('tab', { name: '通用', exact: true }).click();
-  await select.selectOption('system');
+  await themeOptions.getByRole('button', { name: '跟随系统' }).click();
   for (const theme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme: theme });
     await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(colors[theme]);

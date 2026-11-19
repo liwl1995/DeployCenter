@@ -58,9 +58,11 @@ describe('v0.3 组件回归', () => {
     fireEvent.click(within(modal).getByRole('button', { name: '返回检查' }));
     await user.click(screen.getByRole('button', { name: '设置' }));
     await user.click(screen.getByRole('tab', { name: '部署与构建' }));
-    expect(
-      (screen.getByRole('combobox', { name: '某个目标失败后' }) as HTMLSelectElement).value,
-    ).toBe('stop');
+    const policy = within(screen.getByRole('group', { name: '某个目标失败后' }));
+    expect(policy.getByRole('button', { name: '停止后续目标' }).getAttribute('aria-pressed')).toBe('true');
+    await user.click(policy.getByRole('button', { name: '继续其他目标' }));
+    expect(JSON.parse(localStorage.getItem('deploy-center-v2')!).settings.failurePolicy).toBe('continue');
+    await user.click(policy.getByRole('button', { name: '停止后续目标' }));
     await user.click(screen.getByRole('link', { name: 'YOTOO 部署中心' }));
     await user.click(screen.getByRole('button', { name: '恢复默认' }));
     expect(screen.queryByRole('button', { name: '恢复默认' })).toBeNull();

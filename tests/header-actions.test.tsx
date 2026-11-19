@@ -71,16 +71,17 @@ it('从侧栏进入外观设置，主题通过已有存储保存并在重新打�
   const user = userEvent.setup();
   let view = render(<App />);
   await user.click(screen.getByRole('button', { name: '设置' }));
-  const select = screen.getByLabelText('界面主题') as HTMLSelectElement;
-  await user.selectOptions(select, 'dark');
+  const themeButton = (name: string) =>
+    within(screen.getByRole('group', { name: '界面主题' })).getByRole('button', { name });
+  await user.click(themeButton('深色'));
   expect(document.documentElement.dataset.theme).toBe('dark');
   expect(JSON.parse(localStorage.getItem('deploy-center-v2')!).settings.theme).toBe('dark');
-  expect(select.value).toBe('dark');
-  await user.selectOptions(select, 'light');
+  expect(themeButton('深色').getAttribute('aria-pressed')).toBe('true');
+  await user.click(themeButton('浅色'));
   view.unmount();
   view = render(<App />);
   expect(document.documentElement.dataset.theme).toBe('light');
   await user.click(screen.getByRole('button', { name: '设置' }));
-  expect((screen.getByLabelText('界面主题') as HTMLSelectElement).value).toBe('light');
+  expect(themeButton('浅色').getAttribute('aria-pressed')).toBe('true');
   view.unmount();
 });

@@ -63,7 +63,12 @@ it('策略选择不直接改配置；预览确认后才保存，保留天数可�
   vi.mocked(client.previewCleanup).mockResolvedValue({ ...plan, kind: 'policy', policy });
   vi.mocked(client.applyCleanup).mockResolvedValue({ bytes: 0, files: 0, warnings: [], policy });
   render(<DataSettings api={client} onPolicy={onPolicy} />);
-  await user.selectOptions(screen.getByLabelText('产物保留方式'), 'count');
+  const choices = within(screen.getByRole('group', { name: '产物保留方式' }));
+  await user.click(choices.getByRole('button', { name: '按总占用上限' }));
+  expect(screen.getByLabelText('产物占用上限（GB）')).toBeTruthy();
+  const keepCount = choices.getByRole('button', { name: '保留最近 N 个不同的 JAR' });
+  await user.click(keepCount);
+  expect(keepCount.getAttribute('aria-pressed')).toBe('true');
   await user.clear(screen.getByLabelText('保留不同 JAR 的数量'));
   await user.type(screen.getByLabelText('保留不同 JAR 的数量'), '3');
   await user.clear(screen.getByLabelText('失败或取消任务产物保留天数'));

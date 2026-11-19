@@ -165,7 +165,8 @@ test('服务工作台在桌面窗口中可切换、筛选、打开任务和设�
     for (const theme of ['dark', 'light']) {
       await window.getByRole('button', { name: '设置', exact: true }).click();
       await window.getByRole('tab', { name: '通用' }).click();
-      await window.getByLabel('界面主题').selectOption(theme);
+      await window.getByRole('group', { name: '界面主题' })
+        .getByRole('button', { name: theme === 'dark' ? '深色' : '浅色' }).click();
       await expect(window.locator('html')).toHaveAttribute('data-theme', theme);
       await window.getByRole('button', { name: '返回应用' }).click();
       for (const [width, height] of sizes) {
@@ -324,7 +325,7 @@ test('服务工作台在桌面窗口中可切换、筛选、打开任务和设�
     expect(Math.abs(updateIcon!.y - updateText!.y)).toBeLessThanOrEqual(4);
     await window.screenshot({ path: path.join(captures, '软件更新.png') });
     await window.getByRole('tab', { name: '通用' }).click();
-    await window.getByLabel('界面主题').selectOption('light');
+    await window.getByRole('group', { name: '界面主题' }).getByRole('button', { name: '浅色' }).click();
     await expect(window.locator('html')).toHaveAttribute('data-theme', 'light');
     await window.getByRole('button', { name: '返回应用' }).click();
     await window.getByRole('button', { name: '服务管理', exact: true }).click();
@@ -344,6 +345,14 @@ test('服务工作台在桌面窗口中可切换、筛选、打开任务和设�
     const dragRegion = () => header.evaluate((item) => getComputedStyle(item).getPropertyValue('-webkit-app-region'));
     expect(await dragRegion()).toBe('drag');
     const add = window.getByRole('button', { name: '添加服务器' });
+    await add.click();
+    const serverDialog = window.getByRole('dialog', { name: '服务器配置' });
+    await serverDialog.getByRole('button', { name: '认证方式说明' }).focus();
+    const fieldTip = window.getByRole('tooltip').and(window.locator('.field-tooltip'));
+    await expect(fieldTip).toBeVisible();
+    await expect(fieldTip).toHaveCSS('border-top-left-radius', '6px');
+    await window.screenshot({ path: path.join(captures, '服务器字段提示.png') });
+    await serverDialog.getByRole('button', { name: '关闭弹窗' }).click();
     for (const fraction of [0.15, 0.5, 0.85]) {
       await add.click();
       const dialog = window.getByRole('dialog', { name: '服务器配置' });
