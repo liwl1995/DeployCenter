@@ -2,6 +2,15 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { DesktopAPI, DesktopEvent } from '../src/platform';
 const invoke = (name: string, ...args: unknown[]) => ipcRenderer.invoke('deploy:' + name, ...args);
 const api: DesktopAPI = {
+  imageDistributions: () => invoke('image-distributions'),
+  probeImageEngine: (engine) => invoke('image-probe-engine', engine),
+  listImageJobs: () => invoke('image-list'),
+  readImageLogs: (id) => invoke('image-logs', id),
+  startImageBuild: (value) => invoke('image-start-build', value),
+  inspectImagePackage: (source) => invoke('image-inspect', source),
+  checkImageImport: (source, server, credential) => invoke('image-check-import', source, server, credential),
+  startImageImport: (token, credential) => invoke('image-start-import', token, credential),
+  cancelImageUpload: (id) => invoke('image-cancel-upload', id),
   desktopPreferences: () => invoke('desktop-preferences'),
   saveDesktopPreferences: (value) => invoke('save-desktop-preferences', value),
   listSchedules: () => invoke('list-schedules'),

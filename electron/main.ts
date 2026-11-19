@@ -46,6 +46,9 @@ import { parseApproval } from './validate';
 import { Controller } from './controller';
 import { detectJdks, inspectJar, checkJdk, resolveBuild, serviceInfo } from './files';
 import { runBatch, runProcess } from './process';
+import { ImageJobs, imageBuildSchema, imageDistributions, imageEngineSchema, imageIdSchema, imageSourceSchema, probeImageEngine } from './images';
+import { checkImageImport } from './image-import';
+import type { ImageCheck, ImageSource } from '../src/images';
 import { validateDatabase, parseServer } from './validate';
 import {
   aliases,
@@ -382,6 +385,11 @@ async function boot() {
     storage.markInterrupted();
     await storage.maintainStartup();
     await fsp.mkdir(path.join(dataDir, 'tmp'), { recursive: true });
+    const imageJobs = new ImageJobs(dataDir, {
+      job: (job) => emit({ kind: 'image-job', job }),
+      log: (id, chunks) => emit({ kind: 'image-log', id, chunks }),
+    });
+    const approvedImagePaths = new Map<string, Set<string>>();
     controller = new Controller(
       storage,
       (onMessage, onExit) => {
@@ -479,6 +487,7 @@ async function boot() {
         migrating ||
         pendingRestart ||
         !!updater?.isInstalling() ||
+        imageJobs.usingMaven() ||
         backups.isBusy() ||
         workbench.isBusy() ||
         storage.artifacts.isBusy(),
@@ -669,6 +678,8 @@ async function boot() {
           );
         if (storage.artifacts.isBusy() && ['prepare', 'start', 'recover', 'create-schedule', 'reschedule'].includes(name))
           throw new Error('正在整理本地产物，请完成后重新准备部署');
+        if (imageJobs.usingMaven() && ['prepare', 'start', 'create-schedule', 'reschedule'].includes(name))
+          throw new Error('镜像任务正在使用本地项目构建，请等待完成后再部署');
         if (
           workbench?.isBusy() &&
           ['save', 'prepare', 'start', 'recover', 'takeover-lock', 'import-config',
@@ -724,6 +735,7 @@ async function boot() {
         if (controller.active() || storage.unfinished().length)
           return '请先等待部署结束，并核实尚未结束的任务，再安装更新';
         if (migrating || pendingRestart) return '请先完成数据迁移并重启，再安装更新';
+        if (imageJobs.busy()) return '镜像任务正在执行，请等待完成后再安装更新';
         if (backups.isBusy() || workbench.isBusy() || storage.artifacts.isBusy())
           return '远程维护或本地清理尚未结束，请等待后再安装更新';
         if (scheduler?.isDispatching()) return '定时发布正在启动，请稍后再安装更新';
@@ -965,7 +977,7 @@ async function boot() {
       return task;
     });
     handle('choose', async (value) => {
-      const kind = z.enum(['directory', 'jar', 'key', 'maven']).parse(value);
+      const kind = z.enum(['directory', 'jar', 'key', 'maven', 'dockerfile', 'image-archive']).parse(value);
       const result = await dialog.showOpenDialog(
         win!,
         kind === 'directory'
@@ -977,11 +989,18 @@ async function boot() {
                   ? [{ name: 'Java JAR', extensions: ['jar'] }]
                   : kind === 'maven'
                     ? [{ name: 'Maven', extensions: ['cmd', 'bat', 'exe'] }]
-                    : [{ name: 'SSH 私钥', extensions: ['*'] }],
+                    : kind === 'image-archive'
+                      ? [{ name: 'Docker 镜像包', extensions: ['tar', 'gz'] }]
+                      : [{ name: kind === 'dockerfile' ? 'Dockerfile' : 'SSH 私钥', extensions: ['*'] }],
             },
       );
       if (result.canceled) return null;
       if (kind === 'jar') approvedJars.add(path.resolve(result.filePaths[0]));
+      if (kind === 'dockerfile' || kind === 'directory' || kind === 'image-archive') {
+        const approved = approvedImagePaths.get(kind) || new Set<string>();
+        approved.add(path.resolve(result.filePaths[0]));
+        approvedImagePaths.set(kind, approved);
+      }
       return result.filePaths[0];
     });
     handle('inspect-jar', (value) => {
@@ -1066,6 +1085,82 @@ async function boot() {
       if (!server) throw new Error('服务器不存在');
       return server;
     };
+    const imageSource = (value: unknown) => {
+      const source = imageSourceSchema.parse(value);
+      if ('file' in source && !approvedImagePaths.get('image-archive')?.has(path.resolve(source.file)))
+        throw new Error('请先通过文件选择器选择本机镜像包');
+      return source;
+    };
+    const connectImage = async (server: import('../src/model').Server, supplied: string) => {
+      const credential = supplied || (server.credentialMode === 'windows' ? await storage.credential(server.id) : undefined);
+      if (server.auth === 'password' && !credential) throw new Error('请输入 SSH 登录密码');
+      return {
+        credential,
+        transport: createTransport(server, {
+          credential,
+          pins: storage.pins(),
+          trust: (request, key) => controller.trust.request(request, key),
+        }),
+      };
+    };
+    handle('image-distributions', () => imageDistributions());
+    handle('image-probe-engine', (value) => probeImageEngine(imageEngineSchema.parse(value)));
+    handle('image-list', async () => ({ directory: imageJobs.directory, jobs: await imageJobs.list() }));
+    handle('image-logs', (value) => imageJobs.logs(imageIdSchema.parse(value)));
+    handle('image-cancel-upload', (value) => imageJobs.cancelUpload(imageIdSchema.parse(value)));
+    handle('image-inspect', (value) => imageJobs.archive(imageSource(value)));
+    handle('image-start-build', (value) => {
+      const parsed = imageBuildSchema.safeParse(value);
+      if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+      const request = parsed.data;
+      const db = storage.database();
+      const service = db.services.find((entry) => entry.id === request.serviceId);
+      if (!service) throw new Error('请选择已保存的服务');
+      const fromPicker = (kind: string, file: string, fallback: string) =>
+        path.resolve(file) === fallback || approvedImagePaths.get(kind)?.has(path.resolve(file));
+      if (!fromPicker('directory', request.context, path.resolve(service.root)) ||
+          !fromPicker('dockerfile', request.dockerfile, path.resolve(service.root, 'Dockerfile')))
+        throw new Error('请使用浏览按钮选择 Dockerfile 和构建目录');
+      if (request.jarPath && (request.mode !== 'existing' || !approvedJars.has(path.resolve(request.jarPath))))
+        throw new Error('请通过「选择本地 JAR」选择本次构建的现有产物');
+      if (controller.active() && request.mode === 'build') throw new Error('请等待部署完成后再构建 JAR');
+      return imageJobs.build(request, service, db);
+    });
+    type ImageApproval = { check: ImageCheck; source: ImageSource; server: ReturnType<typeof getServer>; expires: number };
+    let imageApproval: (ImageApproval & { token: string }) | undefined;
+    handle('image-check-import', async (value, serverId, supplied) => {
+      imageApproval = undefined;
+      const source = imageSource(value);
+      const server = getServer(serverId);
+      const archive = await imageJobs.archive(source);
+      const { transport, credential } = await connectImage(server, text(supplied, 8192));
+      const secret = new MemoryCredentials({ image: credential || '' });
+      try {
+        await transport.connect();
+        const check = await checkImageImport(transport, server.name, archive);
+        const token = randomUUID();
+        check.uploadFile = check.remoteDirectory + '/' + token + (/\.gz$/i.test(archive.name) ? '/image.tar.gz' : '/image.tar');
+        imageApproval = { token, source, server, check, expires: Date.now() + 15 * 60_000 };
+        return { ...check, token };
+      } catch (error) {
+        throw new Error(secret.redact(error instanceof Error ? error.message : String(error)));
+      } finally {
+        transport.close();
+        secret.clear();
+      }
+    });
+    handle('image-start-import', (value, supplied) => {
+      const token = imageIdSchema.parse(value);
+      const approved = imageApproval;
+      if (!approved || approved.token !== token || approved.expires < Date.now())
+        throw new Error('检查已过期，请重新执行导入前检查');
+      const server = getServer(approved.server.id);
+      if (!sameServer(approved.server, server)) throw new Error('服务器配置已变化，请重新检查');
+      const credential = text(supplied, 8192);
+      const job = imageJobs.import(token, approved.source, server.name, () => connectImage(server, credential), approved.check);
+      imageApproval = undefined;
+      return job;
+    });
     const readOnly = async (
       server: import('../src/model').Server,
       kind: import('../src/features').DiagnosticKind,
@@ -1487,6 +1582,7 @@ async function boot() {
     });
     handle('migrate-directory', async (value) => {
       if (migrating || pendingRestart) throw new Error('已有迁移或待重启切换');
+      if (imageJobs.busy()) throw new Error('镜像任务正在执行，请等待完成后再迁移数据目录');
       if (updater?.isBusy()) throw new Error('正在检查或下载更新，请完成或取消后再迁移数据目录');
       migrating = true;
       migrationCancelled = false;
@@ -1549,7 +1645,7 @@ async function boot() {
       }
     });
     handle('restart', async () => {
-      if (migrating || controller.active()) throw new Error('请等待任务或迁移结束');
+      if (migrating || controller.active() || imageJobs.busy()) throw new Error('请等待任务或迁移结束');
       if (!(await confirmScheduleExit())) return;
       app.relaunch();
       app.quit();
@@ -1575,6 +1671,11 @@ async function boot() {
       if (!exiting && trayPanel && preferences.preferences.closeToTray && !updater?.isInstalling()) {
         event.preventDefault();
         win?.hide();
+        return;
+      }
+      if (imageJobs.busy()) {
+        event.preventDefault();
+        void dialog.showMessageBox(win!, { message: '镜像任务仍在执行，请等待完成后再退出', buttons: ['返回'] });
         return;
       }
       if (migrating || backups.isBusy() || workbench.isBusy()) {

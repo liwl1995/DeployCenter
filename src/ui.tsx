@@ -412,14 +412,18 @@ export function PathInput({
   disabled,
   label,
   id,
+  browseOnly = false,
+  onError,
 }: {
   id?: string;
   value: string;
   onChange: (v: string) => void;
-  kind: 'directory' | 'jar' | 'key' | 'maven';
+  kind: import('./platform').PathKind;
   label?: string;
   required?: boolean;
   disabled?: boolean;
+  browseOnly?: boolean;
+  onError?: (error: unknown) => void;
 }) {
   return (
     <div className="path-input">
@@ -429,17 +433,22 @@ export function PathInput({
         required={required}
         disabled={disabled}
         value={value}
+        readOnly={browseOnly}
+        className={browseOnly ? 'path-preview' : undefined}
+        title={browseOnly && value ? value : undefined}
+        placeholder={browseOnly ? '尚未选择' : undefined}
         onChange={(e) => onChange(e.target.value)}
       />
       {desktop && (
         <Button
+          aria-label={browseOnly && label ? '浏览… ' + label : undefined}
           type="button"
           variant="neutral" size="compact"
           disabled={disabled}
           onClick={() =>
             void desktop!.choose(kind).then((path) => {
               if (path) onChange(path);
-            })
+            }).catch((error) => onError ? onError(error) : console.error(error))
           }
         >
           浏览…

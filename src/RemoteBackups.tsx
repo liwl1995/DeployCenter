@@ -138,6 +138,7 @@ export function RemoteBackups({
               <label className="list-row" key={e.id}>
                 <input
                   type="checkbox"
+                  className="ui-checkbox"
                   checked={selected.includes(e.id)}
                   disabled={busy || !!e.protectedReason}
                   onChange={(event) =>

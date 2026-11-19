@@ -209,6 +209,7 @@ export function VirtualLogs({
           <label className="check-row">
             <input
               type="checkbox"
+              className="ui-checkbox"
               checked={follow}
               onChange={(event) => {
                 setFollow(event.target.checked);
@@ -249,6 +250,7 @@ export function VirtualLogs({
             <label className="check-row">
               <input
                 type="checkbox"
+                className="ui-checkbox"
                 checked={follow}
                 onChange={(e) => setFollow(e.target.checked)}
               />
@@ -279,14 +281,9 @@ export function VirtualLogs({
           </div>
           <p className="note">
             显示接收时间与接收时的步骤上下文；旧日志缺失的信息标为未记录。共 {entries.length}{' '}
-            行，当前筛选 {filtered.length} 行。{selected && '正在选择文字，暂停刷新和虚拟滚动。'}
+            行，当前筛选 {filtered.length} 行。
           </p>
         </>
-      )}
-      {compact && selected && (
-        <p className="note" role="status">
-          正在选择文字，暂停刷新。
-        </p>
       )}
       {!compact && message && (
         <p className="note" role="status">
@@ -359,7 +356,7 @@ export function VirtualLogs({
               )}
             </div>
           </div>
-          {level === 'all' && trailing}
+          {trailing}
         </div>
       </div>
     </div>

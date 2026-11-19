@@ -9,6 +9,7 @@ export const workspacePages = [
   { page: 'targets', name: '部署目标', group: '配置' },
   { page: 'servers', name: '服务器', group: '配置' },
   { page: 'tools', name: '构建环境', group: '配置' },
+  { page: 'images', name: '镜像工具', group: '配置' },
   { page: 'settings', name: '设置', group: '配置' },
 ] as const;
 export type WorkspacePage = (typeof workspacePages)[number]['page'];

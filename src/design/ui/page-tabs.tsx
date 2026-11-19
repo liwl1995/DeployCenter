@@ -23,7 +23,7 @@ export interface PageTabsProps<T extends string> {
   /** 给 tab 按钮生成 id，方便 tabpanel 用 aria-labelledby 指回来 */
   idPrefix?: string;
   /** 与 tabpanel 关联时传入 */
-  controls?: string;
+  controls?: string | ((value: T) => string);
   /**
    * default：一级页签（36 高、13px）；sm：一级页签下面的二级页签（32 高、12px、
    * 不画整行底线，只在选中项下面画线），两层叠在一起时层级才分得清。
@@ -93,7 +93,7 @@ export function PageTabs<T extends string>({
               role="tab"
               id={idPrefix ? `${idPrefix}-${item.value}` : undefined}
               aria-selected={selected}
-              aria-controls={controls}
+              aria-controls={typeof controls === 'function' ? controls(item.value) : controls}
               tabIndex={selected ? 0 : -1}
               disabled={item.disabled}
               onClick={() => onValueChange(item.value)}

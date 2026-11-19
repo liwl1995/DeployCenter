@@ -1,5 +1,9 @@
 /** 只为有歧义或涉及执行行为的字段提供说明，简单名称不额外打扰。 */
 export const fieldHelp: Record<string, string> = {
+  WSL发行版: '选择安装并运行 Docker Engine 的发行版。使用该发行版的默认用户，请确认该用户有访问 Docker 的权限。',
+  Dockerfile: 'Docker 根据这个文件构建镜像。请核对其中的基础镜像和 COPY 路径。',
+  构建目录: 'Docker 可读取此目录下未被 .dockerignore 排除的文件。Dockerfile 的 COPY 源路径相对于此目录。',
+  目标平台: '应与导入服务器的 Docker 平台一致。普通 x86-64 Linux 服务器选择 linux/amd64，ARM64 服务器选择 linux/arm64。',
   服务标识: '用于区分服务的短名称，例如 crm 或 campus-alarm。它不是服务器地址，也不是 JAR 文件名。',
   项目根目录:
     '本机项目所在目录，通常包含 .git 和 pom.xml，例如 E:\\projects\\CordysCRM。Git 信息从这里读取。',

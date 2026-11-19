@@ -9,7 +9,7 @@ export type ProcessOptions = {
   signal?: AbortSignal;
   timeout?: number;
   onData?: (text: string) => void;
-  encoding?: 'auto' | 'utf8' | 'gb18030';
+  encoding?: 'auto' | 'utf8' | 'gb18030' | 'utf16le';
   maxOutput?: number;
 };
 export type ProcessResult = {

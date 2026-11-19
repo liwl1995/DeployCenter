@@ -1,5 +1,6 @@
 import { Button } from './design/ui/button';
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { PageTabs } from './design/ui/page-tabs';
 import type { DiagnosticResult } from './features';
 import { fmtTime } from './model';
 import { ShieldCheck } from 'lucide-react';
@@ -493,26 +494,20 @@ export function TargetForm({ initial, db, onSave, onClose, initialTab }: SavePro
   };
   return (
     <form noValidate onSubmit={submit}>
-      <div className="tabs" role="tablist" aria-label="部署目标配置">
-        {targetTabs.map((t) => (
-          <button
-            type="button"
-            key={t}
-            id={tabId + '-' + t}
-            role="tab"
-            aria-selected={t === tab}
-            onClick={() => showTab(t)}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
+      <PageTabs
+        aria-label="部署目标配置"
+        items={targetTabs.map((value) => ({ value, label: value }))}
+        value={tab}
+        onValueChange={(value) => showTab(value)}
+        idPrefix={tabId}
+        controls={(value) => tabId + '-panel-' + value}
+      />
       {error && (
         <p className="warning" role="alert">
           {error}
         </p>
       )}
-      <div className="form-grid" hidden={tab !== '基本信息'}>
+      <div className="form-grid" role="tabpanel" id={tabId + '-panel-基本信息'} aria-labelledby={tabId + '-基本信息'} hidden={tab !== '基本信息'}>
         <Field label="关联服务">
           <select value={v.serviceId} onChange={(e) => update('serviceId', e.target.value)}>
             {db.services.map((s) => (
@@ -554,7 +549,7 @@ export function TargetForm({ initial, db, onSave, onClose, initialTab }: SavePro
         </div>
         <p className="code wide">{remoteJar(v)}</p>
       </div>
-      <div hidden={tab !== '运行方式'}>
+      <div role="tabpanel" id={tabId + '-panel-运行方式'} aria-labelledby={tabId + '-运行方式'} hidden={tab !== '运行方式'}>
         {desktop && (
           <div className="form-grid">
             <Field label="远程命令超时（秒）">
@@ -663,7 +658,7 @@ export function TargetForm({ initial, db, onSave, onClose, initialTab }: SavePro
           </div>
         )}
       </div>
-      <div hidden={tab !== '健康检查'}>
+      <div role="tabpanel" id={tabId + '-panel-健康检查'} aria-labelledby={tabId + '-健康检查'} hidden={tab !== '健康检查'}>
         <div className="form-grid">
           <Field label="检查方式" wide>
             <select
@@ -791,7 +786,7 @@ export function TargetForm({ initial, db, onSave, onClose, initialTab }: SavePro
           </details>
         )}
       </div>
-      <div hidden={tab !== '备份与安全'}>
+      <div role="tabpanel" id={tabId + '-panel-备份与安全'} aria-labelledby={tabId + '-备份与安全'} hidden={tab !== '备份与安全'}>
         <BackupFields value={v.backup} onChange={(x) => update('backup', x)} />
         <hr />
         <Field label="远程校验策略">

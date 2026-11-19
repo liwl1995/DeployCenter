@@ -1,4 +1,5 @@
 import { Button } from './design/ui/button';
+import { Input } from './design/ui/input';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { DesktopAPI, TaskSummary } from './platform';
 import type { Database, History } from './model';
@@ -236,7 +237,7 @@ export function TaskHistory({
       <div className="history-search-bar">
         <label className="search-box">
           <Search size={16} aria-hidden="true" />
-          <input
+          <Input
             aria-label="搜索完整历史"
             placeholder="搜索备注、服务、环境、服务器和完整日志"
             value={query}

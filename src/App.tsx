@@ -1,6 +1,6 @@
 import { ReleaseSchedules } from './ReleaseSchedules';
 import type { ReleaseSchedule } from './schedules';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Rocket,
   Activity,
@@ -24,6 +24,7 @@ import {
   Pencil,
   Loader2,
   FolderOpen,
+  Container,
 } from 'lucide-react';
 import {
   loadDatabase,
@@ -97,6 +98,7 @@ import { ServiceSidebar } from './design/shell/ServiceSidebar';
 import { Button } from './design/ui/button';
 import { Checkbox } from './design/ui/checkbox';
 import { PageTabs } from './design/ui/page-tabs';
+import { BuildArtifactChoice } from './BuildArtifactChoice';
 import { SegmentedControl } from './design/ui/segmented-control';
 import { CompactStatus } from './compact-list';
 import { workspacePages } from './workspace-model';
@@ -138,6 +140,7 @@ const nav = [
   { page: 'tools', name: '构建环境', icon: Wrench },
   { page: 'history', name: '部署历史', icon: HistoryIcon },
 ] as const;
+const ImageWorkspace = lazy(() => import('./ImageWorkspace').then((module) => ({ default: module.ImageWorkspace })));
 const uid = () => Math.random().toString(36).slice(2, 10);
 const isActive = (t: Task | null) => !!t && ['running', 'cancelling'].includes(t.status);
 const failedStatuses = ['failed', 'rolledback'];
@@ -1302,6 +1305,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         global={[
           ...nav.filter((n) => n.page !== 'deploy').map((n) => ({ ...n })),
           ...(desktop ? [{ page: 'schedules' as const, name: '发布计划', icon: CalendarClock }] : []),
+          ...(desktop ? [{ page: 'images' as const, name: '镜像工具', icon: Container }] : []),
         ].map(({ page: id, name, icon: Icon }) => (
           <button className="sidebar-link" key={id} aria-label={name} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)} title={name}>
             <Icon size={17} strokeWidth={1.6} /><span>{name}</span>
@@ -1309,7 +1313,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         ))}
       />
       <div className="workspace" id="content-area">
-        {page !== 'task' && (
+        {page !== 'task' && page !== 'images' && (
           <AppPageHeader
             className="desktop-page-header"
             truncateTitle
@@ -1321,11 +1325,11 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
             actions={page === 'deploy' && !!db.services.length ? <>
               <Button variant="quiet" size="compact" onClick={() => setDialog({ kind: 'presets' })}><FolderOpen size={15} />部署预设</Button>
               <Button variant="ghost" size="icon-compact" aria-label="编辑配置" title="编辑服务" onClick={() => setDialog({ kind: 'service', value: service })}><Pencil size={15} /></Button>
-              <Button variant="neutral" size="compact" disabled={!db.servers.length} onClick={() => setDialog({ kind: 'target', value: newTarget() })}><Plus size={15} />添加目标</Button>
+              <Button variant="neutral" size="compact" disabled={!db.servers.length} onClick={() => setDialog({ kind: 'target', value: newTarget() })}><Plus size={15} />添加部署目标</Button>
             </> : page === 'schedules' ? <Button size="compact" onClick={() => { setServiceTab('deploy'); setPage('deploy'); }}>选择发布目标</Button> : undefined}
           />
         )}
-        <main ref={mainRef} className={page === 'task' ? 'main-task' : page === 'deploy' && db.services.length ? 'main-service' : 'main-page'}>
+        <main ref={mainRef} className={page === 'task' || page === 'images' ? 'main-task' : page === 'deploy' && db.services.length ? 'main-service' : 'main-page'}>
           {!!taskIssues.length && (
             <div className="warning" role="alert">
               <strong>有任务元数据无法读取，原始数据与相关文件已保留</strong>
@@ -1451,18 +1455,11 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                     }} />
                 </div> : <>
                   <div ref={serviceScrollRef} className="service-workspace-scroll">
-                    <div className="artifact-summary">
-                      <span className="record-icon"><FileArchive size={18} strokeWidth={1.5} /></span>
-                      <div className="grow artifact-caption">
-                        <strong>{build === 'existing' ? artifact.name || service.jarName : service.jarName}</strong>
-                        <small>{build === 'existing'
-                          ? artifact.exists ? niceSize(artifact.size) + ' · ' + fmtTime(artifact.modified) : '尚无可用 JAR'
-                          : '部署前构建一次，所有目标共用同一份产物'}</small>
-                      </div>
-                      {build === 'existing' && <Button variant="neutral" size="compact" onClick={() => void pickJar()}><FolderOpen size={14} />选择本地 JAR</Button>}
-                      <SegmentedControl aria-label="构建方式" size="sm" value={build} onValueChange={setBuild}
-                        items={[{ value: 'rebuild', label: '重新构建' }, { value: 'existing', label: '使用现有 JAR' }]} />
-                    </div>
+                    <BuildArtifactChoice name={build === 'existing' ? artifact.name || service.jarName : service.jarName}
+                      summary={build === 'existing'
+                        ? artifact.exists ? niceSize(artifact.size) + ' · ' + fmtTime(artifact.modified) : '尚无可用 JAR'
+                        : '部署前构建一次，所有目标共用同一份产物'}
+                      mode={build} onMode={setBuild} onPick={() => void pickJar()} />
                     <details className="build-details">
                       <summary>构建与产物详情</summary>
                       {build === 'rebuild' ? (
@@ -1865,6 +1862,12 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
             </>
           )}
           {page === 'history' && renderHistory()}
+          {page === 'images' && desktop && (
+            <Suspense fallback={<p className="note workspace-panel" role="status">正在打开镜像工具…</p>}>
+              <ImageWorkspace api={desktop} db={db} serviceId={serviceId} saved={saved}
+                followLogs={desktopPreferences.followLogs} dataDir={boot?.dataDir || ''} />
+            </Suspense>
+          )}
           {page === 'settings' && (
             <SettingsWorkspace
               desktop={desktop}
@@ -1876,7 +1879,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               onDensity={setDensity}
               migrationBlock={isActive(task) ? '任务执行或取消中，不能迁移数据目录。' : unfinished.length ? '有未处理的中断任务，请先核实结果再迁移。' : undefined}
               busy={isActive(task)}
-              version={boot?.version || '2.1.1'}
+              version={boot?.version || '2.2.0'}
               preferences={desktopPreferences}
               onPreferences={setDesktopPreferences}
               showDemo={fixture}
@@ -2719,6 +2722,7 @@ function Confirm({
         <label className="check-row warning">
           <input
             type="checkbox"
+            className="ui-checkbox"
             data-autofocus={(!production && !firstPassword) || undefined}
             checked={fallback}
             onChange={(e) => setFallback(e.target.checked)}

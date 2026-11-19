@@ -52,9 +52,9 @@ export function ServersWorkspace({
           label:
             serverChecks[s.id]?.identity === serverIdentity(s)
               ? serverChecks[s.id].ok
-                ? '连接正常'
-                : '检查失败'
-              : '未检查',
+                ? '测试通过'
+                : '测试未通过'
+              : '未测试',
         })}
         cardMeta={(s) => (
           <>

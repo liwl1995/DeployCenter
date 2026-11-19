@@ -303,11 +303,8 @@ hr {
   width: 21px;
   height: 21px;
   flex: none;
-  background: #c2410c;
+  background: var(--action-text);
   mask: url('../assets/brand-mark.svg') center / contain no-repeat;
-}
-.dark .sidebar-brand-mark {
-  background: #fb923c;
 }
 .sidebar-brand strong {
   overflow: hidden;
@@ -732,6 +729,10 @@ small,
   background: var(--warning-soft);
   color: var(--warning-text);
 }
+.badge.danger {
+  color: var(--danger-text);
+  background: var(--danger-soft);
+}
 .card {
   min-width: 0;
 }
@@ -890,6 +891,90 @@ p.code,
 .path-input input {
   flex: 1;
 }
+.path-input .path-preview {
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+}
+.image-workspace,
+.image-panel {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.image-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6);
+}
+.image-content > * {
+  flex-shrink: 0;
+}
+.image-package-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.image-footer {
+  justify-content: flex-end;
+}
+.image-list-error {
+  margin: var(--space-2) var(--space-6) 0;
+}
+.image-artifact {
+  padding-block: var(--space-2);
+  border-block: 1px solid var(--line);
+}
+.image-reference-col { width: 22%; }
+.image-action-col { width: 108px; }
+.image-package-table time { font-size: var(--fs-caption); }
+.task-page.image-task {
+  padding-top: var(--space-3);
+}
+.image-result {
+  display: grid;
+  gap: var(--space-1);
+}
+.image-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-2) var(--space-3);
+  align-items: baseline;
+}
+.image-facts dt {
+  color: var(--text-3);
+}
+.image-facts dd {
+  margin: 0;
+}
+.image-workspace :is(.note, .warning, .path),
+.image-import-task :is(.note, .warning, .path),
+.image-facts .path {
+  overflow-wrap: anywhere;
+}
+.image-workspace .warning {
+  white-space: pre-wrap;
+}
+.warning.image-failure {
+  color: var(--danger-text);
+  background: var(--danger-soft);
+}
+.image-import-task {
+  display: grid;
+  gap: var(--space-2);
+}
+.image-import-task .task-stages {
+  grid-auto-flow: row;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.image-import-task .image-logs {
+  height: clamp(180px, 35vh, 360px);
+}
 .field-tooltip {
   position: fixed;
   z-index: 120;
@@ -935,7 +1020,7 @@ p.code,
   width: 14px;
   height: 14px;
   border-radius: var(--radius-circle);
-  background: #fff;
+  background: var(--control-thumb);
   position: absolute;
   top: 2px;
   left: 2px;
@@ -1773,7 +1858,7 @@ th {
   align-items: center;
   width: 100%;
   gap: var(--space-2);
-  padding: 10px 0;
+  padding: var(--space-3) 0;
   border-bottom: 1px solid var(--line);
   color: var(--text-1);
   text-align: left;
@@ -1804,8 +1889,8 @@ th {
 .update-cache-location,
 .retention-policy,
 .maintenance-area {
-  margin-top: 10px;
-  padding-top: 10px;
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
   border-top: 1px solid var(--line);
 }
 .update-status {
@@ -1822,7 +1907,7 @@ th {
   max-height: 230px;
   overflow: auto;
   background: var(--bg-subtle);
-  padding: 9px 12px;
+  padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-control);
 }
 .update-notes :is(ul, ol) {
@@ -1844,7 +1929,7 @@ th {
   margin: 12px 0;
 }
 .storage-usage > div {
-  padding: 8px 10px;
+  padding: var(--space-2) var(--space-3);
   background: var(--bg-subtle);
   border-radius: var(--radius-control);
 }
@@ -1917,8 +2002,13 @@ th {
     display: none;
   }
   .workspace > .main-page,
-  .service-workspace-scroll {
-    padding-inline: 16px;
+  .service-workspace-scroll,
+  .image-content,
+  .task-page.image-task {
+    padding-inline: var(--space-4);
+  }
+  .image-list-error {
+    margin-inline: var(--space-4);
   }
   .service-workspace-tabs {
     margin-inline: 16px;

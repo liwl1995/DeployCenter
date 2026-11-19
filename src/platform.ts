@@ -14,6 +14,9 @@ import type {
   DiagnosticResult,
 } from './features';
 import type { Artifact, Backup, Database, History, Recovery, Task } from './model';
+import type { ImageBuild, ImageCheck, ImageEngine, ImageJob, ImageLogChunk, ImagePackage, ImageSource } from './images';
+
+export type PathKind = 'directory' | 'jar' | 'key' | 'maven' | 'dockerfile' | 'image-archive';
 
 export type ServiceInfo = {
   artifact: Artifact;
@@ -89,6 +92,8 @@ export type Startup = {
   dataLocation?: { previous?: string; pending?: string; previousKept?: boolean };
 };
 export type DesktopEvent =
+  | { kind: 'image-job'; job: ImageJob }
+  | { kind: 'image-log'; id: string; chunks: ImageLogChunk[] }
   | { kind: 'desktop-preferences'; preferences: import('./desktop-preferences').DesktopPreferences }
   | { kind: 'open-settings' }
   | { kind: 'open-service'; serviceId: string }
@@ -128,6 +133,15 @@ export type DesktopEvent =
   | { kind: 'open-task'; taskId: string }
   | { kind: 'update'; update: import('./app-update').AppUpdate };
 export interface DesktopAPI {
+  imageDistributions(): Promise<string[]>;
+  probeImageEngine(engine: ImageEngine): Promise<string>;
+  listImageJobs(): Promise<{ directory: string; jobs: ImageJob[] }>;
+  readImageLogs(id: string): Promise<ImageLogChunk[]>;
+  startImageBuild(build: ImageBuild): Promise<ImageJob>;
+  inspectImagePackage(source: ImageSource): Promise<ImagePackage>;
+  checkImageImport(source: ImageSource, serverId: string, credential: string): Promise<ImageCheck & { token: string }>;
+  startImageImport(token: string, credential: string): Promise<ImageJob>;
+  cancelImageUpload(id: string): Promise<void>;
   desktopPreferences(): Promise<import('./desktop-preferences').DesktopPreferences>;
   saveDesktopPreferences(value: Partial<import('./desktop-preferences').DesktopPreferences>): Promise<import('./desktop-preferences').DesktopPreferences>;
   listSchedules(): Promise<import('./schedules').ReleaseSchedule[]>;
@@ -149,7 +163,7 @@ export interface DesktopAPI {
   start(token: string, credentials: Record<string, string>, approval: Approval): Promise<Task>;
   cancel(taskId: string): Promise<void>;
   recover(taskId: string, credentials: Record<string, string>): Promise<Task>;
-  choose(kind: 'directory' | 'jar' | 'key' | 'maven'): Promise<string | null>;
+  choose(kind: PathKind): Promise<string | null>;
   inspectJar(path: string): Promise<Artifact>;
   localDifferences(): Promise<Record<string, string>>;
   serviceInfo(serviceId: string, jarPath?: string): Promise<ServiceInfo>;
