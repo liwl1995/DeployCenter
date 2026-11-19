@@ -38,10 +38,30 @@ test.afterEach(async () => {
   if (dir && path.resolve(dir).startsWith(base + path.sep))
     await fs.rm(dir, { recursive: true, force: true });
 });
-test('首次启动无示例服务器；安全选项和 IPC 工作', async () => {
+test('首次启动居中显示空工作台，添加和导入走原有接口，保持桌面安全选项', async ({}, info) => {
   const page = await app.firstWindow();
   await expect(page.getByRole('heading', { name: '一键部署', exact: true })).toBeVisible();
-  await expect(page.getByText('添加服务并配置部署目标，或导入已有配置。')).toBeVisible();
+  const empty = page.getByRole('region', { name: '还没有服务' });
+  await expect(empty).toBeVisible();
+  const workspace = (await page.getByRole('main').boundingBox())!;
+  const heading = (await empty.getByRole('heading').boundingBox())!;
+  expect(Math.abs(heading.x + heading.width / 2 - workspace.x - workspace.width / 2)).toBeLessThan(3);
+  const actions = (await empty.locator('.empty-service-actions').boundingBox())!;
+  expect(actions.y).toBeLessThan(workspace.y + workspace.height);
+  await page.screenshot({ path: info.outputPath('首次打开.png') });
+  await empty.getByRole('button', { name: '添加服务', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '服务与构建配置' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(empty.getByRole('button', { name: '添加服务', exact: true })).toBeFocused();
+  await app.evaluate(({ ipcMain, BrowserWindow }) => {
+    ipcMain.removeHandler('deploy:import-config');
+    ipcMain.handle('deploy:import-config', () => {
+      BrowserWindow.getAllWindows()[0].setTitle('已打开导入入口');
+      return null;
+    });
+  });
+  await empty.getByRole('button', { name: '导入配置' }).click();
+  await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getTitle())).toBe('已打开导入入口');
   expect(
     await page.evaluate(() => ({
       require: typeof (window as unknown as { require: unknown }).require,

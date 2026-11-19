@@ -269,9 +269,9 @@ export function TaskView({
   );
   const canRetry =
     !active && !task.dryRun && !task.preparation && task.status !== 'interrupted' && task.operation === 'deploy';
-  const openLogs = () => onLog('模拟容器日志 · 服务初始化中…');
+  const openLogs = () => onLog('模拟应用日志 · 服务初始化中…');
   const more: MenuAction[] = [];
-  if (run?.target.mode === 'docker') more.push({ label: '查看容器日志', onClick: openLogs });
+  if (run) more.push({ label: '查看应用日志', onClick: openLogs });
   if (run)
     more.push({
       label: '复制排查命令',
@@ -289,8 +289,6 @@ export function TaskView({
     if (run?.error && onDiagnose) {
       const advice = failureAdvice(run.error);
       if (advice.action === 'identity') more.push({ label: '查看服务器配置', onClick: onIdentity });
-      if (advice.action === 'logs' && run.target.mode !== 'docker')
-        more.push({ label: '查看应用日志', onClick: openLogs });
       if (advice.action === 'diagnose')
         more.push({
           label: '只读检查目录或空间',

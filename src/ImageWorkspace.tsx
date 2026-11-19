@@ -216,6 +216,10 @@ export function ImageWorkspace({
               onFilter={setPackageFilter}
               onBuild={() => setPage('build')}
               onTask={openTask}
+              onCancelBuild={(id) => {
+                setError('');
+                void api.cancelImageBuild(id).catch((error) => setError(String(error)));
+              }}
               onImport={(id) => {
                 setImportBuild(id);
                 setPage('import');
@@ -560,6 +564,7 @@ function ImagePackages({
   onTask,
   onImport,
   onBuild,
+  onCancelBuild,
 }: {
   jobs?: ImageJob[];
   error: string;
@@ -568,6 +573,7 @@ function ImagePackages({
   onTask: (id: string) => void;
   onImport: (id: string) => void;
   onBuild: () => void;
+  onCancelBuild: (id: string) => void;
 }) {
   const visible = (jobs || []).filter(
     (job) =>
@@ -638,7 +644,7 @@ function ImagePackages({
               const status =
                 job.status === 'running'
                   ? job.kind === 'build'
-                    ? '正在构建'
+                    ? job.cancelling ? '正在取消' : '正在构建'
                     : '正在导入'
                   : jobStatus[job.status];
               return (
@@ -695,6 +701,16 @@ function ImagePackages({
                       </span>
                     </td>
                     <td>
+                      {job.kind === 'build' && job.status === 'running' && (
+                        <Button
+                          variant="neutral"
+                          size="compact"
+                          disabled={job.cancelling}
+                          onClick={() => onCancelBuild(job.id)}
+                        >
+                          {job.cancelling ? '正在取消…' : '取消构建'}
+                        </Button>
+                      )}
                       {job.kind === 'build' && job.status === 'success' && job.archive && (
                         <Button variant="neutral" size="compact" onClick={() => onImport(job.id)}>
                           导入到服务器

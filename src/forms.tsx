@@ -746,21 +746,21 @@ export function TargetForm({ initial, db, onSave, onClose, initialTab }: SavePro
             ? 'HTTP/TCP 按所选位置执行，自定义命令在服务器上执行；未配置时标记健康未验证。'
             : '从目标服务器执行。未配置健康检查时，任务结果会明确标记「健康未验证」。'}
         </p>
+        {desktop && v.mode === 'jar' && (
+          <Field
+            label="应用日志绝对路径"
+            hint="填写 SSH 用户可读取的日志文件，例如 /var/log/service/application.log。服务工作台的日志页和部署后观察使用同一路径。"
+          >
+            <input
+              value={v.appLogPath || ''}
+              onChange={(e) => update('appLogPath', e.target.value)}
+              placeholder="/var/log/service/application.log"
+            />
+          </Field>
+        )}
         {desktop && (
           <details className="mt" ref={logObservation}>
             <summary>部署后日志观察</summary>
-            {v.mode === 'jar' && (
-              <Field
-                label="应用日志绝对路径"
-                hint="只读取此文件，不执行启动脚本。健康检查失败时也可用它查看最近日志。"
-              >
-                <input
-                  value={v.appLogPath || ''}
-                  onChange={(e) => update('appLogPath', e.target.value)}
-                  placeholder="/var/log/service/application.log"
-                />
-              </Field>
-            )}
             <Switch
               label="健康未验证时自动观察日志"
               checked={v.observation?.enabled || false}

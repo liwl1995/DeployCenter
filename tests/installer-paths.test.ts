@@ -20,20 +20,26 @@ afterEach(async () => {
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
-it.skipIf(!enabled).each([false, true])(
-  'NSIS 安装路径跟随中文配置目录，拒绝联接（联接：%s）',
-  async (linked) => {
+it.skipIf(!enabled).each(['已配置目录', '已配置联接', '首次安装', '首次安装的 AppData 为联接', '已配置目录缺失'])(
+  'NSIS 校验安装数据目录（%s）',
+  async (scenario) => {
     await fs.mkdir(base, { recursive: true });
     const root = await fs.mkdtemp(path.join(base, 'installer-paths-'));
     dirs.push(root);
-    const actual = path.join(root, '真实 中文 数据'),
-      chosen = linked ? path.join(root, 'link') : actual;
-    await fs.mkdir(actual);
-    await fs.writeFile(
-      path.join(actual, '.yotoo-data-owner.ini'),
-      '[application]\r\nid=local.deploycenter.desktop\r\n',
-    );
-    if (linked) await fs.symlink(actual, chosen, 'junction');
+    const fresh = scenario.startsWith('首次安装');
+    const linked = scenario.includes('联接');
+    const actual = path.join(root, '真实 中文 数据');
+    const roaming = fresh && linked ? path.join(root, '重定向 AppData') : actual;
+    const chosen = fresh ? path.join(roaming, 'DeployCenter') : linked ? path.join(root, 'link') : actual;
+    const reject = linked || scenario === '已配置目录缺失';
+    if (scenario !== '已配置目录缺失') await fs.mkdir(actual);
+    if (!fresh && !reject) {
+      await fs.writeFile(
+        path.join(actual, '.yotoo-data-owner.ini'),
+        '[application]\r\nid=local.deploycenter.desktop\r\n',
+      );
+    }
+    if (linked) await fs.symlink(actual, fresh ? roaming : chosen, 'junction');
     const key = 'Software\\YOTOO\\DeployCenter.Tests\\' + randomUUID(),
       exe = path.join(root, 'check.exe'),
       result = path.join(root, 'result.txt');
@@ -45,7 +51,9 @@ it.skipIf(!enabled).each([false, true])(
         '/DPROJECT_DIR=' + path.resolve('.'),
         '/DOUTPUT_FILE=' + exe,
         '/DRESULT_FILE=' + result,
-        '/DCASE_DIR=' + chosen,
+        ...(fresh ? [] : ['/DCASE_DIR=' + chosen]),
+        '/DYOTOO_ROAMING_DATA=' + roaming,
+        '/DYOTOO_LEGACY_SETTINGS=' + path.join(root, '旧设置'),
         '/DYOTOO_LOCATION_KEY=' + key,
         path.resolve('installer/test-data-paths.nsi'),
       ],
@@ -54,7 +62,7 @@ it.skipIf(!enabled).each([false, true])(
     expect(build.status, build.stdout + build.stderr).toBe(0);
     try {
       const run = spawnSync(exe, [], { windowsHide: true, timeout: 15000 });
-      if (linked) {
+      if (reject) {
         expect(run.status).toBe(1603);
         expect(existsSync(result)).toBe(false);
       } else {
@@ -64,11 +72,12 @@ it.skipIf(!enabled).each([false, true])(
           .replace(/^\uFEFF/, '')
           .split('\r\n');
         expect(paths).toEqual([
-          actual,
-          path.join(actual, 'logs', 'installer'),
-          path.join(actual, 'installer-backups'),
-          path.join(actual, 'Control'),
+          chosen,
+          path.join(chosen, 'logs', 'installer'),
+          path.join(chosen, 'installer-backups'),
+          path.join(chosen, 'Control'),
         ]);
+        if (fresh) expect(existsSync(chosen)).toBe(false);
       }
     } finally {
       if (!/^Software\\YOTOO\\DeployCenter\.Tests\\[a-f0-9-]{36}$/.test(key))

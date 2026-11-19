@@ -13,7 +13,9 @@ OutFile "${OUTPUT_FILE}"
 !insertmacro DC_DataPathFunctions ""
 Section
   SetRegView 64
+  !ifdef CASE_DIR
   WriteRegStr HKCU "${YOTOO_LOCATION_KEY}" "DataDirectory" "${CASE_DIR}"
+  !endif
   Call DC_SetDataPaths
   FileOpen $0 "${RESULT_FILE}" w
   FileWriteUTF16LE $0 "$DC_DataRoot$\r$\n$DC_InstallerLogs$\r$\n$DC_InstallerBackups$\r$\n$DC_ControlDirectory"

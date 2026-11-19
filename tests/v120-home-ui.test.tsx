@@ -2,9 +2,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { seed, type Preset } from '../src/model';
-import { emptyDatabase } from '../src/defaults';
-import { FirstGuide, PresetShelf } from '../src/WorkspaceHome';
-import { preparePreset, localComparison, guideSteps } from '../src/workspace-model';
+import { EmptyServiceWorkspace, PresetShelf } from '../src/WorkspaceHome';
+import { preparePreset, localComparison } from '../src/workspace-model';
 import { RemoteBackups } from '../src/RemoteBackups';
 import { Modal } from '../src/ui';
 import type { DesktopAPI } from '../src/platform';
@@ -22,34 +21,15 @@ const preset = (): Preset => {
   };
 };
 afterEach(cleanup);
-it('引导包含五步和配置跳转，全部完成后隐藏，空数据库不生成示例', async () => {
-  const user = userEvent.setup(),
-    onPage = vi.fn(),
-    db = emptyDatabase();
-  const view = render(<FirstGuide db={db} tasks={[]} onPage={onPage} onImport={() => {}} />);
-  expect(guideSteps(db, []).filter((s) => s.done)).toHaveLength(0);
-  await user.click(screen.getByRole('button', { name: /配置 JDK/ }));
-  expect(onPage).toHaveBeenCalledWith('tools');
-  expect(db.services).toHaveLength(0);
-  view.rerender(
-    <FirstGuide
-      db={seed()}
-      tasks={[
-        {
-          id: 'DC-check',
-          operation: 'deploy',
-          dryRun: true,
-          status: 'success',
-          service: '测试',
-          started: '',
-          elapsed: 1,
-        },
-      ]}
-      onPage={onPage}
-      onImport={() => {}}
-    />,
-  );
-  expect(screen.queryByText('开始使用')).toBeNull();
+it('空工作台直接提供添加服务和导入配置', async () => {
+  const user = userEvent.setup(), onAdd = vi.fn(), onImport = vi.fn();
+  render(<EmptyServiceWorkspace onAdd={onAdd} onImport={onImport} />);
+  expect(screen.getByRole('heading', { name: '还没有服务' })).toBeTruthy();
+  expect(screen.getAllByRole('button')).toHaveLength(2);
+  await user.click(screen.getByRole('button', { name: '添加服务' }));
+  await user.click(screen.getByRole('button', { name: '导入配置' }));
+  expect(onAdd).toHaveBeenCalledOnce();
+  expect(onImport).toHaveBeenCalledOnce();
 });
 it('本机版本比较保留明确的未知状态', () => {
   expect(localComparison({ ahead: 3, behind: 0 })).toContain('新 3 个提交');

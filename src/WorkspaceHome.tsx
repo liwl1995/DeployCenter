@@ -1,50 +1,22 @@
 import { Button } from './design/ui/button';
+import { Box, FolderOpen, Plus } from 'lucide-react';
 import { useState } from 'react';
 import type { Database, Preset } from './model';
-import type { TaskSummary } from './platform';
-import { Card, Field, Modal, Badge } from './ui';
+import { Card, Field, Modal } from './ui';
 import { MoreMenu } from './EntityActions';
-import { Disclosure } from './WorkspaceLayout';
-import { guideSteps, presetReason, type WorkspacePage } from './workspace-model';
-export function FirstGuide({
-  db,
-  tasks,
-  onPage,
-  onImport,
-}: {
-  db: Database;
-  tasks: TaskSummary[];
-  onPage: (page: WorkspacePage) => void;
-  onImport: () => void;
-}) {
-  const steps = guideSteps(db, tasks);
-  if (steps.every((s) => s.done)) return null;
+import { presetReason } from './workspace-model';
+
+export function EmptyServiceWorkspace({ onAdd, onImport }: { onAdd: () => void; onImport: () => void }) {
   return (
-    <Disclosure
-      title={'开始使用 · ' + steps.filter((s) => s.done).length + '/' + steps.length}
-      description="配置清单与首次试运行"
-      open={!db.services.length}
-    >
-      <Card
-        title="开始使用"
-        action={
-          <Button variant="link" size="compact" onClick={onImport}>
-            导入配置
-          </Button>
-        }
-      >
-        <p className="note">先配置本机构建环境和目标，再执行只读试运行。不会自动连接服务器。</p>
-        <div className="guide-steps">
-          {steps.map((s, i) => (
-            <button className="guide-step" key={s.key} onClick={() => onPage(s.page)}>
-              <span>{i + 1}</span>
-              <strong>{s.name}</strong>
-              <Badge kind={s.done ? 'good' : ''}>{s.done ? '已完成' : '待完成'}</Badge>
-            </button>
-          ))}
-        </div>
-      </Card>
-    </Disclosure>
+    <section className="empty-service-workspace" aria-labelledby="empty-service-heading">
+      <div className="empty-service-icon"><Box size={20} strokeWidth={1.5} aria-hidden /></div>
+      <h2 id="empty-service-heading">还没有服务</h2>
+      <p>添加要部署的 Java 服务，即可在工作台配置部署目标。</p>
+      <div className="empty-service-actions">
+        <Button size="regular" onClick={onAdd}><Plus size={16} />添加服务</Button>
+        <Button variant="neutral" size="regular" onClick={onImport}><FolderOpen size={16} />导入配置</Button>
+      </div>
+    </section>
   );
 }
 export function PresetShelf({

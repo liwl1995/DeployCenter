@@ -13,6 +13,14 @@ const encoder = new TextEncoder(),
 export class LogAccumulator {
   entries: LogLine[] = [];
   private sources = new Map<string, { offset: number; partial?: number }>();
+  trimFirst(count: number) {
+    if (count <= 0) return;
+    this.entries.splice(0, count);
+    for (const source of this.sources.values()) {
+      if (source.partial !== undefined)
+        source.partial = source.partial < count ? undefined : source.partial - count;
+    }
+  }
   append(source: string, text: string, start?: number, context: LogContext = {}) {
     const state = this.sources.get(source) || { offset: start ?? 0, partial: undefined };
     let bytes = encoder.encode(text),

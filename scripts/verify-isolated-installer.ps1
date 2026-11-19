@@ -44,13 +44,11 @@ function Formal-Snapshot {
 $before=Formal-Snapshot
 try{
   if(-not $qaRoot.StartsWith((Join-Path $repoRoot '.test-data')+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'QA 路径越界'}
-  New-Item -ItemType Directory -Path $qaRoot,$data,$build -Force | Out-Null
-  Set-Content -LiteralPath (Join-Path $data '.yotoo-data-owner.ini') -Value "[application]`r`nid=local.deploycenter.desktop`r`n" -Encoding utf8
-  Set-Content -LiteralPath (Join-Path $data 'keep-user-data.txt') -Value $id -Encoding utf8
+  $roaming=Split-Path -Parent $data
+  $legacy=Join-Path $qaRoot '空的旧设置'
+  New-Item -ItemType Directory -Path $qaRoot,$roaming,$build -Force | Out-Null
   $wrapper=Join-Path $qaRoot 'custom.nsh'
-  Set-Content -LiteralPath $wrapper -Value "!define YOTOO_LOCATION_KEY `"$locationKey`"`r`n!include `"$repoRoot\installer\custom.nsh`"" -Encoding utf8
-  New-Item -Path "HKCU:\$locationKey" -Force | Out-Null
-  Set-ItemProperty -LiteralPath "HKCU:\$locationKey" -Name DataDirectory -Value $data
+  Set-Content -LiteralPath $wrapper -Value "!define YOTOO_LOCATION_KEY `"$locationKey`"`r`n!define YOTOO_ROAMING_DATA `"$roaming`"`r`n!define YOTOO_LEGACY_SETTINGS `"$legacy`"`r`n!include `"$repoRoot\installer\custom.nsh`"" -Encoding utf8
   $builderArgs=@("--config.extraMetadata.name=$qaPackage",'--win','nsis','--x64',"--config.appId=$appId","--config.productName=$product","--config.nsis.shortcutName=$product","--config.nsis.include=$wrapper","--config.directories.output=$build",'--config.win.artifactName=QA-Setup.exe','--publish','never')
   if($source){
     $clone=Join-Path $qaRoot 'packaged'
@@ -65,7 +63,12 @@ try{
   $env:DEPLOY_CENTER_DATA_DIR=$data
   $env:DEPLOY_CENTER_SETTINGS_DIR=Join-Path $qaRoot 'test-locator'
   $env:DEPLOY_CENTER_TESTING='1'
-  Check '中文路径实际安装' ((Run $installer "/S /D=$program") -eq 0)
+  Check '首次安装没有预建数据目录或位置记录' (-not(Test-Path -LiteralPath $data) -and -not(Test-Path -LiteralPath "HKCU:\$locationKey"))
+  Check '首次安装自动创建数据目录并支持中文安装路径' ((Run $installer "/S /D=$program") -eq 0 -and (Test-Path -LiteralPath $data))
+  Set-Content -LiteralPath (Join-Path $data '.yotoo-data-owner.ini') -Value "[application]`r`nid=local.deploycenter.desktop`r`n" -Encoding utf8
+  Set-Content -LiteralPath (Join-Path $data 'keep-user-data.txt') -Value $id -Encoding utf8
+  New-Item -Path "HKCU:\$locationKey" -Force | Out-Null
+  Set-ItemProperty -LiteralPath "HKCU:\$locationKey" -Name DataDirectory -Value $data
   $exe=Join-Path $program "$product.exe"
   $packageSha256=(Get-FileHash -LiteralPath (Join-Path $program 'resources/app.asar')).Hash
   Check '安装主程序存在' (Test-Path -LiteralPath $exe)

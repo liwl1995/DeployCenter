@@ -42,15 +42,17 @@ it('上万行只渲染可见窗口，搜索可跳转，错误和警告有文字�
   await user.click(screen.getByRole('button', { name: '收起 · 构建产物' }));
   expect(container.querySelectorAll('[data-log-line]').length).toBe(0);
 });
-it('选择日志文字时保留原节点和文字，清除选择后再展示新行，缺失时间不伪造', () => {
+it.each([false, true])('紧凑模式 %s 的日志选区不会插入提示或随输出刷新', (compact) => {
   const first: LogLine[] = [{ id: 'one', text: '可复制的原始日志' }];
-  const { rerender } = render(<VirtualLogs entries={first} />);
+  const { container, rerender } = render(<VirtualLogs compact={compact} entries={first} />);
+  const beforeSelection = container.textContent;
   const node = screen.getByText('可复制的原始日志'),
     range = document.createRange();
   range.selectNodeContents(node);
   window.getSelection()?.addRange(range);
   fireEvent(document, new Event('selectionchange'));
-  rerender(<VirtualLogs entries={[...first, { id: 'two', text: '后来的日志' }]} />);
+  expect(container.textContent).toBe(beforeSelection);
+  rerender(<VirtualLogs compact={compact} entries={[...first, { id: 'two', text: '后来的日志' }]} />);
   expect(screen.getByText('可复制的原始日志')).toBe(node);
   expect(window.getSelection()?.toString()).toBe('可复制的原始日志');
   expect(screen.queryByText('后来的日志')).toBeNull();

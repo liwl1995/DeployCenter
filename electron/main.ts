@@ -22,6 +22,7 @@ import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { z } from 'zod';
 import { LogSessions, observeTask } from './observation';
+import { OnlineLogs, onlineSearchSchema } from './online-logs';
 import { Storage } from './storage';
 import { AppUpdater } from './app-updater';
 import { createUpdateFetch } from './update-network';
@@ -276,6 +277,14 @@ const emit = (event: DesktopEvent) => {
     trayPanel?.refresh();
 };
 const sessions = new LogSessions(emit);
+const onlineLogs = new OnlineLogs(sessions, emit, async (name) => {
+  if (!win || win.isDestroyed()) throw new Error('请打开主窗口后下载日志。');
+  const result = await dialog.showSaveDialog(win, {
+    defaultPath: name,
+    filters: [{ name: '日志文件', extensions: ['log', 'txt'] }],
+  });
+  return result.canceled ? undefined : result.filePath;
+});
 const notified = new Set<string>();
 const finishedTask = (task: import('../src/model').Task, credentials: Record<string, string>) => {
   if (
@@ -736,6 +745,7 @@ async function boot() {
           return '请先等待部署结束，并核实尚未结束的任务，再安装更新';
         if (migrating || pendingRestart) return '请先完成数据迁移并重启，再安装更新';
         if (imageJobs.busy()) return '镜像任务正在执行，请等待完成后再安装更新';
+        if (onlineLogs.isExporting()) return '线上日志正在下载，请完成或取消后再安装更新';
         if (backups.isBusy() || workbench.isBusy() || storage.artifacts.isBusy())
           return '远程维护或本地清理尚未结束，请等待后再安装更新';
         if (scheduler?.isDispatching()) return '定时发布正在启动，请稍后再安装更新';
@@ -805,6 +815,7 @@ async function boot() {
     handle('save', (value) => {
       const config = validateDatabase(value);
       const saved = storage.saveConfig(config);
+      onlineLogs.reconcile(config);
       nativeTheme.themeSource = config.settings.theme;
       return saved;
     });
@@ -1108,6 +1119,7 @@ async function boot() {
     handle('image-list', async () => ({ directory: imageJobs.directory, jobs: await imageJobs.list() }));
     handle('image-logs', (value) => imageJobs.logs(imageIdSchema.parse(value)));
     handle('image-cancel-upload', (value) => imageJobs.cancelUpload(imageIdSchema.parse(value)));
+    handle('image-cancel-build', (value) => imageJobs.cancelBuild(imageIdSchema.parse(value)));
     handle('image-inspect', (value) => imageJobs.archive(imageSource(value)));
     handle('image-start-build', (value) => {
       const parsed = imageBuildSchema.safeParse(value);
@@ -1440,6 +1452,7 @@ async function boot() {
       });
       if (confirmation.response !== 1) return null;
       storage.importDatabase(value, real);
+      onlineLogs.reconcile(value);
       emit({ kind: 'database', database: storage.database() });
       return storage.database();
     });
@@ -1481,10 +1494,14 @@ async function boot() {
       }
       return true;
     });
-    const followLogs = async (value: unknown, supplied?: unknown, duration?: number) => {
+    const logTarget = (value: unknown) => {
       const target = storage.database().targets.find((t) => t.id === id(value));
       if (!target) throw new Error('目标不存在');
       const server = getServer(target.serverId);
+      return { target, server };
+    };
+    const followLogs = async (value: unknown, supplied?: unknown, duration?: number) => {
+      const { target, server } = logTarget(value);
       const credential = supplied
         ? text(supplied, 8192)
         : controller.credentialFor(server.id) ||
@@ -1495,26 +1512,27 @@ async function boot() {
         pins: storage.pins(),
         trust: (request, key) => controller.trust.request(request, key),
       });
-      let command: string;
-      if (target.mode === 'docker')
-        command = 'docker logs --tail 200 -f -- ' + shellQuote(target.container);
-      else {
-        if (!target.appLogPath?.startsWith('/') || /[\r\n\0]/.test(target.appLogPath))
-          throw new Error('请先在目标配置中填写应用日志的绝对路径');
-        command = 'tail -n 200 -f -- ' + shellQuote(target.appLogPath);
-      }
-      const mask = new MemoryCredentials({ active: credential || '' });
-      try {
-        return await sessions.start(transport, command, target.id, credential, duration);
-      } catch (e) {
-        throw new Error(mask.redact(String(e)));
-      } finally {
-        mask.clear();
-      }
+      const session = await onlineLogs.start(target, server, transport, credential, duration);
+      onlineLogs.reconcile(storage.database());
+      return session;
     };
     handle('follow-logs', (value, supplied) => followLogs(value, supplied));
     handle('stop-logs', (value) => sessions.stop(text(value, 100)));
     handle('read-log-session', (value) => sessions.read(text(value, 100)));
+    handle('online-log-source', (value) => {
+      const { target, server } = logTarget(value);
+      return {
+        ...onlineLogs.source(target, server),
+        credentialAvailable: !!controller.credentialFor(server.id) ||
+          (server.credentialMode === 'windows' && storage.credentialIds().includes(server.id)),
+      };
+    });
+    handle('online-log-search', (session, request) => onlineLogs.search(text(session, 100), onlineSearchSchema.parse(request)));
+    handle('online-log-sessions', () => onlineLogs.list());
+    handle('online-log-download-prepare', (session) => onlineLogs.prepare(text(session, 100)));
+    handle('online-log-download-save', (token) => onlineLogs.download(text(token, 100)));
+    handle('online-log-download-cancel', (token) => onlineLogs.cancel(text(token, 100)));
+    handle('online-log-save-loaded', (session) => onlineLogs.saveLoaded(text(session, 100)));
     observeAfter = (task, credentials) => {
       void observeTask(
         task,
@@ -1529,6 +1547,7 @@ async function boot() {
             !sameServer(server, run.server) ||
             target.directory !== run.target.directory ||
             target.fileName !== run.target.fileName ||
+            (target.mode === 'jar' && target.appLogPath !== run.target.appLogPath) ||
             target.mode !== run.target.mode ||
             target.container !== run.target.container
           )
@@ -1583,6 +1602,7 @@ async function boot() {
     handle('migrate-directory', async (value) => {
       if (migrating || pendingRestart) throw new Error('已有迁移或待重启切换');
       if (imageJobs.busy()) throw new Error('镜像任务正在执行，请等待完成后再迁移数据目录');
+      if (onlineLogs.isExporting()) throw new Error('线上日志正在下载，请完成或取消后再迁移数据目录');
       if (updater?.isBusy()) throw new Error('正在检查或下载更新，请完成或取消后再迁移数据目录');
       migrating = true;
       migrationCancelled = false;
@@ -1645,7 +1665,7 @@ async function boot() {
       }
     });
     handle('restart', async () => {
-      if (migrating || controller.active() || imageJobs.busy()) throw new Error('请等待任务或迁移结束');
+      if (migrating || controller.active() || imageJobs.busy() || onlineLogs.isExporting()) throw new Error('请等待任务、下载或迁移结束');
       if (!(await confirmScheduleExit())) return;
       app.relaunch();
       app.quit();
@@ -1676,6 +1696,11 @@ async function boot() {
       if (imageJobs.busy()) {
         event.preventDefault();
         void dialog.showMessageBox(win!, { message: '镜像任务仍在执行，请等待完成后再退出', buttons: ['返回'] });
+        return;
+      }
+      if (onlineLogs.isExporting()) {
+        event.preventDefault();
+        void dialog.showMessageBox(win!, { message: '线上日志正在下载，请完成或取消后再退出', buttons: ['返回'] });
         return;
       }
       if (migrating || backups.isBusy() || workbench.isBusy()) {

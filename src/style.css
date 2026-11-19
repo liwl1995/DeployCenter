@@ -514,11 +514,15 @@ hr {
 }
 .deployment-target-main {
   display: grid;
-  grid-template-columns: 16px 30px minmax(0, 1fr) 80px 116px 44px 28px 28px;
+  grid-template-columns: 16px 30px minmax(0, 1fr) 80px 116px 44px auto;
   align-items: center;
   gap: var(--space-2);
   min-height: var(--h-card);
   padding: var(--card-py) 10px;
+}
+.deployment-target-actions {
+  display: flex;
+  align-items: center;
 }
 .target-identity {
   min-width: 0;
@@ -1763,6 +1767,165 @@ th {
   flex: 1;
   height: auto;
 }
+.online-log-workspace {
+  display: flex;
+  flex-direction: column;
+}
+.online-logs {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: 0;
+}
+.online-log-header,
+.online-log-target,
+.online-log-actions,
+.online-log-source,
+.online-log-notice,
+.online-log-toolbar,
+.online-log-filter,
+.online-log-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.online-log-header,
+.online-log-toolbar {
+  justify-content: space-between;
+}
+.online-log-target {
+  min-width: 0;
+}
+.online-log-identity {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: var(--space-1);
+}
+.online-log-identity select {
+  min-width: 112px;
+  max-width: 100%;
+}
+.online-log-identity .note,
+.online-log-source .note {
+  margin: 0;
+}
+.online-log-source > code {
+  font-family: var(--mono);
+  font-size: var(--fs-caption);
+  overflow-wrap: anywhere;
+}
+.online-log-source > .button {
+  margin-left: auto;
+}
+.online-log-notice {
+  margin: 0;
+}
+.online-log-console {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 220px;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+}
+.online-log-toolbar,
+.online-log-filter,
+.online-log-foot {
+  flex: none;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--line);
+}
+.online-log-foot {
+  margin: 0;
+  border-bottom: 0;
+}
+.online-log-search {
+  display: flex;
+  flex: 1 1 160px;
+  align-items: center;
+  gap: var(--space-2);
+  padding-inline: var(--space-2);
+  background: var(--bg-subtle);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+.online-log-search:focus-within { border-color: var(--action-text); }
+.online-log-search input {
+  width: 100%;
+  min-width: 0;
+  padding-inline: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.online-log-search input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.online-log-console .log-viewer {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 120px;
+}
+.online-log-console .log-viewport {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 120px;
+}
+.modal .online-log-console .log-viewport {
+  height: min(40vh, 320px);
+}
+.online-log-empty {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-height: 120px;
+  padding: var(--space-3);
+  color: var(--text-3);
+}
+.online-log-results {
+  flex: 1;
+  min-height: 120px;
+  overflow: auto;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-sidebar);
+}
+.modal .online-log-results { max-height: min(40vh, 320px); }
+.online-log-results details {
+  border-bottom: 1px solid var(--line);
+}
+.online-log-results summary {
+  cursor: pointer;
+  padding-block: var(--space-2);
+}
+.online-log-results summary span {
+  color: var(--text-3);
+  margin-right: var(--space-2);
+}
+.online-log-results :is(code, pre) {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font: var(--fs-caption) / 1.5 var(--mono);
+}
+.online-log-progress {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.online-log-progress progress {
+  accent-color: var(--action-text);
+  flex: 1 1 160px;
+}
 .terminal,
 .tool-version {
   max-height: 320px;
@@ -1974,9 +2137,42 @@ th {
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-control);
 }
-.guide-grid,
-.guide-steps {
+.empty-service-workspace {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  padding-bottom: calc(var(--space-6) * 3);
+  text-align: center;
+}
+.empty-service-icon {
   display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  margin-bottom: var(--space-4);
+  color: var(--action-text);
+  background: var(--action-soft);
+  border-radius: var(--radius-panel);
+}
+.empty-service-workspace h2 {
+  margin: 0;
+  color: var(--text-1);
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+}
+.empty-service-workspace p {
+  max-width: 248px;
+  margin: var(--space-2) 0 var(--space-6);
+  color: var(--text-2);
+}
+.empty-service-actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
   gap: var(--space-2);
 }
 .date-shortcuts {
@@ -1996,7 +2192,7 @@ th {
 }
 @media (max-width: 960px) {
   .deployment-target-main {
-    grid-template-columns: 16px minmax(0, 1fr) 72px 108px 44px 28px 28px;
+    grid-template-columns: 16px minmax(0, 1fr) 72px 108px 44px auto;
   }
   .deployment-target-main > .record-icon {
     display: none;
@@ -2038,7 +2234,7 @@ th {
     display: none;
   }
   .deployment-target-main {
-    grid-template-columns: 16px minmax(0, 1fr) 72px 44px 28px 28px;
+    grid-template-columns: 16px minmax(0, 1fr) 72px 44px auto;
   }
   .task-step-list {
     display: grid;

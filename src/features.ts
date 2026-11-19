@@ -151,6 +151,7 @@ export type LogSessionSnapshot = {
   targetId: string;
   active: boolean;
   endsAt?: number;
+  notice?: string;
   chunks: { text: string; offset: number; context: LogContext }[];
   offset: number;
 };

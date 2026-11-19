@@ -70,11 +70,12 @@ export const imageSourceSchema = z.union([
   z.object({ file: absolute }),
 ]);
 
-export async function imageDistributions() {
+export async function imageDistributions(signal?: AbortSignal) {
   if (process.platform !== 'win32') return [];
   const result = await runProcess('wsl.exe', ['--list', '--quiet'], {
     timeout: 15_000,
     encoding: 'utf16le',
+    signal,
     env: { ...process.env, WSL_UTF8: '0' },
   });
   if (result.code) throw new Error('无法读取 WSL 发行版，请检查 Windows 中是否已安装 WSL');
@@ -90,6 +91,11 @@ export async function imageDistributions() {
 }
 
 const executable = process.platform === 'win32' ? 'docker.exe' : 'docker';
+// 让 Linux 侧停止自己的 Docker 客户端，避免只结束 Windows 的 wsl.exe。
+const cancellableWsl =
+  'exec 3<&0; "$@" & child=$!; ' +
+  '(IFS= read -r _ <&3; kill -TERM "$child" 2>/dev/null) & watcher=$!; ' +
+  'wait "$child"; status=$?; kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null; exit "$status"';
 function dockerRun(engine: ImageEngine, args: string[], options: ProcessOptions = {}) {
   return engine.kind === 'windows'
     ? runProcess(executable, args, {
@@ -102,6 +108,7 @@ function dockerRun(engine: ImageEngine, args: string[], options: ProcessOptions 
           '-d',
           engine.distro!,
           '--exec',
+          ...(options.signal ? ['sh', '-c', cancellableWsl, 'yotoo-docker'] : []),
           'env',
           'BUILDX_NO_DEFAULT_ATTESTATIONS=1',
           'docker',
@@ -109,14 +116,15 @@ function dockerRun(engine: ImageEngine, args: string[], options: ProcessOptions 
         ],
         {
           ...options,
+          cancelWithStdin: !!options.signal,
           env: { ...process.env, WSL_UTF8: '1' },
         },
       );
 }
-export async function probeImageEngine(engine: ImageEngine) {
+export async function probeImageEngine(engine: ImageEngine, signal?: AbortSignal) {
   if (engine.kind === 'wsl') {
     if (!engine.distro) throw new Error('请选择实际运行 Docker 的 WSL 发行版');
-    if (!(await imageDistributions()).includes(engine.distro))
+    if (!(await imageDistributions(signal)).includes(engine.distro))
       throw new Error('所选 WSL 发行版不存在');
   }
   const result = await dockerRun(
@@ -125,6 +133,7 @@ export async function probeImageEngine(engine: ImageEngine) {
     {
       timeout: engine.kind === 'wsl' ? 90_000 : 30_000,
       encoding: 'utf8',
+      signal,
     },
   ).catch((error) => {
     throw new Error('无法运行 Docker CLI：' + errorText(error));
@@ -136,7 +145,7 @@ export async function probeImageEngine(engine: ImageEngine) {
     );
   return result.stdout.trim();
 }
-async function dockerPath(engine: ImageEngine, absolute: string) {
+async function dockerPath(engine: ImageEngine, absolute: string, signal?: AbortSignal) {
   if (engine.kind === 'windows') return absolute;
   const result = await runProcess(
     'wsl.exe',
@@ -144,6 +153,7 @@ async function dockerPath(engine: ImageEngine, absolute: string) {
     {
       timeout: 90_000,
       encoding: 'utf8',
+      signal,
       env: { ...process.env, WSL_UTF8: '1' },
     },
   );
@@ -167,6 +177,7 @@ export class ImageJobs {
   readonly directory: string;
   private active?: ImageJob;
   private uploadAbort?: AbortController;
+  private buildAbort?: AbortController;
   private buildingJar = false;
   private liveLogs?: { id: string; persist: () => Promise<void> };
   constructor(
@@ -187,6 +198,14 @@ export class ImageJobs {
       throw new Error('当前已离开上传阶段，不能取消');
     this.active.cancelling = true;
     this.uploadAbort.abort();
+    this.emit.job(this.active);
+  }
+  cancelBuild(id: string) {
+    if (this.active?.id !== id || this.active.kind !== 'build' || !this.buildAbort)
+      throw new Error('镜像构建已结束或正在保存最终镜像包。');
+    if (this.active.cancelling) return;
+    this.active.cancelling = true;
+    this.buildAbort.abort();
     this.emit.job(this.active);
   }
   private jobDirectory(id: string) {
@@ -347,12 +366,12 @@ export class ImageJobs {
       job.status = 'success';
     } catch (error) {
       job.status = job.cancelling ? 'cancelled' : 'failed';
-      job.message = errorText(error);
+      job.message = job.kind === 'build' && job.cancelling ? '镜像构建已取消，未生成镜像包。' : errorText(error);
       if (current?.status === 'running') {
         current.status = 'failed';
         current.finished = Date.now();
       }
-      log('\n[ERROR] ' + job.message + '\n');
+      log('\n' + (job.cancelling ? '[WARNING] ' : '[ERROR] ') + job.message + '\n');
     } finally {
       flush();
       await writes;
@@ -365,6 +384,7 @@ export class ImageJobs {
           .join('；');
       });
       this.buildingJar = false;
+      this.buildAbort = undefined;
       this.liveLogs = undefined;
       this.active = undefined;
       this.emit.job(job);
@@ -373,6 +393,8 @@ export class ImageJobs {
 
   build(request: ImageBuild, service: Service, db: Database) {
     if (this.busy()) throw new Error('已有镜像任务正在执行，请等待完成');
+    const abort = new AbortController();
+    const { signal } = abort;
     const job: ImageJob = {
       id: randomUUID(),
       name: service.name,
@@ -389,7 +411,8 @@ export class ImageJobs {
       let jarArgument: string | undefined;
       await stage(0, async () => {
         log('检查本地构建环境：' + (request.engine.distro || 'Windows Docker') + '\n');
-        log((await probeImageEngine(request.engine)) + '\n');
+        signal.throwIfAborted();
+        log((await probeImageEngine(request.engine, signal)) + '\n');
         if (
           !(await stat(request.context)).isDirectory() ||
           !(await stat(request.dockerfile)).isFile()
@@ -415,13 +438,13 @@ export class ImageJobs {
           )
             throw new Error('所选 JAR 必须位于 Docker 构建目录内');
           // 只有显式声明构建参数的 Dockerfile 才能接收临时选择的产物，避免悄悄使用默认 JAR。
-          const dockerfile = await readFile(request.dockerfile, 'utf8');
+          const dockerfile = await readFile(request.dockerfile, { encoding: 'utf8', signal });
           if (!/^\s*ARG[\t ]+YOTOO_JAR_FILE(?=[\t =\r\n]|$)/im.test(dockerfile))
             throw new Error('Dockerfile 需声明 ARG YOTOO_JAR_FILE 并通过它引用所选 JAR');
           jarArgument = selected.split(path.sep).join('/');
         }
         if (request.mode === 'build') {
-          const resolved = await resolveBuild(service, db.jdks, path.join(this.dataDir, 'tmp'));
+          const resolved = await resolveBuild(service, db.jdks, path.join(this.dataDir, 'tmp'), { signal });
           log('Maven 工作目录：' + resolved.cwd + '\n使用 JDK：' + resolved.jdkPath + '\n');
           log([resolved.tool, ...resolved.args].join(' ') + '\n');
           const started = Date.now();
@@ -429,6 +452,7 @@ export class ImageJobs {
             timeout: (service.buildTimeout || 1800) * 1000,
             encoding: service.logEncoding,
             onData: log,
+            signal,
           });
           const output = await stat(file).catch(() => undefined);
           if (
@@ -449,17 +473,17 @@ export class ImageJobs {
           if (run.code) log('[WARNING] 按构建兼容设置接受异常退出码，已确认 JAR 更新。\n');
         }
         log('校验 JAR：' + file + '\n');
-        const jar = await inspectJar(file);
+        const jar = await inspectJar(file, signal);
         log(
           'JAR 已校验 · ' + imageSize(jar.size) + '\nDockerfile 必须能从构建目录引用所需文件。\n',
         );
       });
       let builtId: string;
       await stage(1, async () => {
-        const options = { timeout: 60 * 60_000, encoding: 'utf8', onData: log } as const;
+        const options = { timeout: 60 * 60_000, encoding: 'utf8', onData: log, signal } as const;
         const [file, context] = await Promise.all([
-          dockerPath(request.engine, request.dockerfile),
-          dockerPath(request.engine, request.context),
+          dockerPath(request.engine, request.dockerfile, signal),
+          dockerPath(request.engine, request.context, signal),
         ]);
         log(`构建 ${request.reference} · ${request.platform}\n`);
         const result = await dockerRun(
@@ -486,7 +510,7 @@ export class ImageJobs {
           '--format',
           '{{.Id}} {{.Os}}/{{.Architecture}}',
           request.reference,
-        ]);
+        ], { signal });
         const [id, platform] = info.stdout.trim().split(' ');
         if (info.code || platform !== request.platform || !/^sha256:[a-f0-9]{64}$/.test(id))
           throw new Error('构建没有生成所选平台的本地镜像');
@@ -505,24 +529,28 @@ export class ImageJobs {
               'image',
               'save',
               '--output',
-              await dockerPath(request.engine, pending),
+              await dockerPath(request.engine, pending, signal),
               request.reference,
             ],
             {
               timeout: 60 * 60_000,
               encoding: 'utf8',
               onData: log,
+              signal,
             },
           );
           if (result.code) throw new Error('导出镜像包失败（退出码 ' + result.code + '）');
           log('正在校验镜像包并计算 SHA-256。\n');
-          const archive = await inspectImageArchive(pending);
+          const archive = await inspectImageArchive(pending, signal);
           if (
             archive.reference !== request.reference ||
             archive.platform !== request.platform ||
             !imageIdentities(archive).includes(builtId)
           )
             throw new Error('导出的镜像与本次构建结果不一致');
+          signal.throwIfAborted();
+          // 发布最终文件已进入提交阶段，取消只能在此之前生效。
+          this.buildAbort = undefined;
           await rename(pending, output);
           task.archive = { ...archive, name, path: output };
           log(`镜像包已生成：${output}\nSHA-256：${archive.hash}\n`);
@@ -533,6 +561,7 @@ export class ImageJobs {
         }
       });
     });
+    this.buildAbort = abort;
     this.buildingJar = request.mode === 'build';
     return started;
   }

@@ -1,4 +1,4 @@
-import type { Database, Preset, Task } from './model';
+import type { Database, Preset } from './model';
 import type { DesktopAPI } from './platform';
 export const workspacePages = [
   { page: 'deploy', name: '一键部署', group: '操作' },
@@ -13,23 +13,6 @@ export const workspacePages = [
   { page: 'settings', name: '设置', group: '配置' },
 ] as const;
 export type WorkspacePage = (typeof workspacePages)[number]['page'];
-export function guideSteps(
-  db: Database,
-  tasks: { dryRun?: boolean; status: Task['status']; uncertain?: boolean }[],
-) {
-  return [
-    { key: 'jdk', name: '配置 JDK', page: 'tools', done: !!db.jdks.length },
-    { key: 'service', name: '添加服务', page: 'services', done: !!db.services.length },
-    { key: 'server', name: '添加服务器', page: 'servers', done: !!db.servers.length },
-    { key: 'target', name: '配置部署目标', page: 'targets', done: !!db.targets.length },
-    {
-      key: 'check',
-      name: '完成一次试运行',
-      page: 'deploy',
-      done: tasks.some((t) => t.dryRun && !t.uncertain && t.status === 'success'),
-    },
-  ] as const;
-}
 export function presetReason(db: Database, p: Preset) {
   if (!db.services.some((s) => s.id === p.serviceId))
     return '预设引用的服务已删除，请重新保存预设。';

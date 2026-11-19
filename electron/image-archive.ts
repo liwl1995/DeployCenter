@@ -58,8 +58,8 @@ function tarName(value: string) {
 }
 
 /** 逐块扫描 Docker 归档，只缓存少量元数据，不把镜像层解包到本机。 */
-async function scan(file: string, compressed: boolean, wanted: Set<string>) {
-  const source = createReadStream(file);
+async function scan(file: string, compressed: boolean, wanted: Set<string>, signal?: AbortSignal) {
+  const source = createReadStream(file, { signal });
   const unzip = compressed ? createGunzip() : undefined;
   if (unzip) {
     source.on('error', (error) => unzip.destroy(error));
@@ -153,7 +153,8 @@ function json(values: Map<string, Buffer>, name: string): unknown {
   }
 }
 
-export async function inspectImageArchive(file: string): Promise<ImagePackage> {
+export async function inspectImageArchive(file: string, signal?: AbortSignal): Promise<ImagePackage> {
+  signal?.throwIfAborted();
   if (!/\.tar(?:\.gz)?$/i.test(file)) throw new Error('请选择 .tar 或 .tar.gz 镜像包');
   const original = await lstat(file);
   if (!original.isFile() || original.size < 2) throw new Error('请选择有效的非空镜像包');
@@ -171,6 +172,7 @@ export async function inspectImageArchive(file: string): Promise<ImagePackage> {
     file,
     compressed,
     new Set(['manifest.json', 'index.json']),
+    signal,
   );
   const manifest = manifestSchema.safeParse(json(values, 'manifest.json'));
   if (!manifest.success) throw new Error('请选择仅包含一个镜像、一个标签的 Docker 镜像包');
@@ -202,6 +204,7 @@ export async function inspectImageArchive(file: string): Promise<ImagePackage> {
     file,
     compressed,
     new Set(indexed ? [configName, indexed] : [configName]),
+    signal,
   );
   const config = z
     .object({ os: z.string(), architecture: z.string() })
@@ -228,7 +231,7 @@ export async function inspectImageArchive(file: string): Promise<ImagePackage> {
       )
         throw new Error('镜像包中的嵌套 OCI 清单包含额外标签');
       const name = blob(hash);
-      const { values } = await scan(file, compressed, new Set([name]));
+      const { values } = await scan(file, compressed, new Set([name]), signal);
       manifest = ociManifest.safeParse(json(values, name));
       if (!correctDigest(values.get(name)!, hash)) throw new Error('镜像包中的 OCI 清单摘要无效');
       manifestIds.push(hash);
@@ -236,7 +239,7 @@ export async function inspectImageArchive(file: string): Promise<ImagePackage> {
     if (!manifest.success || manifest.data.config.digest !== imageId)
       throw new Error('镜像包中的 OCI 配置与 Docker 配置不一致');
   }
-  const hash = await fileHash(file);
+  const hash = await fileHash(file, signal);
   const current = await lstat(file);
   if (
     current.size !== original.size ||

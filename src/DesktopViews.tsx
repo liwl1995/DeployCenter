@@ -1,11 +1,9 @@
 import { Button } from './design/ui/button';
 import { fmtTime } from './model';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import type { Server } from './model';
 import { desktop, type TrustRequest } from './platform';
-import { Badge, Field, Modal } from './ui';
-import { LogAccumulator, type LogLine } from './log-model';
-import { VirtualLogs } from './LogViewer';
+import { Field, Modal } from './ui';
 
 export function TrustDialog({ request, onClose }: { request: TrustRequest; onClose: () => void }) {
   const [word, setWord] = useState('');
@@ -152,133 +150,6 @@ export function CredentialPrompt({
   );
 }
 export { NativeLogPanel as NativeLogs } from './NativeLogPanel';
-export function ContainerLogs({
-  targetId,
-  initialSession,
-}: {
-  targetId: string;
-  initialSession?: string;
-}) {
-  const [credential, setCredential] = useState(''),
-    [active, setActive] = useState(false),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState(''),
-    [lines, setLines] = useState<LogLine[]>([]),
-    [endsAt, setEndsAt] = useState<number>();
-  const session = useRef(initialSession || ''),
-    collector = useRef(new LogAccumulator()),
-    mounted = useRef(true),
-    loaded = useRef(false),
-    pending = useRef<Extract<import('./platform').DesktopEvent, { kind: 'container-log' }>[]>([]);
-  const append = (event: (typeof pending.current)[number]) => {
-    const bytes = new TextEncoder().encode(event.text).length;
-    collector.current.append(
-      event.id,
-      event.text,
-      event.offset === undefined ? undefined : event.offset - bytes,
-      event.context,
-    );
-    setLines([...collector.current.entries]);
-    if (event.active !== undefined) setActive(event.active);
-  };
-  const hydrate = async (id: string) => {
-    const snapshot = await desktop!.readLogSession(id);
-    if (!mounted.current || session.current !== id) return;
-    collector.current = new LogAccumulator();
-    for (const chunk of snapshot.chunks)
-      collector.current.append(
-        id,
-        chunk.text,
-        chunk.offset - new TextEncoder().encode(chunk.text).length,
-        chunk.context,
-      );
-    setActive(snapshot.active);
-    setEndsAt(snapshot.endsAt);
-    loaded.current = true;
-    for (const event of pending.current) if (event.id === id) append(event);
-    pending.current = [];
-    setLines([...collector.current.entries]);
-  };
-  useEffect(() => {
-    mounted.current = true;
-    const off = desktop!.onEvent((event) => {
-      if (event.kind !== 'container-log' || event.id !== session.current) return;
-      if (!loaded.current) pending.current.push(event);
-      else append(event);
-    });
-    if (initialSession)
-      void hydrate(initialSession).catch((e) => {
-        if (mounted.current) setError(String(e));
-      });
-    return () => {
-      mounted.current = false;
-      off();
-      if (session.current) void desktop!.stopLogs(session.current);
-    };
-  }, []);
-  const begin = async () => {
-    setBusy(true);
-    setError('');
-    loaded.current = false;
-    try {
-      const id = await desktop!.followLogs(targetId, credential);
-      if (!mounted.current) {
-        await desktop!.stopLogs(id);
-        return;
-      }
-      session.current = id;
-      setCredential('');
-      await hydrate(id);
-    } catch (e) {
-      if (mounted.current) setError(String(e));
-    } finally {
-      if (mounted.current) setBusy(false);
-    }
-  };
-  return (
-    <>
-      {!initialSession && (
-        <Field label="连接口令（已有保存凭据或 SSH 别名可留空）">
-          <input
-            type="password"
-            value={credential}
-            autoComplete="off"
-            onChange={(e) => setCredential(e.target.value)}
-          />
-        </Field>
-      )}
-      <div className="row wrap">
-        <Button variant="default" size="compact" disabled={active || busy} onClick={() => void begin()}>
-          {busy ? '连接中…' : '跟随应用日志'}
-        </Button>
-        <Button
-          variant="neutral" size="compact"
-          disabled={!active}
-          onClick={() => {
-            void desktop!.stopLogs(session.current);
-            setActive(false);
-          }}
-        >
-          停止跟随
-        </Button>
-        <Badge>{active ? '正在跟随' : '已停止'}</Badge>
-      </div>
-      {endsAt && (
-        <p className="note">
-          将在 {new Date(endsAt).toLocaleTimeString('zh-CN', { hour12: false })}{' '}
-          自动停止；关闭窗口也会停止当前会话。
-        </p>
-      )}
-      {error && (
-        <p className="warning" role="alert">
-          {error}
-        </p>
-      )}
-      <VirtualLogs entries={lines} />
-    </>
-  );
-}
-
 export function LockTakeover({
   token,
   owner,

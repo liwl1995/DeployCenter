@@ -106,6 +106,7 @@ export function ServiceSidebar({
                 <button
                   className="sidebar-link"
                   aria-label="一键部署"
+                  aria-current={page === 'deploy' ? 'page' : undefined}
                   onClick={() => onPage('deploy')}
                 >
                   <Box size={17} />

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { gzipSync } from 'node:zlib';
@@ -10,6 +10,7 @@ import { checkImageImport } from '../electron/image-import';
 import { ImageJobs } from '../electron/images';
 import type { Transport } from '../electron/ssh';
 import type { ImageCheck, ImageJob } from '../src/images';
+import { seed } from '../src/model';
 
 const base = path.resolve('.test-data');
 const label = 'yotoo/crm:2.2.0';
@@ -61,6 +62,29 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   if (dir.startsWith(base + path.sep)) await rm(dir, { recursive: true, force: true });
+});
+
+it('可从镜像包列表取消刚启动的构建，保留取消记录且不发布镜像包', async () => {
+  const changes: ImageJob[] = [];
+  const manager = new ImageJobs(dir, { job: (value) => changes.push(structuredClone(value)), log: vi.fn() });
+  const db = seed();
+  const first = manager.build({
+    serviceId: db.services[0].id,
+    engine: { kind: 'windows' },
+    mode: 'existing',
+    dockerfile: path.join(dir, 'Dockerfile'),
+    context: dir,
+    reference: label,
+    platform: 'linux/amd64',
+  }, db.services[0], db);
+  expect(() => manager.cancelBuild(randomUUID())).toThrow('镜像构建');
+  manager.cancelBuild(first.id);
+  await vi.waitFor(() => expect(manager.busy()).toBe(false));
+  expect(changes.some((job) => job.status === 'running' && job.cancelling)).toBe(true);
+  expect((await manager.list())[0]).toMatchObject({ status: 'cancelled', message: expect.stringContaining('未生成镜像包') });
+  expect((await manager.list())[0].archive).toBeUndefined();
+  expect((await manager.logs(first.id)).map((chunk) => chunk.text).join('')).toContain('镜像构建已取消');
+  await expect(stat(path.join(manager.directory, first.id, 'export.partial.tar'))).rejects.toMatchObject({ code: 'ENOENT' });
 });
 
 it('读取单标签 Docker 归档、gzip、平台及真实配置摘要，拒绝多标签和越界条目', async () => {

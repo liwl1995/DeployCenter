@@ -11,6 +11,7 @@ export type ProcessOptions = {
   onData?: (text: string) => void;
   encoding?: 'auto' | 'utf8' | 'gb18030' | 'utf16le';
   maxOutput?: number;
+  cancelWithStdin?: boolean;
 };
 export type ProcessResult = {
   code: number;
@@ -70,7 +71,7 @@ export function runProcess(
       cwd: opts.cwd,
       env: opts.env || process.env,
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [opts.cancelWithStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       shell: false,
     });
     let out = '',
@@ -79,6 +80,7 @@ export function runProcess(
       killed = '',
       carries = new Map<string, string>(),
       settled = false;
+    let forceStop: ReturnType<typeof setTimeout> | undefined;
     const decoders = new Map<string, ReturnType<typeof iconv.getDecoder>>();
     const undecided = new Map<string, Buffer>();
     const add = (kind: 'stdout' | 'stderr', data: Buffer, final = false) => {
@@ -118,17 +120,25 @@ export function runProcess(
     };
     child.stdout!.on('data', (data) => add('stdout', data));
     child.stderr!.on('data', (data) => add('stderr', data));
+    child.stdin?.on('error', () => {});
+    const stop = () => {
+      if (opts.cancelWithStdin && child.stdin && !child.stdin.destroyed) {
+        if (!child.stdin.writableEnded) child.stdin.end('\n');
+        forceStop ??= setTimeout(() => stopOwnedProcess(child), 5000);
+      } else stopOwnedProcess(child);
+    };
     const abort = () => {
       killed = '操作已取消';
-      stopOwnedProcess(child);
+      stop();
     };
     const timer = setTimeout(() => {
       killed = `命令执行超时（${Math.round((opts.timeout || 1800000) / 1000)} 秒）`;
-      stopOwnedProcess(child);
+      stop();
     }, opts.timeout || 1800000);
     opts.signal?.addEventListener('abort', abort, { once: true });
     const cleanup = () => {
       clearTimeout(timer);
+      clearTimeout(forceStop);
       opts.signal?.removeEventListener('abort', abort);
     };
     child.once('error', (error) => {

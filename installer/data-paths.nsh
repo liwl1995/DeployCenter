@@ -2,25 +2,48 @@
 !ifndef YOTOO_LOCATION_KEY
   !define YOTOO_LOCATION_KEY "Software\YOTOO\DeployCenter"
 !endif
+!ifndef YOTOO_ROAMING_DATA
+  !define YOTOO_ROAMING_DATA "$APPDATA"
+!endif
+!ifndef YOTOO_LEGACY_SETTINGS
+  !define YOTOO_LEGACY_SETTINGS "$LOCALAPPDATA\DeployCenter\Settings"
+!endif
 Var DC_DataRoot
 Var DC_ControlDirectory
 Var DC_InstallerLogs
 Var DC_InstallerBackups
 !macro DC_DataPathFunctions PREFIX
 Function ${PREFIX}DC_SetDataPaths
+  StrCpy $2 0
   ReadRegStr $DC_DataRoot HKCU "${YOTOO_LOCATION_KEY}" "DataDirectory"
   StrCpy $DC_ControlDirectory "$DC_DataRoot\Control"
   ${If} $DC_DataRoot == ""
-    StrCpy $DC_DataRoot "$APPDATA\DeployCenter"
-    StrCpy $DC_ControlDirectory "$DC_DataRoot\Control"
-    IfFileExists "$LOCALAPPDATA\DeployCenter\Settings\data-location.ini" 0 DC_LocationReadDone
-    ReadINIStr $DC_DataRoot "$LOCALAPPDATA\DeployCenter\Settings\data-location.ini" "location" "active"
-    StrCpy $DC_ControlDirectory "$LOCALAPPDATA\DeployCenter\Settings"
+    IfFileExists "${YOTOO_LEGACY_SETTINGS}\data-location.ini" 0 DC_DefaultLocation
+    ReadINIStr $DC_DataRoot "${YOTOO_LEGACY_SETTINGS}\data-location.ini" "location" "active"
+    StrCpy $DC_ControlDirectory "${YOTOO_LEGACY_SETTINGS}"
   ${EndIf}
+  Goto DC_LocationReadDone
+  DC_DefaultLocation:
+  StrCpy $2 1
+  StrCpy $DC_DataRoot "${YOTOO_ROAMING_DATA}\DeployCenter"
+  StrCpy $DC_ControlDirectory "$DC_DataRoot\Control"
   DC_LocationReadDone:
   GetFullPathName $0 "$DC_DataRoot"
+  ; NSIS 无法规范化尚不存在的末级目录。只允许未配置的默认目录尚未创建，
+  ; 并核对 Win32 的文件不存在状态、AppData 目录及其祖先。
   ${If} $0 != $DC_DataRoot
-    Goto DC_LocationInvalid
+    ${If} $0 != ""
+    ${OrIf} $2 != 1
+      Goto DC_LocationInvalid
+    ${EndIf}
+    StrCpy $0 $DC_DataRoot
+    System::Call 'kernel32::GetFileAttributesW(w r0)i.r1 ?e'
+    Pop $3
+    ${If} $1 != -1
+    ${OrIf} $3 != 2
+      Goto DC_LocationInvalid
+    ${EndIf}
+    StrCpy $2 2
   ${EndIf}
   ${GetRoot} "$DC_DataRoot" $0
   ${If} $DC_DataRoot == ""
@@ -33,6 +56,12 @@ Function ${PREFIX}DC_SetDataPaths
     Goto DC_LocationInvalid
   ${EndIf}
   StrCpy $0 $DC_DataRoot
+  ${If} $2 == 2
+    GetFullPathName $0 "${YOTOO_ROAMING_DATA}"
+    ${If} $0 != "${YOTOO_ROAMING_DATA}"
+      Goto DC_LocationInvalid
+    ${EndIf}
+  ${EndIf}
   DC_LocationAncestor:
     ${If} $0 == $WINDIR
     ${OrIf} $0 == $PROGRAMFILES
@@ -41,6 +70,13 @@ Function ${PREFIX}DC_SetDataPaths
       Goto DC_LocationInvalid
     ${EndIf}
     System::Call 'kernel32::GetFileAttributesW(w r0)i.r1'
+    ${If} $2 == 2
+      IntOp $3 $1 & 0x10
+      ${If} $1 == -1
+      ${OrIf} $3 == 0
+        Goto DC_LocationInvalid
+      ${EndIf}
+    ${EndIf}
     ${If} $1 != -1
       IntOp $1 $1 & 0x400
       ${If} $1 != 0
@@ -54,8 +90,10 @@ Function ${PREFIX}DC_SetDataPaths
       Goto DC_LocationAncestor
     ${EndIf}
   StrCpy $DC_PurgeError ""
-  Push $DC_DataRoot
-  Call ${PREFIX}DC_ValidateDataRoot
+  ${If} $2 != 2
+    Push $DC_DataRoot
+    Call ${PREFIX}DC_ValidateDataRoot
+  ${EndIf}
   ${If} $DC_PurgeError != ""
     Goto DC_LocationInvalid
   ${EndIf}

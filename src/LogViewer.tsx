@@ -10,6 +10,12 @@ export function VirtualLogs({
   active = true,
   compact = false,
   initialFollow = true,
+  following,
+  onFollowingChange,
+  latest,
+  showToolbar = true,
+  grouped = true,
+  label = '任务日志',
   trailing,
   entries,
   focusStep,
@@ -21,6 +27,12 @@ export function VirtualLogs({
   active?: boolean;
   compact?: boolean;
   initialFollow?: boolean;
+  following?: boolean;
+  onFollowingChange?: (follow: boolean) => void;
+  latest?: number;
+  showToolbar?: boolean;
+  grouped?: boolean;
+  label?: string;
   trailing?: ReactNode;
   focusLine?: { id: string; nonce: number };
   focusStep?: { name: string; nonce: number };
@@ -35,7 +47,9 @@ export function VirtualLogs({
   const automaticTop = useRef<number | undefined>(undefined);
   const [selected, setSelected] = useState(false),
     [top, setTop] = useState(0),
-    [follow, setFollow] = useState(initialFollow);
+    [internalFollow, setInternalFollow] = useState(initialFollow);
+  const follow = following ?? internalFollow;
+  const setFollow = onFollowingChange ?? setInternalFollow;
   const [level, setLevel] = useState('all'),
     [query, setQuery] = useState(''),
     [hit, setHit] = useState(-1);
@@ -77,6 +91,7 @@ export function VirtualLogs({
   );
   const rows = useMemo(() => {
     const result: Row[] = [];
+    if (!grouped) return filtered.map((line) => ({ id: line.id, kind: 'line' as const, line, step: '' }));
     let previous = '',
       command = '';
     for (const line of filtered) {
@@ -94,7 +109,7 @@ export function VirtualLogs({
       result.push({ id: line.id, kind: 'line', step, line });
     }
     return result;
-  }, [filtered, collapsed]);
+  }, [filtered, collapsed, grouped]);
   const jumpTo = (line: LogLine) => {
     setLocated(line.id);
     setFollow(false);
@@ -144,6 +159,7 @@ export function VirtualLogs({
       jumpTo(line);
     }
   }, [focusError, entries]);
+  const lastJump = useRef(latest);
   useLayoutEffect(() => {
     const el = viewport.current;
     // 隐藏区域和选中的文字需要保留原滚动位置。
@@ -161,10 +177,11 @@ export function VirtualLogs({
         scrollTo(Math.min(index * height, end()));
         setJump(undefined);
       }
-    } else if (follow) {
+    } else if (follow || latest !== lastJump.current) {
+      lastJump.current = latest;
       scrollTo(end());
       // 横向滚动条随可见长行出现或消失时，实际视口高度也会变化。
-      if (typeof ResizeObserver !== 'undefined') {
+      if (follow && typeof ResizeObserver !== 'undefined') {
         const observer = new ResizeObserver(() => scrollTo(end()));
         observer.observe(el);
         if (content.current) observer.observe(content.current);
@@ -173,7 +190,7 @@ export function VirtualLogs({
     } else {
       setTop(el.scrollTop);
     }
-  }, [rows, follow, jump, selected, active, !!trailing, level]);
+  }, [rows, follow, jump, selected, active, !!trailing, level, latest]);
   const copy = async () => {
     const text = entries.map((r) => r.text).join('\n');
     try {
@@ -194,7 +211,7 @@ export function VirtualLogs({
     end = Math.min(rows.length, start + 40);
   return (
     <div className="log-viewer" ref={root}>
-      {compact ? (
+      {showToolbar && (compact ? (
         <div className="log-toolbar log-toolbar-compact">
           <h2 className="log-heading">执行日志</h2>
           <select
@@ -284,15 +301,15 @@ export function VirtualLogs({
             行，当前筛选 {filtered.length} 行。
           </p>
         </>
-      )}
-      {!compact && message && (
+      ))}
+      {showToolbar && !compact && message && (
         <p className="note" role="status">
           {message}
         </p>
       )}
       <div
         className="log-viewport"
-        aria-label="任务日志"
+        aria-label={label}
         role="log"
         ref={viewport}
         onScroll={(e) => {

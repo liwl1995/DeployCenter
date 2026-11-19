@@ -93,6 +93,7 @@ export type Startup = {
 };
 export type DesktopEvent =
   | { kind: 'image-job'; job: ImageJob }
+  | { kind: 'online-log-download'; token: string; bytes: number }
   | { kind: 'image-log'; id: string; chunks: ImageLogChunk[] }
   | { kind: 'desktop-preferences'; preferences: import('./desktop-preferences').DesktopPreferences }
   | { kind: 'open-settings' }
@@ -117,6 +118,7 @@ export type DesktopEvent =
       text: string;
       offset?: number;
       active?: boolean;
+      notice?: string;
       context?: import('./features').LogContext;
     }
   | {
@@ -142,6 +144,7 @@ export interface DesktopAPI {
   checkImageImport(source: ImageSource, serverId: string, credential: string): Promise<ImageCheck & { token: string }>;
   startImageImport(token: string, credential: string): Promise<ImageJob>;
   cancelImageUpload(id: string): Promise<void>;
+  cancelImageBuild(id: string): Promise<void>;
   desktopPreferences(): Promise<import('./desktop-preferences').DesktopPreferences>;
   saveDesktopPreferences(value: Partial<import('./desktop-preferences').DesktopPreferences>): Promise<import('./desktop-preferences').DesktopPreferences>;
   listSchedules(): Promise<import('./schedules').ReleaseSchedule[]>;
@@ -212,6 +215,13 @@ export interface DesktopAPI {
   }>;
   exportLogs(taskId: string, targetId?: string): Promise<boolean>;
   followLogs(targetId: string, credential?: string): Promise<string>;
+  onlineLogSource(targetId: string): Promise<import('./online-logs').OnlineLogSource>;
+  listOnlineLogSessions(): Promise<import('./online-logs').OnlineSession[]>;
+  searchOnlineLogs(session: string, request: import('./online-logs').OnlineSearch): Promise<import('./online-logs').OnlineSearchResult>;
+  prepareOnlineLogDownload(session: string): Promise<import('./online-logs').OnlineDownload>;
+  saveOnlineLogs(token: string): Promise<boolean>;
+  cancelOnlineLogDownload(token: string): Promise<void>;
+  saveLoadedLogs(session: string): Promise<boolean>;
   stopLogs(id: string): Promise<void>;
   readLogSession(id: string): Promise<import('./features').LogSessionSnapshot>;
   searchHistory(query: string): Promise<import('./features').HistorySearchResult>;
