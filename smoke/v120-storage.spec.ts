@@ -61,7 +61,7 @@ test.beforeEach(async () => {
   const page = await app.firstWindow();
   await page.getByRole('region', { name: '服务工作台', exact: true }).waitFor();
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('tab', { name: '数据与存储', exact: true }).click();
+  await page.getByRole('tab', { name: '数据与备份', exact: true }).click();
 });
 test.afterEach(async () => {
   await app?.close();
@@ -130,7 +130,7 @@ test('1.2.0 从设置迁移全部数据，重启激活且默认保留旧目录',
   );
   expect((await fs.stat(path.join(source, 'deploy-center.sqlite'))).isFile()).toBe(true);
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('tab', { name: '数据与存储', exact: true }).click();
+  await page.getByRole('tab', { name: '数据与备份', exact: true }).click();
   await expect(page.getByText('原数据副本仍保留', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '保留旧目录（默认）' })).toBeVisible();
   await page.getByRole('button', { name: '保留旧目录（默认）' }).click();

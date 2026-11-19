@@ -105,6 +105,7 @@ function resultFor(task: Task, run?: RunTarget): { tone: Status; text: string } 
 
 export function TaskView({
   task: snapshot,
+  initialFollow,
   inspected,
   setInspected,
   backLabel,
@@ -128,6 +129,7 @@ export function TaskView({
   onBackups,
 }: {
   task: Task;
+  initialFollow?: boolean;
   inspected: number;
   setInspected: (index: number) => void;
   backLabel: string;
@@ -523,6 +525,7 @@ export function TaskView({
           {desktop ? (
             <NativeLogPanel
               key={targetId}
+              initialFollow={initialFollow}
               taskId={task.id}
               targetId={targetId}
               initial={logs}
@@ -539,6 +542,7 @@ export function TaskView({
           ) : (
             <VirtualLogs
               compact
+              initialFollow={initialFollow}
               trailing={
                 run?.steps.find((s) => s.key === 'upload')?.status === 'running' && run.upload ? (
                   <UploadProgress upload={run.upload} />

@@ -9,6 +9,7 @@ type Row = { id: string; kind: 'group' | 'command' | 'line'; step: string; line:
 export function VirtualLogs({
   active = true,
   compact = false,
+  initialFollow = true,
   trailing,
   entries,
   focusStep,
@@ -19,6 +20,7 @@ export function VirtualLogs({
   entries: LogLine[];
   active?: boolean;
   compact?: boolean;
+  initialFollow?: boolean;
   trailing?: ReactNode;
   focusLine?: { id: string; nonce: number };
   focusStep?: { name: string; nonce: number };
@@ -33,7 +35,7 @@ export function VirtualLogs({
   const automaticTop = useRef<number | undefined>(undefined);
   const [selected, setSelected] = useState(false),
     [top, setTop] = useState(0),
-    [follow, setFollow] = useState(true);
+    [follow, setFollow] = useState(initialFollow);
   const [level, setLevel] = useState('all'),
     [query, setQuery] = useState(''),
     [hit, setHit] = useState(-1);

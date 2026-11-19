@@ -59,7 +59,8 @@ import { Badge, Card, Field, FieldHelp, Switch, Modal, Demo, download, hasOpenMo
 import { ServiceForm, ServerForm, TargetForm, BackupFields } from './forms';
 import './style.css';
 import { LegacyArtifactReview } from './DataSettings';
-import { SettingsWorkspace } from './SettingsWorkspace';
+import { SettingsWorkspace, settingsLabels, type SettingsSection } from './SettingsWorkspace';
+import { desktopPreferenceDefaults } from './desktop-preferences';
 import type { SnapshotAvailability } from './features';
 import {
   confirmProduction,
@@ -234,7 +235,9 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   const { page, returnPage: taskReturnPage, navigate: setPage, openTask, returnFromTask, mainRef, serviceScrollRef } = useWorkspaceNavigation(initialPage);
   const historyViews = useRef(new Map<string, HistoryViewState>());
   const [serviceTab, setServiceTab] = useState('deploy');
-  const [settingsSection, setSettingsSection] = useState('general');
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>('general');
+  const [desktopPreferences, setDesktopPreferences] = useState(desktopPreferenceDefaults);
+  const traySelectService = useRef<(id: string) => void>(() => {});
   const [environment, setEnvironment] = useState('all');
   const [density, setDensity] = useState<'compact' | 'comfortable'>(() => {
     try { return localStorage.getItem('deploy-center-density') === 'comfortable' ? 'comfortable' : 'compact'; }
@@ -390,9 +393,16 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       });
     };
     refresh();
+    void desktop.desktopPreferences?.().then(setDesktopPreferences).catch(() => {});
     return desktop!.onEvent((event) => {
       if (event.kind === 'schedules') setSchedules(event.schedules);
       if (event.kind === 'open-schedules') setPage('schedules');
+      if (event.kind === 'desktop-preferences') setDesktopPreferences(event.preferences);
+      if (event.kind === 'open-settings') {
+        setSettingsSection('general');
+        setPage('settings');
+      }
+      if (event.kind === 'open-service') traySelectService.current(event.serviceId);
       if (event.kind === 'maintenance') refresh();
       if (event.kind === 'task') {
         setTask(event.task);
@@ -586,6 +596,11 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     setOverrides({});
     setDb((old) => ({ ...old, lastService: id }));
   }
+  traySelectService.current = (id) => {
+    if (id !== serviceId) selectService(id);
+    setServiceTab('deploy');
+    setPage('deploy');
+  };
   function toggleTarget(t: Target) {
     const next = selected.includes(t.id) ? selected.filter((x) => x !== t.id) : [...selected, t.id];
     setSelected(next);
@@ -1300,7 +1315,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
             truncateTitle
             icon={page === 'deploy' && db.services.length ? <Box size={20} strokeWidth={1.5} /> : page === 'settings' ? <SettingsIcon size={18} strokeWidth={1.5} /> : undefined}
             title={page === 'deploy' && db.services.length ? service.name :
-              page === 'settings' && desktop ? ({ general: '外观与提醒', deploy: '部署与构建', data: '数据与存储', help: '配置与帮助' }[settingsSection] || '设置') :
+              page === 'settings' && desktop ? settingsLabels[settingsSection] :
               workspacePages.find((entry) => entry.page === page)?.name || 'YOTOO 部署中心'}
             subtitle={page === 'deploy' && service.description ? service.description : undefined}
             actions={page === 'deploy' && !!db.services.length ? <>
@@ -1861,7 +1876,9 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               onDensity={setDensity}
               migrationBlock={isActive(task) ? '任务执行或取消中，不能迁移数据目录。' : unfinished.length ? '有未处理的中断任务，请先核实结果再迁移。' : undefined}
               busy={isActive(task)}
-              version={boot?.version || '2.0.1'}
+              version={boot?.version || '2.1.0'}
+              preferences={desktopPreferences}
+              onPreferences={setDesktopPreferences}
               showDemo={fixture}
               onImport={() => {
                 if (desktop) void importNative();
@@ -1878,6 +1895,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 <TaskView
                   key={task.id}
                   task={task}
+                  initialFollow={desktopPreferences.followLogs}
                   inspected={viewedTarget}
                   setInspected={setInspected}
                   backLabel={taskReturnPage === 'schedules' ? '返回发布计划' : taskReturnPage === 'history' ? '返回部署历史' : taskReturnPage === 'deploy' ? '返回部署' : '返回'}

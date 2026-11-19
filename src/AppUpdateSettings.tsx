@@ -1,7 +1,7 @@
 import { Button } from './design/ui/button';
 import { useCallback, useEffect, useState } from 'react';
 import { Download, RefreshCw, Loader2, CheckCircle2 } from 'lucide-react';
-import { Card, Modal } from './ui';
+import { Card } from './ui';
 import { UpdateNotes } from './UpdateNotes';
 import type { DesktopAPI } from './platform';
 import type { AppUpdate } from './app-update';
@@ -23,7 +23,6 @@ export function AppUpdateSettings({
     speed: 0,
   });
   const [error, setError] = useState('');
-  const [confirm, setConfirm] = useState(false);
   useEffect(() => {
     if (!api) return;
     let disposed = false,
@@ -69,23 +68,22 @@ export function AppUpdateSettings({
   const downloading = state.stage === 'downloading';
   const hasUpdate = state.release && !['current', 'idle', 'checking'].includes(state.stage);
   const label = {
-    idle: '手动检查正式版本，不会自动安装。',
+    idle: '可检查 GitHub 上发布的正式版本。',
     checking: '正在检查新版本…',
     cached: '已找到上次下载的安装包，检查版本后可复用匹配的文件。',
     current: '当前已是最新版本。',
     available: '发现新版本，可以下载安装包。',
     downloading: '正在下载安装包…',
     verifying: '正在校验安装包…',
-    ready: '安装包已通过 SHA-256 校验，可以安装。',
-    installing: '正在准备退出并启动安装向导…',
+    ready: '安装包已通过 SHA-256 校验，更新完成后会自动重新打开应用。',
+    installing: '正在准备静默安装并重启…',
     error: '检查或下载未完成，可以重试。',
   }[state.stage];
   return (
-    <>
-      <Card className="app-update-settings">
+    <Card className="app-update-settings">
         <div className="update-heading">
           <div>
-            <h2>软件更新</h2>
+            <h2>版本与安装</h2>
             <p>
               YOTOO 部署中心 <strong>v{state.currentVersion}</strong>
             </p>
@@ -95,9 +93,9 @@ export function AppUpdateSettings({
               <Button
                 variant="default" size="compact"
                 disabled={!api || active}
-                onClick={() => setConfirm(true)}
+                onClick={() => void action(() => api!.installUpdate())}
               >
-                退出并安装
+                更新并重启
               </Button>
             ) : hasUpdate && state.stage !== 'installing' ? (
               <Button
@@ -200,43 +198,6 @@ export function AppUpdateSettings({
           <p className="note">当前任务尚未结束，可以检查和下载更新；任务结束后才能安装。</p>
         )}
         {!api && <p className="note">请在 Windows 安装版中检查和安装更新。</p>}
-      </Card>
-      {confirm && (
-        <Modal
-          title="确认安装更新"
-          onClose={() => setConfirm(false)}
-          closeDisabled={state.stage === 'installing'}
-          footer={
-            <>
-              <Button
-                variant="neutral" size="compact"
-                disabled={state.stage === 'installing'}
-                onClick={() => setConfirm(false)}
-              >
-                暂不安装
-              </Button>
-              <Button
-                variant="default" size="compact"
-                data-autofocus
-                disabled={active || state.stage === 'installing'}
-                onClick={() => void action(() => api!.installUpdate())}
-              >
-                确认退出并安装
-              </Button>
-            </>
-          }
-        >
-          <p>将退出 YOTOO 部署中心，并启动 v{state.release?.version} 的安装向导。</p>
-          <p>沿用当前安装目录，保留服务、服务器、部署历史和用户数据。</p>
-          <p className="note">安装向导中仍可取消；不会强制停止部署或远程维护操作。</p>
-          {(error || state.message) && (
-            <p className="notice update-error" role="alert">
-              {error || state.message}
-            </p>
-          )}
-          {active && <p className="notice warning">请先等待当前任务结束。</p>}
-        </Modal>
-      )}
-    </>
+    </Card>
   );
 }

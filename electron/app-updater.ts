@@ -16,7 +16,7 @@ type Options = {
   fetch: Fetch;
   emit: (value: AppUpdate) => void;
   installBlocked: () => string | undefined;
-  launch: (file: string, hash: string) => Promise<void>;
+  launch: (file: string, hash: string, version: string) => Promise<void>;
   now?: () => number;
   cacheProtection?: {
     protect: (value: string) => Promise<Buffer>;
@@ -478,7 +478,7 @@ export class AppUpdater {
   }
   /** 安装前再查任务状态并重新读取文件校验，避免校验后被篡改。 */
   async install(): Promise<AppUpdate> {
-    if (this.installing) throw new Error('正在启动安装向导');
+    if (this.installing) throw new Error('正在准备安装更新');
     if (!this.file || !this.release || this.value.stage !== 'ready')
       throw new Error('请先下载并校验安装包');
     const blocked = this.options.installBlocked();
@@ -510,7 +510,7 @@ export class AppUpdater {
       }
       const reason = this.options.installBlocked();
       if (reason) throw new Error(reason);
-      await this.options.launch(this.file!, this.release.hash);
+      await this.options.launch(this.file!, this.release.hash, this.release.version);
       return this.state();
     } catch (error) {
       this.installing = false;

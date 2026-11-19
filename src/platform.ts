@@ -89,6 +89,9 @@ export type Startup = {
   dataLocation?: { previous?: string; pending?: string; previousKept?: boolean };
 };
 export type DesktopEvent =
+  | { kind: 'desktop-preferences'; preferences: import('./desktop-preferences').DesktopPreferences }
+  | { kind: 'open-settings' }
+  | { kind: 'open-service'; serviceId: string }
   | { kind: 'open-schedules' }
   | { kind: 'schedules'; schedules: import('./schedules').ReleaseSchedule[] }
   | {
@@ -125,6 +128,8 @@ export type DesktopEvent =
   | { kind: 'open-task'; taskId: string }
   | { kind: 'update'; update: import('./app-update').AppUpdate };
 export interface DesktopAPI {
+  desktopPreferences(): Promise<import('./desktop-preferences').DesktopPreferences>;
+  saveDesktopPreferences(value: Partial<import('./desktop-preferences').DesktopPreferences>): Promise<import('./desktop-preferences').DesktopPreferences>;
   listSchedules(): Promise<import('./schedules').ReleaseSchedule[]>;
   createSchedule(token: string, credentials: Record<string, string>, approval: Approval, scheduledAt: number, replaces?: string): Promise<import('./schedules').ReleaseSchedule>;
   cancelSchedule(id: string): Promise<void>;

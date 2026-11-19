@@ -848,6 +848,23 @@ p.code,
   gap: var(--space-1);
   color: var(--text-2);
 }
+.preference-list > :is(.field, .switch-row, .preference-row) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  min-height: var(--h-control);
+  padding: var(--space-2) 0;
+}
+.preference-list > :is(.field, .switch-row, .preference-row) + :is(.field, .switch-row, .preference-row) {
+  border-top: 1px solid var(--line);
+}
+.preference-list > .field > :is(select, input) {
+  width: min(208px, 28vw);
+}
+.preference-list > .field > small {
+  grid-column: 1 / -1;
+}
 .wide {
   grid-column: 1 / -1;
 }
@@ -1148,7 +1165,7 @@ p.code,
   min-height: var(--h-card);
 }
 .entity-list {
-  grid-template-columns: 30px minmax(0, 1fr) 76px 116px max-content;
+  grid-template-columns: minmax(0, 1fr) 76px 116px max-content;
 }
 .entity-record {
   grid-column: 1 / -1;
@@ -1159,13 +1176,22 @@ p.code,
   min-height: var(--h-card);
   padding: var(--card-py) 12px;
 }
-.entity-record-identity {
-  grid-column: 2;
+.entity-record-main {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   min-width: 0;
 }
-.entity-record > .entity-state { grid-column: 3; }
-.entity-record > .entity-card-meta { grid-column: 4; }
-.entity-record > .entity-actions { grid-column: 5; justify-content: flex-end; }
+.entity-record-main > .record-icon {
+  flex: none;
+}
+.entity-record-identity {
+  min-width: 0;
+}
+.entity-record > .entity-state { grid-column: 2; }
+.entity-record > .entity-card-meta { grid-column: 3; }
+.entity-record > .entity-actions { grid-column: 4; justify-content: flex-end; }
 .schedule-identity {
   flex: 1;
   min-width: 0;
@@ -1887,9 +1913,9 @@ th {
 }
 @media (max-width: 740px) {
   .entity-list {
-    grid-template-columns: 30px minmax(0, 1fr) 76px max-content;
+    grid-template-columns: minmax(0, 1fr) 76px max-content;
   }
-  .entity-record > .entity-actions { grid-column: 4; }
+  .entity-record > .entity-actions { grid-column: 3; }
   .entity-record > .entity-card-meta {
     display: none;
   }

@@ -8,6 +8,7 @@ await fs.mkdir('dist-electron', { recursive: true });
 const entryPoints = [
   'electron/main.ts',
   'electron/preload.ts',
+  'electron/tray-preload.ts',
   'electron/worker.ts',
   'electron/history-search.ts',
 ];

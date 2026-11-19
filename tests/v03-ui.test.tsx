@@ -98,7 +98,7 @@ describe('v0.3 组件回归', () => {
   it('B7 设置保留条数立即清理最旧历史与孤立任务日志', () => {
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: '设置' }));
-    fireEvent.click(screen.getByRole('tab', { name: '数据与存储' }));
+    fireEvent.click(screen.getByRole('tab', { name: '数据与备份' }));
     fireEvent.change(screen.getByRole('spinbutton', { name: /历史保留条数/ }), {
       target: { value: '1' },
     });
@@ -131,7 +131,7 @@ describe('v0.3 组件回归', () => {
     expect(setSpy).toHaveBeenCalledWith({ s19: 'only-in-memory-credential' });
     expect(localStorage.getItem('deploy-center-v2')).not.toContain('only-in-memory-credential');
     fireEvent.click(screen.getByRole('button', { name: '设置' }));
-    fireEvent.click(screen.getByRole('tab', { name: '配置与帮助' }));
+    fireEvent.click(screen.getByRole('tab', { name: '数据与备份' }));
     fireEvent.click(screen.getByRole('button', { name: '导出配置' }));
     expect(exportSpy.mock.calls[0][1]).not.toContain('only-in-memory-credential');
     const clearCount = clearSpy.mock.calls.length;

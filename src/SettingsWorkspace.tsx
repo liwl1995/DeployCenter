@@ -1,5 +1,5 @@
 import { Button } from './design/ui/button';
-import { useRef, type Dispatch, type SetStateAction } from 'react';
+import { useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { BookOpen, ChevronRight, Code2, Download, Info, Upload } from 'lucide-react';
 import { AppUpdateSettings } from './AppUpdateSettings';
 import { DataSettings } from './DataSettings';
@@ -10,8 +10,17 @@ import type { DesktopAPI } from './platform';
 import { pruneHistory } from './records';
 import { Card, Demo, Field, Switch } from './ui';
 import { WorkspaceTabs } from './WorkspaceLayout';
+import { zoomOptions, type DesktopPreferences } from './desktop-preferences';
 
 type Density = 'compact' | 'comfortable';
+export const settingsLabels = {
+  general: '通用',
+  deploy: '部署与构建',
+  data: '数据与备份',
+  update: '软件更新',
+  help: '关于与帮助',
+} as const;
+export type SettingsSection = keyof typeof settingsLabels;
 
 export function SettingsWorkspace({
   desktop,
@@ -24,6 +33,8 @@ export function SettingsWorkspace({
   migrationBlock,
   busy,
   version,
+  preferences,
+  onPreferences,
   showDemo,
   onImport,
   onExport,
@@ -31,18 +42,35 @@ export function SettingsWorkspace({
   desktop?: DesktopAPI;
   db: Database;
   setDb: Dispatch<SetStateAction<Database>>;
-  section: string;
-  onSection: (section: string) => void;
+  section: SettingsSection;
+  onSection: (section: SettingsSection) => void;
   density: Density;
   onDensity: (density: Density) => void;
   migrationBlock?: string;
   busy: boolean;
   version: string;
+  preferences: DesktopPreferences;
+  onPreferences: (preferences: DesktopPreferences) => void;
   showDemo?: boolean;
   onImport: () => void;
   onExport: () => void;
 }) {
   const usageRef = useRef<HTMLDListElement>(null);
+  const [saving, setSaving] = useState(false);
+  const [preferenceError, setPreferenceError] = useState('');
+  async function changePreferences(changes: Partial<DesktopPreferences>) {
+    if (!desktop || saving) return;
+    setSaving(true);
+    setPreferenceError('');
+    try {
+      onPreferences(await desktop.saveDesktopPreferences(changes));
+    } catch (error) {
+      setPreferenceError(String(error instanceof Error ? error.message : error)
+        .replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ''));
+    } finally {
+      setSaving(false);
+    }
+  }
   const scrollToUsage = () =>
     usageRef.current?.scrollIntoView({
       behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
@@ -95,14 +123,27 @@ export function SettingsWorkspace({
       </div>
     </div>
   );
+  const configurationBackup = (
+    <Card className="help-settings-section">
+      <div className="help-section-row">
+        <div>
+          <h2>配置备份</h2>
+          <p className="muted">导出服务、服务器和目标配置，认证口令和本机偏好单独保存。</p>
+        </div>
+        <div className="row wrap">
+          <Button variant="neutral" size="compact" onClick={onExport}><Download size={16} />导出配置</Button>
+          <Button variant="neutral" size="compact" onClick={onImport} disabled={busy}><Upload size={16} />导入配置</Button>
+        </div>
+      </div>
+    </Card>
+  );
   const sections = [
     {
       id: 'general',
-      label: '外观与提醒',
-      description: '界面偏好和后台任务提醒，修改后自动保存。',
+      label: settingsLabels.general,
       content: (
         <div className="stack">
-          <Card title="界面外观">
+          <Card title="外观" className="preference-list">
             <Field label="界面主题">
               <select
                 value={db.settings.theme}
@@ -121,9 +162,9 @@ export function SettingsWorkspace({
                 <option value="dark">深色</option>
               </select>
             </Field>
-          </Card>
-          <Card title="界面密度">
-            <SegmentedControl
+            <div className="preference-row">
+              <span>界面密度</span>
+              <SegmentedControl
               size="sm"
               aria-label="界面密度"
               value={density}
@@ -132,10 +173,32 @@ export function SettingsWorkspace({
                 { value: 'compact', label: '紧凑' },
                 { value: 'comfortable', label: '舒适' },
               ]}
-            />
+              />
+            </div>
+            {desktop && <Field label="界面缩放">
+              <select value={preferences.zoom} disabled={saving} onChange={(e) => {
+                const zoom = zoomOptions.find((option) => option === Number(e.target.value));
+                if (zoom) void changePreferences({ zoom });
+              }}>
+                {zoomOptions.map((zoom) => <option key={zoom} value={zoom}>{zoom}%</option>)}
+              </select>
+            </Field>}
           </Card>
           {desktop && (
-            <Card title="后台提醒">
+            <Card title="窗口与启动" className="preference-list">
+              <Switch label="记住窗口大小和位置" checked={preferences.rememberWindow} disabled={saving}
+                onChange={(rememberWindow) => void changePreferences({ rememberWindow })} />
+              <Switch label="开机启动" checked={preferences.launchAtLogin} disabled={saving}
+                onChange={(launchAtLogin) => void changePreferences({ launchAtLogin })} />
+              <Switch label="关闭到托盘" description="关闭窗口后继续执行部署和发布计划。"
+                checked={preferences.closeToTray} disabled={saving}
+                onChange={(closeToTray) => void changePreferences({ closeToTray })} />
+            </Card>
+          )}
+          {desktop && (
+            <Card title="任务与提醒" className="preference-list">
+              <Switch label="任务日志默认跟随最新" checked={preferences.followLogs} disabled={saving}
+                onChange={(followLogs) => void changePreferences({ followLogs })} />
               <Switch
                 label="Windows 系统通知"
                 checked={db.settings.notifications !== false}
@@ -159,6 +222,7 @@ export function SettingsWorkspace({
               />
             </Card>
           )}
+          {preferenceError && <p className="notice warning" role="alert">{preferenceError}</p>}
           {showDemo && (
             <Demo>
               <Switch
@@ -176,12 +240,11 @@ export function SettingsWorkspace({
     },
     {
       id: 'deploy',
-      label: '部署与构建',
+      label: settingsLabels.deploy,
       description: '这里设置全局默认值，部署页仍可单次覆盖。',
       content: (
         <div className="stack">
-          <Card title="部署默认行为">
-            <div className="settings-fields">
+          <Card title="部署默认行为" className="preference-list">
               <Field label="某个目标失败后">
                 <select
                   value={db.settings.failurePolicy}
@@ -216,9 +279,8 @@ export function SettingsWorkspace({
                   }
                 />
               </Field>
-            </div>
           </Card>
-          <Card title="构建兼容性">
+          <Card title="构建兼容性" className="preference-list">
             <Switch
               label="兼容 Maven 异常非零退出码"
               description="仅当日志包含 BUILD SUCCESS、产物有效且修改时间晚于本次构建开始时间时允许；默认开启，可关闭"
@@ -236,7 +298,7 @@ export function SettingsWorkspace({
     },
     {
       id: 'data',
-      label: '数据与存储',
+      label: settingsLabels.data,
       description: '查看占用、管理数据位置及保留规则。清理与迁移均需明确确认。',
       content: desktop ? (
         <div className="stack data-storage-sections">
@@ -270,38 +332,38 @@ export function SettingsWorkspace({
               }))
             }
           />
+          {configurationBackup}
         </div>
       ) : (
-        historyFields
+        <div className="stack">{historyFields}{configurationBackup}</div>
+      ),
+    },
+    {
+      id: 'update',
+      label: settingsLabels.update,
+      content: (
+        <div className="stack">
+          <AppUpdateSettings api={desktop} version={version} active={busy} />
+          {desktop && <Card title="检查方式" className="preference-list">
+            <Field label="更新检查方式" hint="自动模式启动 1 分钟后检查，之后每 6 小时检查一次。安装由你确认。">
+              <select value={preferences.updatePolicy} disabled={saving} onChange={(e) =>
+                void changePreferences({ updatePolicy: e.target.value as DesktopPreferences['updatePolicy'] })
+              }>
+                <option value="manual">手动检查</option>
+                <option value="check">自动检查</option>
+                <option value="download">自动检查并下载</option>
+              </select>
+            </Field>
+            {preferenceError && <p className="notice warning" role="alert">{preferenceError}</p>}
+          </Card>}
+        </div>
       ),
     },
     {
       id: 'help',
-      label: '配置与帮助',
-      description: '检查软件更新、备份配置或查看使用说明。',
+      label: settingsLabels.help,
       content: (
         <div className="help-settings">
-          {desktop && <AppUpdateSettings api={desktop} version={version} active={busy} />}
-          <Card className="help-settings-section">
-            <div className="help-section-row">
-              <div>
-                <h2>配置备份</h2>
-                <p className="muted">
-                  导出服务、服务器和目标配置，不包含认证口令；完整日志单独保存。
-                </p>
-              </div>
-              <div className="row wrap">
-                <Button variant="neutral" size="compact" onClick={() => onExport()}>
-                  <Download size={16} />
-                  导出配置
-                </Button>
-                <Button variant="neutral" size="compact" onClick={onImport} disabled={busy}>
-                  <Upload size={16} />
-                  导入配置
-                </Button>
-              </div>
-            </div>
-          </Card>
           {desktop && (
             <Card className="help-settings-section">
               <h2>帮助与项目</h2>
@@ -356,12 +418,15 @@ export function SettingsWorkspace({
         </div>
       ),
     },
-  ];
+  ] satisfies { id: SettingsSection; label: string; description?: string; content: React.ReactNode }[];
   return (
     <WorkspaceTabs
       label="设置分类"
       value={section}
-      onChange={onSection}
+      onChange={(id) => {
+        const next = sections.find((entry) => entry.id === id);
+        if (next) onSection(next.id);
+      }}
       navigationTarget="settings-directory"
       sections={sections}
     />

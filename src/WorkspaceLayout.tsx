@@ -1,6 +1,6 @@
 import { Button } from './design/ui/button';
 import { useEffect, useLayoutEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Search, ArrowLeft, Box, Settings, Rocket, HardDrive, CircleHelp } from 'lucide-react';
+import { Search, ArrowLeft, Box, Settings, Rocket, HardDrive, CircleHelp, RefreshCw } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Input } from './design/ui/input';
 
@@ -116,24 +116,26 @@ export function EntityWorkspace<T extends { id: string }>({
           <div className="entity-list" aria-label={label + '列表'}>
             {visible.map((item) => (
               <article key={item.id} className="entity-record">
-                <span className="record-icon">
-                  <Box size={18} strokeWidth={1.5} />
-                </span>
-                <div className="entity-record-identity">
-                  <button
-                    className="entity-name"
-                    data-entity-id={item.id}
-                    aria-label={'查看' + label + title(item) + '详情'}
-                    onClick={() => enter(item.id)}
-                  >
-                    {title(item)}
-                  </button>
-                  {subtitle(item) && (
-                    <p className="entity-card-subtitle" title={subtitle(item)}>
-                      {subtitle(item)}
-                    </p>
-                  )}
-                  <div className="entity-card-summary">{summary?.(item)}</div>
+                <div className="entity-record-main">
+                  <span className="record-icon">
+                    <Box size={18} strokeWidth={1.5} />
+                  </span>
+                  <div className="entity-record-identity">
+                    <button
+                      className="entity-name"
+                      data-entity-id={item.id}
+                      aria-label={'查看' + label + title(item) + '详情'}
+                      onClick={() => enter(item.id)}
+                    >
+                      {title(item)}
+                    </button>
+                    {subtitle(item) && (
+                      <p className="entity-card-subtitle" title={subtitle(item)}>
+                        {subtitle(item)}
+                      </p>
+                    )}
+                    <div className="entity-card-summary">{summary?.(item)}</div>
+                  </div>
                 </div>
                 {cardState && (
                   <span className={'entity-state' + (cardState(item).good ? ' good' : '')}>
@@ -182,7 +184,7 @@ export function WorkspaceTabs({
     setLocal(next);
     onChange?.(next);
   };
-  const icons = { general: Settings, deploy: Rocket, data: HardDrive, help: CircleHelp };
+  const icons = { general: Settings, deploy: Rocket, data: HardDrive, update: RefreshCw, help: CircleHelp };
   const navigation = (
     <div
       className={directory ? 'sidebar-settings-tabs' : 'workspace-tab-list'}

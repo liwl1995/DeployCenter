@@ -506,7 +506,7 @@ test('日志优先任务页的八种状态与连续输出在三个尺寸下可�
   }
 });
 
-test('配置与帮助展示仓库并使用系统浏览器打开，其他外链继续拒绝', async () => {
+test('关于与帮助展示仓库并使用系统浏览器打开，其他外链继续拒绝', async () => {
   const page = await app.firstWindow();
   await app.evaluate(({ shell }) => {
     shell.openExternal = async (destination: string) => {
@@ -514,7 +514,7 @@ test('配置与帮助展示仓库并使用系统浏览器打开，其他外链�
     };
   });
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('tab', { name: '配置与帮助', exact: true }).click();
+  await page.getByRole('tab', { name: '关于与帮助', exact: true }).click();
   const link = page.getByRole('link', {
     name: '查看版本与源码',
     exact: true,
@@ -533,6 +533,15 @@ test('配置与帮助展示仓库并使用系统浏览器打开，其他外链�
     )
     .toBe('https://github.com/liwl1995/DeployCenter/releases');
   expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
+  for (const [width, height] of sizes) {
+    await app.evaluate(({ BrowserWindow }, bounds) =>
+      BrowserWindow.getAllWindows()[0].setContentSize(bounds.width, bounds.height), { width, height });
+    expect(await page.locator('.help-resource-row').evaluateAll((elements) => {
+      const bounds = elements.map((element) => element.getBoundingClientRect());
+      return bounds.length === 3 && bounds.every((item, index) =>
+        index === 0 || item.top >= bounds[index - 1].bottom - 1);
+    })).toBe(true);
+  }
   await boundaries();
   await shot('配置与帮助-仓库');
 });
@@ -627,7 +636,7 @@ test('更新设置三种窗口下无溢出，按需下载、取消和校验，�
   }, 'http://127.0.0.1:' + address.port);
   try {
     await page.getByRole('button', { name: '设置', exact: true }).click();
-    await page.getByRole('tab', { name: '配置与帮助', exact: true }).click();
+    await page.getByRole('tab', { name: '软件更新', exact: true }).click();
     await expect(page.getByRole('button', { name: '检查更新', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: '快捷键', exact: true })).toHaveCount(0);
     await page.getByRole('button', { name: '检查更新', exact: true }).click();
@@ -650,22 +659,6 @@ test('更新设置三种窗口下无溢出，按需下载、取消和校验，�
         true,
       );
       await shot(`更新设置-${width}x${height}`);
-      const links = page.locator('.help-resource-list');
-      await links.scrollIntoViewIfNeeded();
-      expect(
-        await links.locator('.help-resource-row').evaluateAll((elements) => {
-          const bounds = elements.map((e) => e.getBoundingClientRect());
-          return (
-            bounds.length === 3 &&
-            bounds.every((b, i) => i === 0 || b.top >= bounds[i - 1].bottom - 1)
-          );
-        }),
-      ).toBe(true);
-      await page
-        .locator('.help-settings-section')
-        .last()
-        .screenshot({ path: path.join(captures, `帮助列表-${width}x${height}.png`) });
-      await page.getByRole('button', { name: '下载更新', exact: true }).scrollIntoViewIfNeeded();
     }
     await page.getByText('查看更新说明', { exact: true }).click();
     await expect(
@@ -709,12 +702,11 @@ test('更新设置三种窗口下无溢出，按需下载、取消和校验，�
     await page.getByRole('button', { name: '取消下载', exact: true }).click();
     await expect(page.getByText('下载已取消或连接超时，可以重新下载。')).toBeVisible();
     await page.getByRole('button', { name: '下载更新', exact: true }).click();
-    await expect(page.getByRole('button', { name: '退出并安装', exact: true })).toBeEnabled();
-    await page.getByRole('button', { name: '退出并安装', exact: true }).click();
-    await expect(page.getByRole('dialog', { name: '确认安装更新' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '更新并重启', exact: true })).toBeEnabled();
     await boundaries();
-    await shot('更新安装确认');
-    if (process.env.DEPLOY_CENTER_TEST_EXE) {
+    await shot('更新等待安装');
+    const testExe = process.env.DEPLOY_CENTER_TEST_EXE;
+    if (testExe && await fs.stat(path.join(path.dirname(testExe), 'Uninstall ' + path.basename(testExe))).then(() => true, () => false)) {
       // 只在隔离数据库添加中断任务，验证主进程阻止安装；夹具安装包绝不执行。
       const boot = await page.evaluate(() => window.deployCenter!.load());
       const db = boot.database;
@@ -728,17 +720,16 @@ test('更新设置三种窗口下无溢出，按需下载、取消和校验，�
       } finally {
         sqlite.close();
       }
-      await page.getByRole('button', { name: '确认退出并安装', exact: true }).click();
-      await expect(page.getByRole('dialog').getByRole('alert')).toContainText('未结束');
+      await page.getByRole('button', { name: '更新并重启', exact: true }).click();
+      await expect(page.locator('.app-update-settings').getByRole('alert')).toContainText('未结束');
     } else {
-      await page.getByRole('button', { name: '确认退出并安装', exact: true }).click();
-      await expect(page.getByRole('dialog').getByRole('alert')).toContainText('安装版');
+      await page.getByRole('button', { name: '更新并重启', exact: true }).click();
+      await expect(page.locator('.app-update-settings').getByRole('alert')).toContainText('安装版');
     }
-    await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await main.focus();
     await page.keyboard.press('Alt+1');
-    await expect(page.getByRole('tab', { name: '配置与帮助', exact: true })).toHaveAttribute(
+    await expect(page.getByRole('tab', { name: '软件更新', exact: true })).toHaveAttribute(
       'aria-selected',
       'true',
     );
@@ -760,8 +751,8 @@ test('更新设置三种窗口下无溢出，按需下载、取消和校验，�
     });
     const reopened = await app.firstWindow();
     await reopened.getByRole('button', { name: '设置', exact: true }).click();
-    await reopened.getByRole('tab', { name: '配置与帮助', exact: true }).click();
-    await expect(reopened.getByRole('button', { name: '退出并安装', exact: true })).toBeVisible();
+    await reopened.getByRole('tab', { name: '软件更新', exact: true }).click();
+    await expect(reopened.getByRole('button', { name: '更新并重启', exact: true })).toBeVisible();
     expect(requests.length).toBe(beforeRestart);
     expect((await reopened.evaluate(() => window.deployCenter!.updateState())).installerPath).toBe(
       before.installerPath,
@@ -943,7 +934,7 @@ test('设置外观支持两种主题、跟随系统和重新启动后的偏好�
   const page = await app.firstWindow();
   const settings = page.getByRole('button', { name: '设置', exact: true });
   await settings.click();
-  await page.getByRole('tab', { name: '外观与提醒', exact: true }).click();
+  await page.getByRole('tab', { name: '通用', exact: true }).click();
   const select = page.getByLabel('界面主题', { exact: true });
   const colors: Record<string, string> = {};
   for (const theme of ['light', 'dark']) {
@@ -963,7 +954,7 @@ test('设置外观支持两种主题、跟随系统和重新启动后的偏好�
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await settings.click();
-  await page.getByRole('tab', { name: '外观与提醒', exact: true }).click();
+  await page.getByRole('tab', { name: '通用', exact: true }).click();
   await select.selectOption('system');
   for (const theme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme: theme });

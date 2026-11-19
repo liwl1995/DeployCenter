@@ -11,6 +11,7 @@ export function NativeLogPanel({
   active = true,
   compact = false,
   running = false,
+  initialFollow,
   trailing,
   taskId,
   targetId,
@@ -22,6 +23,7 @@ export function NativeLogPanel({
   active?: boolean;
   compact?: boolean;
   running?: boolean;
+  initialFollow?: boolean;
   trailing?: ReactNode;
   taskId: string;
   targetId: string;
@@ -250,6 +252,7 @@ export function NativeLogPanel({
         </p>
       )}
       <VirtualLogs
+        initialFollow={initialFollow}
         active={active}
         compact={compact}
         trailing={trailing}

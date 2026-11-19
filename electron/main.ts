@@ -10,6 +10,7 @@ import {
   Notification,
   powerMonitor,
   safeStorage,
+  screen,
   shell,
   utilityProcess,
 } from 'electron';
@@ -25,6 +26,10 @@ import { Storage } from './storage';
 import { AppUpdater } from './app-updater';
 import { createUpdateFetch } from './update-network';
 import { launchInstallerAfterExit } from './update-installer';
+import { DesktopPreferenceStore, fitWindow, preferencesSchema } from './desktop-preferences';
+import { createTrayPanel } from './tray-panel';
+import { backgroundUpdates } from './background-updates';
+import type { DesktopPreferences, UpdatePolicy } from '../src/desktop-preferences';
 import { dataPaths, DirectoryLocator } from './data-paths';
 import { allowedProjectLink } from '../src/update-links';
 import { prepareDataHome, recoverDataHome, testLocator } from './data-home';
@@ -191,6 +196,7 @@ const readOnlyDuringMigration = new Set([
   'help',
   'about',
   'update-state',
+  'desktop-preferences',
   'open-update-cache',
   'copy-text',
   'open-update-link',
@@ -235,6 +241,9 @@ let win: BrowserWindow | undefined, storage: Storage, controller: Controller;
 let confirmedScheduleExit = false;
 let scheduler: ReleaseScheduler | undefined;
 let updater: AppUpdater | undefined;
+let trayPanel: ReturnType<typeof createTrayPanel> | undefined;
+let setBackgroundUpdatePolicy: ((policy: UpdatePolicy) => void) | undefined;
+let explicitExit = false;
 let backups: BackupManager;
 let workbench: WorkbenchRecovery;
 const approvedJars = new Set<string>();
@@ -260,6 +269,8 @@ const emit = (event: DesktopEvent) => {
     }
     win.webContents.send('deploy:event', event);
   }
+  if (event.kind === 'task' || event.kind === 'schedules' || event.kind === 'database' || event.kind === 'desktop-preferences')
+    trayPanel?.refresh();
 };
 const sessions = new LogSessions(emit);
 const notified = new Set<string>();
@@ -481,21 +492,34 @@ async function boot() {
     const smoke = process.argv.includes('--smoke');
     const toolbarColor = () => nativeTheme.shouldUseDarkColors ? '#e4e4e7' : '#18181b';
     const windowsChrome = process.platform === 'win32';
+    const icon = path.join(__dirname, '..', 'assets', 'icon.ico');
+    const executable = app.getPath('exe');
+    const installed = app.isPackaged && windowsChrome && process.arch === 'x64' &&
+      fs.existsSync(path.join(path.dirname(executable), 'Uninstall ' + path.basename(executable)));
+    const testing = process.env.DEPLOY_CENTER_TESTING === '1' || smoke;
+    const login = { path: executable, args: ['--login-start'] };
+    const preferences = new DesktopPreferenceStore(dataDir);
+    if (installed && !testing)
+      preferences.preferences.launchAtLogin = app.getLoginItemSettings(login).openAtLogin;
+    const savedWindow = preferences.preferences.rememberWindow ? preferences.window : undefined;
+    const bounds = savedWindow && fitWindow(savedWindow, screen.getDisplayMatching(savedWindow).workArea);
+    const startInTray = !testing && process.argv.includes('--login-start') && preferences.preferences.closeToTray;
     nativeTheme.themeSource = storage.database().settings.theme;
     win = new BrowserWindow({
       width: 1000,
       height: 650,
+      ...bounds,
       minWidth: 900,
       autoHideMenuBar: true,
       minHeight: 600,
-      show: !smoke,
+      show: !smoke && !startInTray,
       backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff',
       title: 'YOTOO 部署中心',
       ...(windowsChrome ? {
         titleBarStyle: 'hidden',
         titleBarOverlay: { color: '#00000000', symbolColor: toolbarColor(), height: 52 },
       } : {}),
-      icon: path.join(__dirname, '..', 'assets', 'icon.ico'),
+      icon,
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),
         nodeIntegration: false,
@@ -506,8 +530,110 @@ async function boot() {
         devTools: !app.isPackaged,
       },
     });
+    let restoreMaximized = Boolean(savedWindow?.maximized && startInTray);
+    const foreground = () => {
+      if (!win || win.isDestroyed()) return;
+      if (win.isMinimized()) win.restore();
+      if (restoreMaximized) {
+        restoreMaximized = false;
+        win.maximize();
+      }
+      if (!win.isVisible() && !win.isMaximized()) {
+        const current = win.getBounds();
+        const visible = fitWindow(current, screen.getDisplayMatching(current).workArea);
+        if (current.x !== visible.x || current.y !== visible.y ||
+            current.width !== visible.width || current.height !== visible.height)
+          win.setBounds(visible);
+      }
+      win.show();
+      win.focus();
+    };
+    if (savedWindow?.maximized && !startInTray && !smoke) win.maximize();
+    const applyZoom = () => win?.webContents.setZoomFactor(preferences.preferences.zoom / 100);
+    win.webContents.on('did-finish-load', applyZoom);
+    let saveBoundsTimer: ReturnType<typeof setTimeout> | undefined;
+    const captureBounds = () => {
+      if (!preferences.preferences.rememberWindow || migrating || pendingRestart || smoke || !win || win.isDestroyed() || win.isMinimized()) return;
+      try { preferences.save(preferences.preferences, { ...win.getNormalBounds(), maximized: win.isMaximized() }); }
+      catch (error) { console.warn('写入窗口位置失败', error); }
+    };
+    const queueBoundsSave = () => {
+      clearTimeout(saveBoundsTimer);
+      saveBoundsTimer = setTimeout(captureBounds, 300);
+    };
+    win.on('move', queueBoundsSave);
+    win.on('resize', queueBoundsSave);
+    win.on('maximize', queueBoundsSave);
+    win.on('unmaximize', queueBoundsSave);
+    const savePreferences = (value: unknown) => {
+      const previous = preferences.preferences;
+      const next: DesktopPreferences = { ...previous, ...preferencesSchema.partial().parse(value) };
+      if (next.launchAtLogin !== previous.launchAtLogin) {
+        if (!installed || testing) throw new Error('开机启动仅在正式 Windows 安装版中可设置');
+        app.setLoginItemSettings({ ...login, openAtLogin: next.launchAtLogin });
+        if (app.getLoginItemSettings(login).openAtLogin !== next.launchAtLogin)
+          throw new Error('Windows 未保存开机启动设置');
+      }
+      try { preferences.save(next); }
+      catch (error) {
+        if (next.launchAtLogin !== previous.launchAtLogin)
+          app.setLoginItemSettings({ ...login, openAtLogin: previous.launchAtLogin });
+        throw error;
+      }
+      if (next.rememberWindow && !previous.rememberWindow) captureBounds();
+      if (next.zoom !== previous.zoom) applyZoom();
+      if (next.updatePolicy !== previous.updatePolicy) setBackgroundUpdatePolicy?.(next.updatePolicy);
+      emit({ kind: 'desktop-preferences', preferences: next });
+      return next;
+    };
+    if (windowsChrome && !smoke) {
+      try {
+        trayPanel = createTrayPanel(icon, () => {
+          const db = storage.database();
+          const task = storage.latestTask();
+          const upcoming = storage.schedules().filter(pendingSchedule)
+            .sort((a, b) => a.scheduledAt - b.scheduledAt)[0];
+          const recent = new Set([db.lastService, ...db.history.map((item) => item.service.id)]);
+          return {
+            dark: nativeTheme.shouldUseDarkColors,
+            closeToTray: preferences.preferences.closeToTray,
+            task: task && controller.active()
+              ? { id: task.id, name: task.service.name, progress: Math.max(0, Math.round(taskProgress(task) * 100)) }
+              : undefined,
+            schedule: upcoming ? { name: upcoming.task.service.name, at: upcoming.scheduledAt } : undefined,
+            services: [...recent].map((id) => db.services.find((item) => item.id === id))
+              .filter((item) => item !== undefined).slice(0, 5)
+              .map(({ id, name }) => ({ id, name })),
+          };
+        }, (action, id) => {
+          if (action === 'toggle') {
+            try {
+              if (migrating || pendingRestart) throw new Error('请等待数据迁移完成并重启');
+              if (updater?.isInstalling()) throw new Error('正在准备安装更新，请稍候');
+              const next = savePreferences({ closeToTray: !preferences.preferences.closeToTray });
+              if (!next.closeToTray) foreground();
+            } catch (error) {
+              foreground();
+              void dialog.showMessageBox(win!, { type: 'warning', message: String(error) });
+            }
+            return;
+          }
+          foreground();
+          if (action === 'quit') app.quit();
+          if (action === 'settings') emit({ kind: 'open-settings' });
+          if (action === 'schedules') emit({ kind: 'open-schedules' });
+          if (action === 'service' && id) emit({ kind: 'open-service', serviceId: id });
+          if (action === 'task') {
+            const latest = storage.latestTask();
+            if (latest) emit({ kind: 'open-task', taskId: latest.id });
+          }
+        });
+      } catch (error) { console.warn('无法创建托盘', error); }
+    }
+    if (startInTray && !trayPanel) foreground();
     const syncToolbar = () => {
       if (windowsChrome && win && !win.isDestroyed()) win.setTitleBarOverlay({ symbolColor: toolbarColor() });
+      trayPanel?.refresh();
     };
     nativeTheme.on('updated', syncToolbar);
     win.once('closed', () => nativeTheme.removeListener('updated', syncToolbar));
@@ -577,6 +703,8 @@ async function boot() {
       if (content.includes('\0')) throw new Error('复制内容含有无效字符');
       return clipboard.writeText(content);
     });
+    handle('desktop-preferences', () => preferences.preferences);
+    handle('save-desktop-preferences', savePreferences);
     updater = new AppUpdater({
       currentVersion: app.getVersion(),
       directory: dataPaths(dataDir).updates,
@@ -591,16 +719,17 @@ async function boot() {
       },
       emit: (update) => emit({ kind: 'update', update }),
       installBlocked: () => {
-        if (!app.isPackaged || process.platform !== 'win32' || process.arch !== 'x64')
+        if (!installed)
           return '请在 Windows x64 安装版中安装更新';
         if (controller.active() || storage.unfinished().length)
           return '请先等待部署结束，并核实尚未结束的任务，再安装更新';
         if (migrating || pendingRestart) return '请先完成数据迁移并重启，再安装更新';
         if (backups.isBusy() || workbench.isBusy() || storage.artifacts.isBusy())
           return '远程维护或本地清理尚未结束，请等待后再安装更新';
+        if (scheduler?.isDispatching()) return '定时发布正在启动，请稍后再安装更新';
         return undefined;
       },
-      launch: async (file, hash) => {
+      launch: async (file, hash, version) => {
         if (!(await confirmScheduleExit())) throw new Error('已取消安装更新，继续等待发布计划');
         try {
           await launchInstallerAfterExit(
@@ -609,6 +738,7 @@ async function boot() {
             path.dirname(app.getPath('exe')),
             dataPaths(dataDir).updateLogs,
             nativeHelper,
+            { version, executable },
           );
         } catch (error) {
           confirmedScheduleExit = false;
@@ -618,6 +748,14 @@ async function boot() {
         setImmediate(() => app.quit());
       },
     });
+    if (installed && !testing) {
+      setBackgroundUpdatePolicy = backgroundUpdates({
+        isBusy: () => updater!.isBusy() || migrating || pendingRestart,
+        check: () => updater!.check(),
+        download: () => updater!.download(),
+      }, (error) => console.warn('后台检查更新失败', error));
+      setBackgroundUpdatePolicy(preferences.preferences.updatePolicy);
+    }
     await fsp.mkdir(dataPaths(dataDir).updates, { recursive: true });
     handle('update-state', () => updater!.restore());
     handle('open-update-cache', async () => {
@@ -1431,6 +1569,14 @@ async function boot() {
           event.preventDefault();
       });
     win.on('close', (event) => {
+      const exiting = explicitExit;
+      explicitExit = false;
+      captureBounds();
+      if (!exiting && trayPanel && preferences.preferences.closeToTray && !updater?.isInstalling()) {
+        event.preventDefault();
+        win?.hide();
+        return;
+      }
       if (migrating || backups.isBusy() || workbench.isBusy()) {
         event.preventDefault();
         void dialog.showMessageBox(win!, {
@@ -1464,10 +1610,21 @@ async function boot() {
       }
     });
     app.on('second-instance', () => {
-      win?.show();
-      win?.focus();
+      foreground();
+    });
+    win.once('closed', () => {
+      clearTimeout(saveBoundsTimer);
+      trayPanel?.close();
+      trayPanel = undefined;
     });
     await win.loadFile(page);
+    const updateError = path.join(dataPaths(dataDir).updateLogs, 'last-update-error.txt');
+    try {
+      const details = await fsp.readFile(updateError, 'utf8');
+      await fsp.unlink(updateError);
+      foreground();
+      void dialog.showMessageBox(win!, { type: 'error', message: '上次更新未完成', detail: details.slice(0, 2000) });
+    } catch { /* 没有上次更新失败的记录。 */ }
     if (smoke) {
       const plaintext = 'smoke-' + randomUUID();
       await storage.saveCredential('smoke', plaintext);
@@ -1507,7 +1664,9 @@ async function boot() {
   }
 }
 app.on('window-all-closed', () => app.quit());
+app.on('before-quit', () => { explicitExit = true; });
 app.on('will-quit', () => {
+  setBackgroundUpdatePolicy?.('manual');
   scheduler?.close();
   instance?.close();
   updater?.dispose();

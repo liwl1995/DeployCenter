@@ -1,0 +1,34 @@
+* { box-sizing: border-box; }
+body { margin: 0; font: 13px/1.4 "Segoe UI", "Microsoft YaHei", sans-serif; }
+main {
+  --bg: #fff; --surface: #f2f2f4; --line: #dddde1; --text: #232326; --dim: #595960; --accent: #c2410c;
+  display: flex; flex-direction: column; height: 100vh; padding: 12px; gap: 8px;
+  background: var(--bg); color: var(--text); border: 1px solid var(--line);
+}
+main.dark {
+  color-scheme: dark;
+  --bg: #242428; --surface: #343439; --line: #45454a; --text: #f6f6f7; --dim: #bfbfc5; --accent: #fb923c;
+}
+header, footer > div { display: flex; align-items: center; justify-content: space-between; }
+header strong { font-size: 15px; }
+button {
+  border: 0; border-radius: 6px; cursor: pointer; min-height: 32px; padding: 4px 8px;
+  background: transparent; color: inherit; font: inherit; display: inline-flex; align-items: center; gap: 8px;
+}
+button:hover, button[aria-pressed="true"] { background: var(--surface); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+button svg { flex: none; }
+nav { display: flex; padding: 4px; gap: 4px; border: 1px solid var(--line); border-radius: 8px; }
+nav button { flex: 1; justify-content: center; }
+.items { flex: 1; min-height: 0; overflow: auto; }
+.items p { padding: 8px; margin: 0; color: var(--dim); }
+.entry { width: 100%; text-align: left; justify-content: space-between; padding-block: 8px; }
+.entry > span:first-child { min-width: 0; }
+.entry strong, .entry small, .service span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.entry small { color: var(--dim); }
+.service span { flex: 1; }
+footer { border-top: 1px solid var(--line); padding-top: 4px; }
+.switch { width: 28px; height: 16px; border: 1px solid var(--dim); border-radius: 12px; padding: 2px; display: flex; align-items: center; }
+.switch::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--dim); }
+[aria-checked="true"] .switch { justify-content: flex-end; border-color: var(--accent); }
+[aria-checked="true"] .switch::before { background: var(--accent); }

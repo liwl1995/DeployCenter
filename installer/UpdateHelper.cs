@@ -42,6 +42,8 @@ internal static class UpdateHelper
     private static int Main(string[] args)
     {
         string log = null;
+        string executable = null;
+        bool silent = false;
         bool ready = false;
         try
         {
@@ -61,12 +63,21 @@ internal static class UpdateHelper
             if (args.Length > 0 && args[0].StartsWith("--data-directory-", StringComparison.Ordinal))
                 return DirectoryLocation(args);
             int pid;
-            if (args.Length != 5 || !int.TryParse(args[0], out pid) || pid <= 0)
+            if ((args.Length != 5 && args.Length != 7) || !int.TryParse(args[0], out pid) || pid <= 0)
                 throw new ArgumentException("更新安装参数无效");
             string file = Decode(args[1]);
             string expected = args[2];
             string directory = Decode(args[3]);
             log = Decode(args[4]);
+            silent = args.Length == 7;
+            if (silent)
+            {
+                executable = Decode(args[6]);
+                if (!System.Text.RegularExpressions.Regex.IsMatch(args[5], "\\A[0-9]+\\.[0-9]+\\.[0-9]+\\z") ||
+                    !String.Equals(Path.GetDirectoryName(Path.GetFullPath(executable)), Path.GetFullPath(directory), StringComparison.OrdinalIgnoreCase) ||
+                    !File.Exists(executable))
+                    throw new ArgumentException("静默更新的原安装位置或版本无效");
+            }
             if (!System.Text.RegularExpressions.Regex.IsMatch(expected, "\\A[a-f0-9]{64}\\z"))
                 throw new ArgumentException("安装包指纹无效");
             using (Process parent = Process.GetProcessById(pid))
@@ -79,10 +90,11 @@ internal static class UpdateHelper
             }
             // 与原流程一致：等待同名 Electron 子进程自然退出，不强制终止任何进程。
             DateTime deadline = DateTime.UtcNow.AddSeconds(30);
+            string[] names = silent ? new[] { Path.GetFileNameWithoutExtension(executable) } : new[] { "YOTOO 部署中心", "Deploy Center" };
             while (true)
             {
                 bool busy = false;
-                foreach (string name in new[] { "YOTOO 部署中心", "Deploy Center" })
+                foreach (string name in names)
                     foreach (Process process in Process.GetProcessesByName(name))
                     {
                         busy = true;
@@ -95,29 +107,64 @@ internal static class UpdateHelper
             }
             if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidOperationException("安装包不能是链接");
-            string actual;
-            using (FileStream stream = File.OpenRead(file))
-            using (SHA256 sha = SHA256.Create())
-                actual = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
-            if (actual != expected) throw new InvalidOperationException("安装包校验失败");
             ProcessStartInfo start = new ProcessStartInfo(file);
             start.WorkingDirectory = Path.GetDirectoryName(file);
-            start.UseShellExecute = true;
-            start.Arguments = "/D=" + directory;
-            using (Process installer = Process.Start(start)) { }
+            start.UseShellExecute = !silent;
+            start.CreateNoWindow = silent;
+            // NSIS 的 /D= 必须放在最后，包含空格时也不要加引号。
+            start.Arguments = (silent ? "/S /YOTOOUPDATE " : "") + "/D=" + directory;
+            Process launchedInstaller;
+            // 从计算摘要到创建进程都阻止替换缓存文件，避免校验后启动了不同内容。
+            using (FileStream stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read))
+            using (SHA256 sha = SHA256.Create())
+            {
+                string actual = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+                if (actual != expected) throw new InvalidOperationException("安装包校验失败");
+                launchedInstaller = Process.Start(start);
+            }
+            using (Process installer = launchedInstaller)
+            {
+                if (silent)
+                {
+                    installer.WaitForExit();
+                    if (installer.ExitCode != 0)
+                        throw new InvalidOperationException("安装程序退出码：" + installer.ExitCode);
+                    string installedVersion = File.Exists(executable) ? FileVersionInfo.GetVersionInfo(executable).ProductVersion : "";
+                    if (installedVersion != args[5] && installedVersion != args[5] + ".0")
+                        throw new InvalidOperationException("安装完成后未找到预期版本");
+                }
+            }
+            if (silent) Restart(executable);
             return 0;
         }
         catch (Exception error)
         {
-            string message = "无法启动更新安装，请重新打开 YOTOO 部署中心并重试。\n" + error.Message;
+            string message = "更新安装未完成。请查看更新日志后重试。\n" + error.Message;
             try
             {
                 if (log != null) File.AppendAllText(log, DateTime.Now.ToString("s") + " 更新安装未启动：" + error + Environment.NewLine, Encoding.UTF8);
             }
             catch { /* 日志不可写时仍反馈启动失败，不允许应用误以为交接成功。 */ }
+            if (ready && silent && executable != null && File.Exists(executable))
+            {
+                try
+                {
+                    File.WriteAllText(Path.Combine(Path.GetDirectoryName(log), "last-update-error.txt"), message, Encoding.UTF8);
+                    Restart(executable);
+                    return 1;
+                }
+                catch { /* 无法重新打开应用时，使用系统对话框说明失败。 */ }
+            }
             if (ready) MessageBox.Show(message, "YOTOO 部署中心 更新失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
             else Console.Error.WriteLine(message);
             return 1;
         }
+    }
+    private static void Restart(string executable)
+    {
+        ProcessStartInfo restart = new ProcessStartInfo(executable);
+        restart.WorkingDirectory = Path.GetDirectoryName(executable);
+        restart.UseShellExecute = false;
+        using (Process process = Process.Start(restart)) { }
     }
 }

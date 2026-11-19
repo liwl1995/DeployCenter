@@ -104,6 +104,20 @@ Var DC_OldShortcut
     StrCpy $DC_RequiredMB 1024
   !endif
   StrCpy $DC_DesktopChoice ${BST_CHECKED}
+  ${If} ${Silent}
+    ${GetParameters} $0
+    ClearErrors
+    ${GetOptions} $0 "/YOTOOUPDATE" $1
+    ${IfNot} ${Errors}
+      ${If} $DC_PreviousDir == ""
+      ${OrIf} $INSTDIR != $DC_PreviousDir
+        SetErrorLevel 1603
+        Abort
+      ${EndIf}
+      IfFileExists "$DESKTOP\${SHORTCUT_NAME}.lnk" +2 0
+      StrCpy $DC_DesktopChoice ${BST_UNCHECKED}
+    ${EndIf}
+  ${EndIf}
   CreateDirectory "$DC_InstallerLogs"
   FileOpen $DC_Log "$DC_InstallerLogs\last-install.log" a
   FileWrite $DC_Log "开始安装 ${VERSION}，目录：$INSTDIR$\r$\n"

@@ -148,7 +148,7 @@ describe('应用更新', () => {
     await f.updater.download();
     expect(f.fetch).toHaveBeenCalledTimes(2);
     await f.updater.install();
-    expect(f.launch).toHaveBeenCalledWith(expect.stringContaining('setup.exe'), hash);
+    expect(f.launch).toHaveBeenCalledWith(expect.stringContaining('setup.exe'), hash, '1.5.3');
   });
   it('下载被篡改或大小不一致时删除本次文件，允许重试', async () => {
     const f = await fixture();

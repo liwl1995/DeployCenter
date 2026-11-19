@@ -77,6 +77,47 @@ try{
   Check '已安装程序实际启动与 SQLite 加密渲染' ((Run $exe '--smoke') -eq 0 -and (Get-Content (Join-Path $data 'smoke-result.json') -Raw | ConvertFrom-Json).ok)
   Start-Sleep -Milliseconds 800
   Check '覆盖升级保留用户数据' ((Run $installer '/S') -eq 0 -and (Get-Content (Join-Path $data 'keep-user-data.txt') -Raw).Trim() -eq $id)
+  $desktopLink=Join-Path ([Environment]::GetFolderPath('Desktop')) "$product.lnk"
+  $different=Join-Path $qaRoot '静默更新不得使用'
+  Check '静默更新拒绝更换已注册目录' ((Run $installer "/S /YOTOOUPDATE /D=$different") -eq 1603 -and -not(Test-Path -LiteralPath (Join-Path $different "$product.exe")))
+  Check '静默更新保留已有桌面快捷方式' ((Run $installer "/S /YOTOOUPDATE /D=$program") -eq 0 -and (Test-Path -LiteralPath $desktopLink))
+  Remove-Item -LiteralPath $desktopLink
+  $helper=Join-Path $program 'resources/update-helper.exe'
+  $helperCopy=Join-Path $qaRoot 'update-helper.exe'
+  Copy-Item -LiteralPath $helper -Destination $helperCopy
+  $log=Join-Path $data 'logs/update/update-install.log'
+  New-Item -ItemType Directory -Path (Split-Path -Parent $log) -Force | Out-Null
+  function Encode([string]$Value){[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Value))}
+  $digest=(Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+  # 这一步检查真实可见窗口。隐藏启动会改写 Electron 首次显示窗口的 Win32 参数。
+  $parent=Start-Process -FilePath $exe -PassThru -RedirectStandardError (Join-Path $qaRoot 'old-app.stderr.log')
+  $deadline=[DateTime]::UtcNow.AddSeconds(30)
+  do {
+    $parent.Refresh()
+    if($parent.MainWindowHandle -ne 0 -or $parent.HasExited){break}
+    Start-Sleep -Milliseconds 200
+  } while([DateTime]::UtcNow -lt $deadline)
+  Check '旧应用等待交接时保持运行' (-not $parent.HasExited -and $parent.MainWindowHandle -ne 0)
+  $handoff="$($parent.Id) $(Encode $installer) $digest $(Encode $program) $(Encode $log) $version $(Encode $exe)"
+  $start=[Diagnostics.ProcessStartInfo]::new($helperCopy,$handoff)
+  $start.UseShellExecute=$false
+  $start.CreateNoWindow=$true
+  $start.RedirectStandardOutput=$true
+  $child=[Diagnostics.Process]::Start($start)
+  $ready=$child.StandardOutput.ReadLineAsync()
+  Check '助手就绪后才退出旧应用' ($ready.Wait(15000) -and $ready.Result -eq 'UPDATE_READY' -and -not $parent.HasExited)
+  $null=$parent.CloseMainWindow()
+  Check '独立助手静默覆盖原目录' ($child.WaitForExit(180000) -and $child.ExitCode -eq 0)
+  $deadline=[DateTime]::UtcNow.AddSeconds(30)
+  do {
+    $restarted=Get-Process -Name $product -ErrorAction SilentlyContinue | Where-Object {
+      $_.Path -eq $exe -and $_.MainWindowHandle -ne 0
+    } | Select-Object -First 1
+    if(-not $restarted){Start-Sleep -Milliseconds 250}
+  } until($restarted -or [DateTime]::UtcNow -ge $deadline)
+  Check '静默安装后自动打开主窗口' ($null -ne $restarted)
+  if($restarted){$null=$restarted.CloseMainWindow();$null=$restarted.WaitForExit(10000)}
+  Check '静默更新保留原目录及用户数据和快捷方式选择' ((Test-Path -LiteralPath $exe) -and -not(Test-Path -LiteralPath $desktopLink) -and (Get-Content (Join-Path $data 'keep-user-data.txt') -Raw).Trim() -eq $id)
   $protectedProgram=Join-Path $data 'Program'
   New-Item -ItemType Directory -Path $protectedProgram | Out-Null
   Check '拒绝安装到用户数据目录的子目录' ((Run $installer "/S /D=$protectedProgram") -eq 1603 -and @(Get-ChildItem -LiteralPath $protectedProgram -Force).Count -eq 0 -and (Test-Path -LiteralPath $exe))
@@ -110,5 +151,15 @@ try{
   @{ok=$false;version=$version;error=$_.Exception.Message;root=$qaRoot;checks=$checks} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $report -Encoding utf8
   throw
 }finally{
+  # 验收途中失败时也尽量卸载独立应用，保留该次日志。
+  if($program.StartsWith($qaRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){
+    $qaExe=Join-Path $program "$product.exe"
+    foreach($running in @(Get-Process -Name $product -ErrorAction SilentlyContinue | Where-Object Path -eq $qaExe)){
+      $null=$running.CloseMainWindow()
+      if(-not $running.WaitForExit(5000)){$running.Kill();$running.WaitForExit()}
+    }
+    $qaUninstaller=Join-Path $program "Uninstall $product.exe"
+    if(Test-Path -LiteralPath $qaUninstaller){try{$null=Run $qaUninstaller '/S'}catch{Write-Warning $_}}
+  }
   if($locationKey -match '^Software\\YOTOO\\DeployCenter\.Tests\\[a-f0-9-]{36}$' -and (Test-Path -LiteralPath "HKCU:\$locationKey")){Remove-Item -LiteralPath "HKCU:\$locationKey" -Recurse}
 }

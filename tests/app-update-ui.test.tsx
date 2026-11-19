@@ -77,22 +77,21 @@ it('手动检查，下载和安装独立，订阅进度并安全显示更新说�
   fireEvent.click(screen.getByRole('button', { name: '取消下载' }));
   await waitFor(() => expect(f.mocks.cancelUpdate).toHaveBeenCalled());
 });
-it('安装必须确认，活动任务禁止安装，后端拒绝时留在应用并显示原因', async () => {
+it('更新并重启只需点击一次，活动任务禁止安装，拒绝时显示原因', async () => {
   const f = client('ready');
   const view = render(<AppUpdateSettings api={f.api} version="1.5.2" active />);
   await waitFor(() =>
-    expect(screen.getByRole('button', { name: '退出并安装' }).hasAttribute('disabled')).toBe(true),
+    expect(screen.getByRole('button', { name: '更新并重启' }).hasAttribute('disabled')).toBe(true),
   );
   view.rerender(<AppUpdateSettings api={f.api} version="1.5.2" active={false} />);
-  fireEvent.click(screen.getByRole('button', { name: '退出并安装' }));
-  expect(screen.getByRole('dialog', { name: '确认安装更新' })).toBeTruthy();
   expect(f.mocks.installUpdate).not.toHaveBeenCalled();
   f.mocks.installUpdate.mockRejectedValueOnce(new Error('请先核实未结束的任务'));
-  fireEvent.click(screen.getByRole('button', { name: '确认退出并安装' }));
+  fireEvent.click(screen.getByRole('button', { name: '更新并重启' }));
   await waitFor(() =>
     expect(screen.getAllByRole('alert').some((e) => e.textContent?.includes('核实'))).toBe(true),
   );
-  expect(screen.getByRole('dialog')).toBeTruthy();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(f.mocks.installUpdate).toHaveBeenCalledOnce();
 });
 it('移除页面快捷键和说明，Ctrl Enter 不再提交；Esc 和 Tab 仍可用', async () => {
   render(<App />);

@@ -164,7 +164,7 @@ test('服务工作台在桌面窗口中可切换、筛选、打开任务和设�
     const sizes = [[900, 600], [1000, 620], [1280, 800], ...(scale === 1 ? [[1600, 900]] : [])];
     for (const theme of ['dark', 'light']) {
       await window.getByRole('button', { name: '设置', exact: true }).click();
-      await window.getByRole('tab', { name: '外观与提醒' }).click();
+      await window.getByRole('tab', { name: '通用' }).click();
       await window.getByLabel('界面主题').selectOption(theme);
       await expect(window.locator('html')).toHaveAttribute('data-theme', theme);
       await window.getByRole('button', { name: '返回应用' }).click();
@@ -306,7 +306,7 @@ test('服务工作台在桌面窗口中可切换、筛选、打开任务和设�
     ).toBeLessThan(0.001);
     await window.mouse.move(300, 150);
     await window.getByRole('button', { name: '设置', exact: true }).click();
-    await window.getByRole('tab', { name: '配置与帮助' }).click();
+    await window.getByRole('tab', { name: '软件更新' }).click();
     await expect(window.getByRole('heading', { name: '软件更新' })).toBeVisible();
     await app.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0].webContents.send('deploy:event', {
@@ -322,13 +322,17 @@ test('服务工作台在桌面窗口中可切换、筛选、打开任务和设�
     ]);
     expect(updateIcon!.x + updateIcon!.width).toBeLessThan(updateText!.x);
     expect(Math.abs(updateIcon!.y - updateText!.y)).toBeLessThanOrEqual(4);
-    await window.screenshot({ path: path.join(captures, '配置与帮助.png') });
-    await window.getByRole('tab', { name: '外观与提醒' }).click();
+    await window.screenshot({ path: path.join(captures, '软件更新.png') });
+    await window.getByRole('tab', { name: '通用' }).click();
     await window.getByLabel('界面主题').selectOption('light');
     await expect(window.locator('html')).toHaveAttribute('data-theme', 'light');
     await window.getByRole('button', { name: '返回应用' }).click();
     await window.getByRole('button', { name: '服务管理', exact: true }).click();
     await expect(window.locator('.entity-record')).toHaveCount(2);
+    const iconGap = await window.locator('.entity-record-main').first().evaluate((main) =>
+      main.children[1].getBoundingClientRect().left - main.children[0].getBoundingClientRect().right,
+    );
+    expect(iconGap).toBe(12);
     const states = window.locator('.entity-record .entity-state');
     expect((await states.first().boundingBox())!.x).toBe((await states.last().boundingBox())!.x);
     await window.screenshot({ path: path.join(captures, '服务管理-浅色.png') });

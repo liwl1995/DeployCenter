@@ -323,7 +323,7 @@ test('1.2.1 分类层级、详情工作区和提示横幅在实际桌面中可�
           : (name === '设置' || name === '服务管理' ? page : nav).getByRole('button', { name, exact: true })
         ).click();
         if (name === '设置') {
-          for (const tab of ['外观与提醒', '部署与构建', '数据与存储', '配置与帮助']) {
+          for (const tab of ['通用', '部署与构建', '数据与备份', '软件更新', '关于与帮助']) {
             await page.getByRole('tab', { name: tab, exact: true }).click();
             await expect(page.getByRole('tabpanel')).toBeVisible();
             const overflow = await page.locator('main').evaluate((main) =>
@@ -468,7 +468,7 @@ test('最小窗口下侧栏及设置入口始终可访问，数据目录从设�
   const settings = sidebar.getByRole('button', { name: '设置', exact: true });
   const before = await settings.boundingBox();
   await settings.click();
-  await page.getByRole('tab', { name: '数据与存储', exact: true }).click();
+  await page.getByRole('tab', { name: '数据与备份', exact: true }).click();
   await page.locator('.workspace > main').evaluate((main) => { main.scrollTop = main.scrollHeight; });
   expect(await settings.boundingBox()).toEqual(before);
   await expect(settings).toBeInViewport({ ratio: 1 });
@@ -522,7 +522,7 @@ test('1.2.2 部署首屏可见主要内容，数据页三块不折叠，迁移�
   await expect(page.locator('.target-override')).toHaveCount(1);
   await page.screenshot({ path: path.resolve('.test-data', 'v122-部署首屏.png') });
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('tab', { name: '数据与存储', exact: true }).click();
+  await page.getByRole('tab', { name: '数据与备份', exact: true }).click();
   for (const name of ['存储占用与清理', '数据位置', '保留规则'])
     await expect(page.getByRole('heading', { name, exact: true })).toHaveCount(1);
   await expect(page.getByRole('tabpanel').locator('details')).toHaveCount(0);

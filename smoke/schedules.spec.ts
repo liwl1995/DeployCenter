@@ -41,7 +41,8 @@ test.beforeEach(async ({}, info) => {
       credentialMode: 'ask',
     },
   ];
-  if (info.title.startsWith('创建计划通过')) {
+  const trayDispatch = info.title.startsWith('关闭到托盘');
+  if (info.title.startsWith('创建计划通过') || trayDispatch) {
     const probe = createServer();
     await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
     const port = (probe.address() as AddressInfo).port;
@@ -87,7 +88,7 @@ test.beforeEach(async ({}, info) => {
     {
       id: 'SP-desktop',
       createdAt: Date.now(),
-      scheduledAt: Date.now() + 3600000,
+      scheduledAt: Date.now() + (trayDispatch ? 25_000 : 3600000),
       state: 'ready',
       reason: '等待发布时间',
       preparationId: task.id,
@@ -121,6 +122,30 @@ test.afterEach(async () => {
   }
   if (!dir.startsWith(path.resolve('.test-data') + path.sep)) throw new Error('测试目录越界');
   await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('关闭到托盘后调度继续运行，显式退出仍确认待发布计划', async () => {
+  test.setTimeout(65_000);
+  const page = await app.firstWindow();
+  await page.evaluate(() => window.deployCenter!.saveDesktopPreferences({ closeToTray: true }));
+  await app.evaluate(({ app, BrowserWindow, dialog }) => {
+    const showMessageBox = dialog.showMessageBox.bind(dialog);
+    dialog.showMessageBox = ((parent, options) => {
+      if (options?.message === '仍有待发布计划') {
+        (globalThis as unknown as { quitPrompt: boolean }).quitPrompt = true;
+        return Promise.resolve({ response: 0, checkboxChecked: false });
+      }
+      return showMessageBox(parent, options);
+    }) as typeof dialog.showMessageBox;
+    BrowserWindow.getAllWindows()[0].close();
+    app.quit();
+  });
+  await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible())).toBe(false);
+  expect(await app.evaluate(() => (globalThis as unknown as { quitPrompt: boolean }).quitPrompt)).toBe(true);
+  // 缺少本机凭据使调度停在连接之前，本用例无须连接任何服务器。
+  await expect.poll(async () => (await page.evaluate(() => window.deployCenter!.listSchedules()))[0]?.reason, {
+    timeout: 32_000,
+  }).toContain('无法启动计划');
 });
 test('定时发布入口、确认时间、计划改期取消与日志返回', async () => {
   const page = await app.firstWindow();

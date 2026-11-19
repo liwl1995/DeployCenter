@@ -6,6 +6,9 @@ export default defineConfig({
   resolve: { alias: [{ find: /^\.\/demo$/, replacement: path.resolve('src/production-data.ts') }] },
   plugins: [react()],
   define: { __PROTOTYPE__: 'false' },
-  build: { target: 'chrome140', outDir: 'dist' },
+  build: {
+    target: 'chrome140', outDir: 'dist',
+    rollupOptions: { input: [path.resolve('index.html'), path.resolve('src/tray/index.html')] },
+  },
   server: { host: '127.0.0.1', strictPort: true },
 });

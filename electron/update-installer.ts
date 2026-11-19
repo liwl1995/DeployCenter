@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import { plainPath } from './managed-path';
 
 const encoded = (value: string) => Buffer.from(value, 'utf8').toString('base64');
-/** 路径作为编码参数传给独立助手，不经过 shell；助手再次校验指纹后启动向导。 */
+/** 路径作为编码参数传给独立助手，不经过命令行解释器。 */
 export function installerArguments(
   file: string,
   hash: string,
@@ -16,19 +16,21 @@ export function installerArguments(
     throw new Error('安装参数无效');
   return [String(pid), encoded(file), hash, encoded(installDir), encoded(log)];
 }
-/** 助手握住当前进程句柄并确认就绪后，应用才可以退出；不杀进程、不静默安装。 */
+/** 助手获得当前进程句柄并确认就绪后，应用才可以正常退出。 */
 export async function launchInstallerAfterExit(
   file: string,
   hash: string,
   installDir: string,
   settings: string,
   helper: string,
+  silent?: { version: string; executable: string },
 ) {
   plainPath(settings);
   await fs.mkdir(settings, { recursive: true });
   const log = path.join(settings, 'update-install.log');
-  await fs.appendFile(log, new Date().toISOString() + ' 准备启动更新安装向导\n', 'utf8');
+  await fs.appendFile(log, new Date().toISOString() + ' 准备启动更新安装\n', 'utf8');
   const args = installerArguments(file, hash, installDir, log, process.pid);
+  if (silent) args.push(silent.version, encoded(silent.executable));
   await new Promise<void>((resolve, reject) => {
     // 独立 .NET 助手可在无控制台时执行，detached 防止应用退出时结束助手。
     const child = spawn(helper, args, {
