@@ -1447,8 +1447,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 items={[
                   { value: 'deploy', label: '部署目标' },
                   { value: 'records', label: '发布记录' },
-                  ...(desktop ? [{ value: 'logs', label: '日志' }] : []),
                   { value: 'build', label: '构建配置' },
+                  ...(desktop ? [{ value: 'logs', label: '日志' }] : []),
                 ]}
                 className="service-workspace-tabs"
               />
@@ -1903,7 +1903,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               onDensity={setDensity}
               migrationBlock={isActive(task) ? '任务执行或取消中，不能迁移数据目录。' : unfinished.length ? '有未处理的中断任务，请先核实结果再迁移。' : undefined}
               busy={isActive(task)}
-              version={boot?.version || '2.3.0'}
+              version={boot?.version || '2.3.1'}
               preferences={desktopPreferences}
               onPreferences={setDesktopPreferences}
               showDemo={fixture}

@@ -135,12 +135,17 @@ test('服务工作台与目标快捷入口共享日志界面，通过回环 SSH 
     ];
     db.lastService = service.id;
     db.history = [];
+    db.settings.theme = 'dark';
     await page.evaluate((input) => window.deployCenter!.save(input), db);
     await page.reload();
-    await expect(page.getByRole('tab', { name: '日志', exact: true })).toBeVisible();
+    await expect(page.getByRole('tablist', { name: '服务工作台' }).getByRole('tab')).toHaveText([
+      '部署目标', '发布记录', '构建配置', '日志',
+    ]);
     await button('查看线上日志 · 正式日志目标').click();
     await expect(page.getByText('正式环境 · 只读', { exact: true })).toBeVisible();
     await expect(page.getByText(/回环夹具 · 127\.0\.0\.1/)).toBeVisible();
+    await expect(button('连接日志')).toHaveCSS('background-color', 'rgb(234, 88, 12)');
+    await expect(button('连接日志')).toHaveCSS('color', 'rgb(255, 255, 255)');
     await button('连接日志').click();
     await page.getByLabel('登录密码', { exact: true }).fill(secret);
     await page
@@ -185,7 +190,8 @@ test('服务工作台与目标快捷入口共享日志界面，通过回环 SSH 
       const workspace = page.locator('.online-log-workspace');
       expect(await workspace.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
       const log = (await page.getByRole('log', { name: '应用日志内容' }).boundingBox())!;
-      expect(log.height).toBeGreaterThan(200);
+      const workspaceBox = (await workspace.boundingBox())!;
+      expect(log.height / workspaceBox.height).toBeGreaterThan(0.75);
       expect(log.y + log.height).toBeLessThanOrEqual(height);
       await page.screenshot({ path: info.outputPath('线上日志-' + width + '.png') });
     }
@@ -200,7 +206,13 @@ test('服务工作台与目标快捷入口共享日志界面，通过回环 SSH 
     await app.evaluate(({ dialog }, file) => {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath: file });
     }, destination);
-    await button('下载完整日志').click();
+    const more = button('更多日志操作');
+    await more.focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(page.getByRole('menuitem', { name: '下载已加载日志' })).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(page.getByRole('menuitem', { name: '下载完整日志' })).toBeFocused();
+    await page.keyboard.press('Enter');
     const download = page.getByRole('dialog', { name: '下载完整日志' });
     await expect(download.getByText('服务器日志大小', { exact: false })).toBeVisible();
     await expect(download.getByText('日志按服务器原文保存。')).toBeVisible();
@@ -224,8 +236,39 @@ test('服务工作台与目标快捷入口共享日志界面，通过回环 SSH 
     await expect(
       page.getByRole('dialog', { name: '线上日志' }).getByRole('region', { name: '线上应用日志' }),
     ).toBeVisible();
-    await button('断开').click();
+    await more.click();
+    await expect(page.getByRole('menuitem', { name: '断开' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: '线上日志' })).toBeVisible();
+    await expect(more).toBeFocused();
+    await more.click();
+    await page.getByRole('menuitem', { name: '断开' }).click();
     await expect(button('重新连接')).toBeVisible();
+
+    await app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setContentSize(1000, 620),
+    );
+    await expectViewport(page, 1000, 620);
+    await page.evaluate(async () => {
+      const api = window.deployCenter!;
+      const { database } = await api.load();
+      await api.save({ ...database, settings: { ...database.settings, theme: 'light' } });
+      await api.saveDesktopPreferences({ zoom: 125 });
+    });
+    await page.reload();
+    await button('查看线上日志 · 正式日志目标').click();
+    await expect.poll(() => page.evaluate(() => innerWidth)).toBeLessThan(820);
+    await expect(button('连接日志')).toHaveCSS('background-color', 'rgb(249, 115, 22)');
+    const compact = page.locator('.online-log-workspace');
+    expect(await compact.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+    const connect = (await button('连接日志').boundingBox())!;
+    expect(connect.x + connect.width).toBeLessThan(await page.evaluate(() => innerWidth));
+    const logBody = (await page.locator('.online-log-empty').boundingBox())!;
+    expect(logBody.height / (await compact.boundingBox())!.height).toBeGreaterThan(0.7);
+    const preview = await app.evaluate(async ({ BrowserWindow }) =>
+      (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64'),
+    );
+    await writeFile(info.outputPath('线上日志-浅色-125.png'), Buffer.from(preview, 'base64'));
   } finally {
     await app.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));

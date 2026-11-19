@@ -101,8 +101,9 @@
     --text-1: #e4e4e7;
     --text-2: #ababb3;
     --text-3: #9a9aa2;
-    /* 深色模式实心按钮沿用橙底和高对比度前景，链接用较亮的橙色。 */
+    /* 深色模式沿用 CC Switch 的橙底白字，链接使用较亮的橙色。 */
     --action-bg: #ea580c;
+    --action-fg: #ffffff;
     --action-hover: #f06d1f;
     --action-text: #fb923c;
     /* 深色下浅橙底用半透明叠在卡片 / 侧栏底色上：不透明的深橙会发闷、像一块棕色 */

@@ -1770,59 +1770,57 @@ th {
 .online-log-workspace {
   display: flex;
   flex-direction: column;
+  padding-block: var(--space-2) var(--space-3);
 }
 .online-logs {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-2);
   min-width: 0;
   min-height: 0;
 }
 .online-log-header,
 .online-log-target,
 .online-log-actions,
-.online-log-source,
 .online-log-notice,
 .online-log-toolbar,
-.online-log-filter,
-.online-log-foot {
+.online-log-filter {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
 }
-.online-log-header,
-.online-log-toolbar {
-  justify-content: space-between;
-}
 .online-log-target {
   min-width: 0;
+  flex: 1 1 300px;
+  flex-wrap: nowrap;
 }
-.online-log-identity {
-  display: flex;
-  flex-direction: column;
+.online-log-target > select,
+.online-log-target-name {
+  flex: none;
   min-width: 0;
-  gap: var(--space-1);
+  max-width: min(44%, 168px);
+  text-overflow: ellipsis;
 }
-.online-log-identity select {
-  min-width: 112px;
-  max-width: 100%;
+.online-log-target-name,
+.online-log-source {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.online-log-identity .note,
-.online-log-source .note {
-  margin: 0;
-}
-.online-log-source > code {
-  font-family: var(--mono);
+.online-log-source {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-3);
   font-size: var(--fs-caption);
-  overflow-wrap: anywhere;
 }
-.online-log-source > .button {
-  margin-left: auto;
+.online-log-actions {
+  margin-inline-start: auto;
 }
 .online-log-notice {
   margin: 0;
+  padding: var(--space-1) var(--space-2);
 }
 .online-log-console {
   display: flex;
@@ -1834,21 +1832,29 @@ th {
   border: 1px solid var(--line);
   border-radius: var(--radius-panel);
 }
-.online-log-toolbar,
-.online-log-filter,
-.online-log-foot {
+.online-log-toolbar {
   flex: none;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-1) var(--space-2);
   background: var(--bg-card);
   border-bottom: 1px solid var(--line);
 }
-.online-log-foot {
+.online-log-filter {
+  flex: 1 1 270px;
+  min-width: 0;
+}
+.online-log-search-scope {
   margin: 0;
-  border-bottom: 0;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--line);
+}
+.online-log-regex {
+  white-space: nowrap;
+  font-size: var(--fs-caption);
 }
 .online-log-search {
   display: flex;
-  flex: 1 1 160px;
+  flex: 1 1 128px;
+  min-width: 0;
   align-items: center;
   gap: var(--space-2);
   padding-inline: var(--space-2);
@@ -1881,8 +1887,8 @@ th {
   height: auto;
   min-height: 120px;
 }
-.modal .online-log-console .log-viewport {
-  height: min(40vh, 320px);
+.modal .online-log-console :is(.log-viewport, .online-log-results, .online-log-empty) {
+  height: min(54vh, 440px);
 }
 .online-log-empty {
   display: grid;
@@ -1899,7 +1905,6 @@ th {
   padding: var(--space-2) var(--space-3);
   background: var(--bg-sidebar);
 }
-.modal .online-log-results { max-height: min(40vh, 320px); }
 .online-log-results details {
   border-bottom: 1px solid var(--line);
 }

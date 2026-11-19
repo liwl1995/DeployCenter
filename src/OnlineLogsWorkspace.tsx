@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Download, FileText, Pause, Play, Search } from 'lucide-react';
+import { Ellipsis, Pause, Play, Search } from 'lucide-react';
 import { Button } from './design/ui/button';
 import { SegmentedControl } from './design/ui/segmented-control';
 import { VirtualLogs } from './LogViewer';
@@ -18,6 +18,7 @@ import {
   type OnlineSession,
 } from './online-logs';
 import { Badge, Field, Modal } from './ui';
+import { MoreMenu } from './EntityActions';
 
 type LogEvent = Extract<DesktopEvent, { kind: 'container-log' }>;
 const encoder = new TextEncoder();
@@ -296,45 +297,57 @@ function OnlineLogPanel({
   };
   const describeSessions = () =>
     run('sessions', async () => setSessions(await api.listOnlineLogSessions()));
+  const prepareDownload = () =>
+    run('size', async () => {
+      const plan = await api.prepareOnlineLogDownload(log.session);
+      downloadRef.current = plan.token;
+      setReceived(0);
+      setDownload(plan);
+    });
   const canChangeTarget = !working && !log.busy;
+  const sourceDescription = log.source
+    ? [
+        log.source.server,
+        log.source.address,
+        docker ? 'Docker 容器' : '日志文件',
+        log.source.location,
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : '';
 
   return (
     <section className="online-logs" aria-label="线上应用日志">
       <header className="online-log-header">
         <div className="online-log-target">
-          <span className="record-icon">
-            <FileText size={18} aria-hidden />
-          </span>
-          <div className="online-log-identity">
-            {onTarget ? (
-              <select
-                value={targetId}
-                aria-label="日志目标"
-                disabled={!canChangeTarget}
-                onChange={(event) => onTarget(event.target.value)}
-              >
-                {targets.map((target) => (
-                  <option key={target.id} value={target.id}>
-                    {target.name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <strong>
-                {log.source?.target ||
-                  targets.find((target) => target.id === targetId)?.name ||
-                  '应用日志'}
-              </strong>
-            )}
-            {log.source && (
-              <span className="note">
-                {log.source.server} · {log.source.address}
-              </span>
-            )}
-          </div>
+          {onTarget ? (
+            <select
+              value={targetId}
+              aria-label="日志目标"
+              disabled={!canChangeTarget}
+              onChange={(event) => onTarget(event.target.value)}
+            >
+              {targets.map((target) => (
+                <option key={target.id} value={target.id}>
+                  {target.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <strong className="online-log-target-name">
+              {log.source?.target ||
+                targets.find((target) => target.id === targetId)?.name ||
+                '应用日志'}
+            </strong>
+          )}
           <Badge kind={log.source?.production ? 'warn' : undefined}>
             {log.source?.production ? '正式环境 · 只读' : '只读'}
           </Badge>
+          {sourceDescription && (
+            <span className="online-log-source" title={sourceDescription}>
+              {sourceDescription}
+            </span>
+          )}
         </div>
         <div className="online-log-actions">
           <Badge kind={log.active ? 'good' : undefined}>
@@ -354,42 +367,52 @@ function OnlineLogPanel({
               {log.session ? '重新连接' : '连接日志'}
             </Button>
           ) : (
-            <>
-              <Button variant="neutral" size="compact" onClick={() => changeFollow(!following)}>
-                {following ? <Pause size={14} /> : <Play size={14} />}
-                {following ? '暂停跟随' : '继续跟随'}
-              </Button>
-              <Button
-                variant="ghost"
-                size="compact"
-                onClick={() => void run('stop', () => stop(log.session))}
-                disabled={!!working}
-              >
-                断开
-              </Button>
-            </>
+            <Button variant="neutral" size="compact" onClick={() => changeFollow(!following)}>
+              {following ? <Pause size={14} /> : <Play size={14} />}
+              {following ? '暂停跟随' : '继续跟随'}
+            </Button>
           )}
+          {view === 'loaded' && !following && log.lines.length > 0 && (
+            <Button
+              variant="neutral"
+              size="compact"
+              onClick={() => {
+                setPaused(log.latestLines());
+                setLatest((value) => value + 1);
+              }}
+            >
+              跳到最新
+            </Button>
+          )}
+          <MoreMenu
+            label="更多日志操作"
+            iconOnly
+            trigger={<Ellipsis size={16} aria-hidden />}
+            actions={[
+              {
+                label: '下载已加载日志',
+                disabled: !log.lines.length || !!working,
+                onClick: () => setLoadedConfirm(true),
+              },
+              {
+                label: '下载完整日志',
+                disabled: !log.active || !!working,
+                onClick: () => void prepareDownload(),
+              },
+              { label: '连接管理', disabled: !!working, onClick: () => void describeSessions() },
+              ...(log.active
+                ? [
+                    {
+                      label: '断开',
+                      disabled: !!working,
+                      onClick: () => void run('stop', () => stop(log.session)),
+                    },
+                  ]
+                : []),
+            ]}
+          />
         </div>
       </header>
-      {log.source && (
-        <div className="online-log-source">
-          <span>{docker ? 'Docker 容器' : '日志文件'}</span>
-          <code title={log.source.location}>{log.source.location || '未配置日志路径'}</code>
-          {log.active && log.endsAt && (
-            <span className="note">
-              于 {new Date(log.endsAt).toLocaleTimeString('zh-CN', { hour12: false })} 自动断开
-            </span>
-          )}
-          <Button
-            variant="link"
-            size="compact"
-            onClick={() => void describeSessions()}
-            disabled={!!working}
-          >
-            连接管理
-          </Button>
-        </div>
-      )}
       {log.source && !configured && (
         <div className="notice online-log-notice" role="status">
           <span>未配置日志路径。请在部署目标配置中填写应用日志的绝对路径。</span>
@@ -410,6 +433,11 @@ function OnlineLogPanel({
           {error || (credentials ? '' : log.error) || feedback || log.notice}
         </div>
       )}
+      {working === 'size' && (
+        <p className="online-log-notice note" role="status">
+          正在获取服务器日志大小…
+        </p>
+      )}
       <div className="online-log-console">
         <div className="online-log-toolbar">
           <SegmentedControl<'loaded' | 'server'>
@@ -422,48 +450,7 @@ function OnlineLogPanel({
               { value: 'server', label: '服务器历史' },
             ]}
           />
-          <div className="online-log-actions">
-            {view === 'loaded' && (
-              <Button
-                variant="neutral"
-                size="compact"
-                onClick={() => {
-                  setPaused(log.latestLines());
-                  setLatest((value) => value + 1);
-                }}
-                disabled={!log.lines.length}
-              >
-                跳到最新
-              </Button>
-            )}
-            <Button
-              variant="neutral"
-              size="compact"
-              disabled={!log.lines.length || !!working}
-              onClick={() => setLoadedConfirm(true)}
-            >
-              <Download size={14} />
-              下载已加载
-            </Button>
-            <Button
-              variant="neutral"
-              size="compact"
-              disabled={!log.active || !!working}
-              onClick={() =>
-                void run('size', async () => {
-                  const plan = await api.prepareOnlineLogDownload(log.session);
-                  downloadRef.current = plan.token;
-                  setReceived(0);
-                  setDownload(plan);
-                })
-              }
-            >
-              {working === 'size' ? '获取大小中…' : '下载完整日志'}
-            </Button>
-          </div>
-        </div>
-        {view === 'loaded' ? (
-          <>
+          {view === 'loaded' ? (
             <div className="online-log-filter">
               <label className="online-log-search">
                 <Search size={14} aria-hidden />
@@ -484,31 +471,7 @@ function OnlineLogPanel({
                 <option value="error">只看错误</option>
               </select>
             </div>
-            {shown.length ? (
-              <VirtualLogs
-                entries={shown}
-                grouped={false}
-                showToolbar={false}
-                following={following}
-                onFollowingChange={changeFollow}
-                latest={latest}
-                label="应用日志内容"
-              />
-            ) : (
-              <div className="online-log-empty">
-                {log.lines.length
-                  ? '没有符合筛选条件的日志。'
-                  : log.active
-                    ? '连接已建立，等待日志输出…'
-                    : '连接后在此查看最近日志。'}
-              </div>
-            )}
-            <div className="online-log-foot note">
-              显示 {shown.length} / {visibleLines.length} 行 · 已加载日志下载上限 2 MB
-            </div>
-          </>
-        ) : (
-          <>
+          ) : (
             <form
               className="online-log-filter"
               onSubmit={(event) => {
@@ -551,20 +514,44 @@ function OnlineLogPanel({
                   </>
                 )}
               </select>
-              <Button size="compact" disabled={!log.active || !!working || !query.trim()}>
-                {working === 'search' ? '搜索中…' : '搜索'}
-              </Button>
-            </form>
-            <div className="online-log-foot note">
-              <label className="check-row">
+              <label className="check-row online-log-regex" title="使用 POSIX 扩展正则表达式">
                 <input
                   type="checkbox"
                   className="ui-checkbox"
                   checked={regex}
                   onChange={(event) => setRegex(event.target.checked)}
                 />
-                正则匹配（高级）
+                正则
               </label>
+              <Button size="compact" disabled={!log.active || !!working || !query.trim()}>
+                {working === 'search' ? '搜索中…' : '搜索'}
+              </Button>
+            </form>
+          )}
+        </div>
+        {view === 'loaded' ? (
+          shown.length ? (
+            <VirtualLogs
+              entries={shown}
+              grouped={false}
+              showToolbar={false}
+              following={following}
+              onFollowingChange={changeFollow}
+              latest={latest}
+              label="应用日志内容"
+            />
+          ) : (
+            <div className="online-log-empty">
+              {log.lines.length
+                ? '没有符合筛选条件的日志。'
+                : log.active
+                  ? '连接已建立，等待日志输出…'
+                  : '连接后在此查看最近日志。'}
+            </div>
+          )
+        ) : (
+          <>
+            <div className="online-log-search-scope note">
               <span>
                 {result?.scope || (docker ? '当前容器 · 最多最近 20,000 行' : '当前日志文件')} ·
                 最多 {onlineSearchLimit} 条命中，前后各 2 行
@@ -641,6 +628,12 @@ function OnlineLogPanel({
             当前 {sessions.length} / {onlineLogSessionLimit}{' '}
             个会话。切换页面时连接会保留，超时后自动断开。
           </p>
+          {log.active && log.endsAt && (
+            <p className="note">
+              当前连接将于 {new Date(log.endsAt).toLocaleTimeString('zh-CN', { hour12: false })}{' '}
+              自动断开。
+            </p>
+          )}
           {sessions.map((item) => (
             <div className="row spread" key={item.id}>
               <span>

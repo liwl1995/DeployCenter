@@ -53,15 +53,41 @@ test('首次启动居中显示空工作台，添加和导入走原有接口，�
   await expect(page.getByRole('dialog', { name: '服务与构建配置' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(empty.getByRole('button', { name: '添加服务', exact: true })).toBeFocused();
-  await app.evaluate(({ ipcMain, BrowserWindow }) => {
-    ipcMain.removeHandler('deploy:import-config');
-    ipcMain.handle('deploy:import-config', () => {
-      BrowserWindow.getAllWindows()[0].setTitle('已打开导入入口');
-      return null;
-    });
-  });
+  const configPath = path.join(dir, '待导入配置.json');
+  const config = emptyDatabase();
+  config.services = [{
+    ...newService(),
+    id: 'import-fixture',
+    code: 'import-fixture',
+    name: '导入回归服务',
+    root: dir,
+    args: 'DO-NOT-PREVIEW 隔离导入参数',
+  }];
+  await fs.writeFile(configPath, JSON.stringify(config));
+  await app.evaluate(({ dialog }, file) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
+    const prompts: { message: string; detail: string }[] = [];
+    Object.assign(globalThis, { importPrompts: prompts });
+    dialog.showMessageBox = async (...args: unknown[]) => {
+      prompts.push(args.at(-1) as (typeof prompts)[number]);
+      return { response: prompts.length === 1 ? 0 : 1, checkboxChecked: false };
+    };
+  }, configPath);
+  const importPrompts = () =>
+    app.evaluate(() => (globalThis as unknown as {
+      importPrompts: { message: string; detail: string }[];
+    }).importPrompts);
   await empty.getByRole('button', { name: '导入配置' }).click();
-  await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getTitle())).toBe('已打开导入入口');
+  await expect.poll(async () => (await importPrompts()).length).toBe(1);
+  expect((await page.evaluate(() => window.deployCenter!.load())).database.services).toHaveLength(0);
+  const [prompt] = await importPrompts();
+  expect(prompt.message).toBe('将导入 1 个服务、0 台服务器和 0 个部署目标');
+  expect(prompt.detail).toContain('文件：待导入配置.json');
+  expect(prompt.detail).toContain('导入前会备份');
+  expect(prompt.detail).not.toContain('DO-NOT-PREVIEW');
+  expect(prompt.detail).not.toContain(dir);
+  await empty.getByRole('button', { name: '导入配置' }).click();
+  await expect(page.getByRole('heading', { name: '导入回归服务', exact: true })).toBeVisible();
   expect(
     await page.evaluate(() => ({
       require: typeof (window as unknown as { require: unknown }).require,

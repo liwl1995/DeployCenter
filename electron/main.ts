@@ -1414,41 +1414,12 @@ async function boot() {
         buttons: ['取消', '导入'],
         defaultId: 0,
         cancelId: 0,
-        message: `将导入 ${value.services.length} 个服务、${value.servers.length} 台服务器`,
-        detail:
-          JSON.stringify(
-            {
-              services: value.services.map((s) => ({
-                name: s.name,
-                root: s.root,
-                workDir: s.workDir,
-                maven: s.mavenPath,
-                args: s.args,
-                jarDir: s.jarDir,
-              })),
-              servers: value.servers.map((s) => ({
-                name: s.name,
-                host: s.host,
-                alias: s.alias,
-                key: s.keyPath,
-              })),
-              targets: value.targets.map((t) => ({
-                name: t.name,
-                directory: t.directory,
-                start: t.start,
-                stop: t.stop,
-                restart: t.restart,
-                health: t.health,
-              })),
-            },
-            null,
-            2,
-          ) +
-          '\n\n请确认上述导入路径和命令，导入后才启用。\n' +
-          (real
-            ? '包含部署历史；不包含认证口令。'
-            : '检测到原型或普通配置，只导入配置，不导入模拟历史。') +
-          '当前数据库会先备份。',
+        message: `将导入 ${value.services.length} 个服务、${value.servers.length} 台服务器和 ${value.targets.length} 个部署目标`,
+        detail: [
+          `文件：${path.basename(result.filePaths[0])}`,
+          real ? '导入配置及部署历史。' : '此次仅导入配置。',
+          '请确认文件来源可信。同标识的配置会更新，导入前会备份当前数据库。',
+        ].join('\n'),
       });
       if (confirmation.response !== 1) return null;
       storage.importDatabase(value, real);
