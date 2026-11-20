@@ -331,7 +331,15 @@ hr {
 .sidebar-services {
   flex: 1;
   min-height: 28px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.sidebar-services .sidebar-link[data-drop-position='before'] {
+  box-shadow: inset 0 2px var(--action-text);
+}
+.sidebar-services .sidebar-link[data-drop-position='after'] {
+  box-shadow: inset 0 -2px var(--action-text);
 }
 .sidebar-link {
   flex: none;

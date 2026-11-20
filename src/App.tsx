@@ -1,6 +1,6 @@
 import { ReleaseSchedules } from './ReleaseSchedules';
 import type { ReleaseSchedule } from './schedules';
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Rocket,
   Activity,
@@ -96,6 +96,7 @@ import { TaskView } from './TaskView';
 import type { DiagnosticKind } from './features';
 import { AppPageHeader } from './design/shell/AppPageHeader';
 import { ServiceSidebar } from './design/shell/ServiceSidebar';
+import { sidebarServices } from './sidebar-services';
 import { Button } from './design/ui/button';
 import { Checkbox } from './design/ui/checkbox';
 import { PageTabs } from './design/ui/page-tabs';
@@ -242,6 +243,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   const [logTarget, setLogTarget] = useState('');
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general');
   const [desktopPreferences, setDesktopPreferences] = useState(desktopPreferenceDefaults);
+  const sidebarEntries = useMemo(() => sidebarServices(db, desktopPreferences), [db, desktopPreferences]);
+  const [savingSidebarOrder, setSavingSidebarOrder] = useState(false);
   const traySelectService = useRef<(id: string) => void>(() => {});
   const [environment, setEnvironment] = useState('all');
   const [density, setDensity] = useState<'compact' | 'comfortable'>(() => {
@@ -333,6 +336,19 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   const chosen = targets.filter((t) => selected.includes(t.id));
   const effective = (t: Target) => overrides[t.id] || t.backup;
   const notify = (text: string) => setMessage(text);
+  async function saveSidebarOrder(sidebarServiceOrder: string[]) {
+    if (savingSidebarOrder) return;
+    const changes = { sidebarServiceOrder, sortSidebarByDeployment: false };
+    setSavingSidebarOrder(true);
+    try {
+      if (desktop) setDesktopPreferences(await desktop.saveDesktopPreferences(changes));
+      else setDesktopPreferences((previous) => ({ ...previous, ...changes }));
+    } catch {
+      notify('服务顺序保存失败，请重试。');
+    } finally {
+      setSavingSidebarOrder(false);
+    }
+  }
   useEffect(() => {
     if (recovery) return;
     if (desktop) {
@@ -1294,7 +1310,9 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       }}
     >
       <ServiceSidebar
-        services={db.services}
+        services={sidebarEntries}
+        onReorder={saveSidebarOrder}
+        savingOrder={savingSidebarOrder}
         deployedServices={new Set(db.targets.filter((target) => cardTime(target.lastDeploy) !== '—').map((target) => target.serviceId))}
         current={serviceId}
         page={page}
@@ -1903,7 +1921,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               onDensity={setDensity}
               migrationBlock={isActive(task) ? '任务执行或取消中，不能迁移数据目录。' : unfinished.length ? '有未处理的中断任务，请先核实结果再迁移。' : undefined}
               busy={isActive(task)}
-              version={boot?.version || '2.3.1'}
+              version={boot?.version || '2.3.2'}
               preferences={desktopPreferences}
               onPreferences={setDesktopPreferences}
               showDemo={fixture}

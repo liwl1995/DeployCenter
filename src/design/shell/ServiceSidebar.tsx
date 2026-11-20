@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from 'react';
+import { useRef, useState, type DragEvent, type ReactNode } from 'react';
 import {
   ArrowLeft,
   Box,
@@ -11,11 +11,14 @@ import {
 import { Button } from '../ui/button';
 import { HoverTip } from '../ui/hover-tip';
 import { useSidebarCollapsed } from '../useSidebarCollapsed';
-import type { Service } from '../../model';
 import type { WorkspacePage } from '../../workspace-model';
+
+type DropPosition = 'before' | 'after';
 
 export function ServiceSidebar({
   services,
+  onReorder,
+  savingOrder,
   deployedServices,
   current,
   page,
@@ -26,7 +29,9 @@ export function ServiceSidebar({
   task,
   settingsNavigation,
 }: {
-  services: Service[];
+  services: { id: string; name: string; tone: number }[];
+  onReorder: (ids: string[]) => Promise<void>;
+  savingOrder: boolean;
   deployedServices: ReadonlySet<string>;
   current: string;
   page: WorkspacePage;
@@ -38,9 +43,30 @@ export function ServiceSidebar({
   settingsNavigation: ReactNode;
 }) {
   const ref = useRef<HTMLElement>(null);
+  const draggedService = useRef<string | undefined>(undefined);
+  const [drop, setDrop] = useState<{ id: string; position: DropPosition }>();
   const { collapsed, toggle } = useSidebarCollapsed(ref);
   const Toggle = collapsed ? ChevronsRight : ChevronsLeft;
   const toggleLabel = collapsed ? '展开侧栏' : '收起侧栏';
+  const endDrag = () => {
+    draggedService.current = undefined;
+    setDrop(undefined);
+  };
+  const dropPosition = (event: DragEvent<HTMLButtonElement>): DropPosition => {
+    const row = event.currentTarget.getBoundingClientRect();
+    return event.clientY < row.top + row.height / 2 ? 'before' : 'after';
+  };
+  const moveService = (from: string, to: string, position: DropPosition) => {
+    if (savingOrder || from === to) return;
+    const ids = services.map(({ id }) => id);
+    const originalIndex = ids.indexOf(from);
+    if (originalIndex < 0 || !ids.includes(to)) return;
+    ids.splice(originalIndex, 1);
+    const newIndex = ids.indexOf(to) + Number(position === 'after');
+    if (originalIndex === newIndex) return;
+    ids.splice(newIndex, 0, from);
+    void onReorder(ids);
+  };
   return (
     <aside ref={ref} className="service-sidebar" data-collapsed={collapsed}>
       <div className="sidebar-brand">
@@ -87,10 +113,45 @@ export function ServiceSidebar({
                 >
                   <button
                     className="sidebar-link"
-                    data-service-tone={index % 4}
+                    data-service-tone={service.tone}
+                    data-drop-position={drop?.id === service.id ? drop.position : undefined}
                     aria-label={service.name}
+                    aria-keyshortcuts={services.length > 1 ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}
                     aria-current={page === 'deploy' && current === service.id ? 'page' : undefined}
+                    draggable={services.length > 1 && !savingOrder}
                     onClick={() => onService(service.id)}
+                    onKeyDown={(event) => {
+                      if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+                      event.preventDefault();
+                      const up = event.key === 'ArrowUp';
+                      const adjacent = services[index + (up ? -1 : 1)];
+                      if (adjacent) moveService(service.id, adjacent.id, up ? 'before' : 'after');
+                    }}
+                    onDragStart={(event) => {
+                      draggedService.current = service.id;
+                      event.dataTransfer.effectAllowed = 'move';
+                      event.dataTransfer.setData('application/x-yotoo-sidebar-service', service.id);
+                    }}
+                    onDragOver={(event) => {
+                      if (!draggedService.current) return;
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = 'move';
+                      const position = dropPosition(event);
+                      setDrop((previous) => {
+                        if (draggedService.current === service.id) return undefined;
+                        if (previous?.id === service.id && previous.position === position) return previous;
+                        return { id: service.id, position };
+                      });
+                    }}
+                    onDragLeave={() => setDrop((previous) => previous?.id === service.id ? undefined : previous)}
+                    onDrop={(event) => {
+                      const from = draggedService.current;
+                      if (!from) return;
+                      event.preventDefault();
+                      endDrag();
+                      moveService(from, service.id, dropPosition(event));
+                    }}
+                    onDragEnd={endDrag}
                   >
                     <Box size={17} strokeWidth={1.6} />
                     <span>{service.name}</span>

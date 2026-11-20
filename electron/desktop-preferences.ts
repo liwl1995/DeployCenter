@@ -12,6 +12,8 @@ export const preferencesSchema = z.object({
   launchAtLogin: z.boolean(),
   closeToTray: z.boolean(),
   updatePolicy: z.enum(['manual', 'check', 'download']),
+  sortSidebarByDeployment: z.boolean(),
+  sidebarServiceOrder: z.array(z.string()),
 });
 const windowSchema = z.object({
   x: z.number().int(),

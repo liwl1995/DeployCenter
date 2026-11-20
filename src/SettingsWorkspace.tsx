@@ -174,6 +174,14 @@ export function SettingsWorkspace({
             )}
           </Card>
           {desktop && (
+            <Card title="侧栏" className="preference-list">
+              <Switch label="按最近部署时间排序"
+                description="最近部署的服务排在左侧列表最上方。手动调整顺序后自动关闭。"
+                checked={preferences.sortSidebarByDeployment} disabled={saving}
+                onChange={(sortSidebarByDeployment) => void changePreferences({ sortSidebarByDeployment })} />
+            </Card>
+          )}
+          {desktop && (
             <Card title="窗口与启动" className="preference-list">
               <Switch label="记住窗口大小和位置" checked={preferences.rememberWindow} disabled={saving}
                 onChange={(rememberWindow) => void changePreferences({ rememberWindow })} />
