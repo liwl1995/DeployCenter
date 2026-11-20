@@ -1,11 +1,24 @@
 import { Button } from './design/ui/button';
 import type { ReactNode } from 'react';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fmtTime } from './model';
 import { logLevel, type LogLine } from './log-model';
 import { copyText } from './clipboard';
+import { LogWrapContext } from './log-wrap';
 const height = 28;
 type Row = { id: string; kind: 'group' | 'command' | 'line'; step: string; line: LogLine };
+function rowAt(offsets: number[] | undefined, position: number) {
+  if (!offsets) return Math.floor(position / height);
+  let low = 0;
+  let high = offsets.length - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (offsets[middle] <= position) low = middle;
+    else high = middle - 1;
+  }
+  return low;
+}
+
 export function VirtualLogs({
   active = true,
   compact = false,
@@ -42,7 +55,10 @@ export function VirtualLogs({
   const root = useRef<HTMLDivElement>(null),
     viewport = useRef<HTMLDivElement>(null),
     content = useRef<HTMLDivElement>(null),
+    batch = useRef<HTMLDivElement>(null),
     frozen = useRef(entries);
+  const wrap = useContext(LogWrapContext);
+  const [measured, setMeasured] = useState({ width: 0, heights: new Map<string, number>() });
   const focusedError = useRef<number>(undefined);
   const automaticTop = useRef<number | undefined>(undefined);
   const [selected, setSelected] = useState(false),
@@ -110,6 +126,15 @@ export function VirtualLogs({
     }
     return result;
   }, [filtered, collapsed, grouped]);
+  const offsets = useMemo(() => {
+    if (!wrap) return undefined;
+    // 只测量已进入虚拟窗口的行，其他行以单行高度估算。
+    const result = [0];
+    for (const row of rows)
+      result.push(result[result.length - 1] + (measured.heights.get(row.id) ?? height));
+    return result;
+  }, [rows, wrap, measured]);
+  const rowOffset = (index: number) => offsets?.[index] ?? index * height;
   const jumpTo = (line: LogLine) => {
     setLocated(line.id);
     setFollow(false);
@@ -160,21 +185,24 @@ export function VirtualLogs({
     }
   }, [focusError, entries]);
   const lastJump = useRef(latest);
+  const previousLayout = useRef({ rows, offsets });
   useLayoutEffect(() => {
     const el = viewport.current;
     // 隐藏区域和选中的文字需要保留原滚动位置。
     if (!active || !el || selected) return;
+    const previous = previousLayout.current;
+    previousLayout.current = { rows, offsets };
     const scrollTo = (next: number) => {
       if (el.scrollTop !== next) el.scrollTop = next;
       automaticTop.current = el.scrollTop;
       setTop(el.scrollTop);
     };
     // 以真实滚动内容为准，包含上传区换行、底部留白和横向滚动条占用。
-    const end = () => Math.max(0, (el.scrollHeight || rows.length * height) - el.clientHeight);
+    const end = () => Math.max(0, (el.scrollHeight || rowOffset(rows.length)) - el.clientHeight);
     if (jump) {
       const index = rows.findIndex((r) => r.id === jump);
       if (index >= 0) {
-        scrollTo(Math.min(index * height, end()));
+        scrollTo(Math.min(rowOffset(index), end()));
         setJump(undefined);
       }
     } else if (follow || latest !== lastJump.current) {
@@ -187,10 +215,18 @@ export function VirtualLogs({
         if (content.current) observer.observe(content.current);
         return () => observer.disconnect();
       }
+    } else if (previous.rows === rows && previous.offsets !== offsets) {
+      // 改变宽度或折行模式时，暂停跟随的读者继续看原来的日志行。
+      const index = Math.min(rowAt(previous.offsets, top), rows.length - 1);
+      if (index >= 0) {
+        const previousTop = previous.offsets?.[index] ?? index * height;
+        const inset = Math.min(top - previousTop, rowOffset(index + 1) - rowOffset(index) - 1);
+        scrollTo(Math.min(rowOffset(index) + inset, end()));
+      }
     } else {
       setTop(el.scrollTop);
     }
-  }, [rows, follow, jump, selected, active, !!trailing, level, latest]);
+  }, [rows, offsets, follow, jump, selected, active, !!trailing, level, latest]);
   const copy = async () => {
     const text = entries.map((r) => r.text).join('\n');
     try {
@@ -206,9 +242,36 @@ export function VirtualLogs({
   }, [top, selected]);
   const start = Math.min(
       Math.max(0, rows.length - 40),
-      Math.max(0, Math.floor((selected ? frozenTop : top) / height) - 8),
+      Math.max(0, rowAt(offsets, selected ? frozenTop : top) - 8),
     ),
     end = Math.min(rows.length, start + 40);
+  useLayoutEffect(() => {
+    const el = viewport.current;
+    const visible = batch.current;
+    if (!wrap || !active || selected || !el || !visible) return;
+    const measure = () => {
+      const width = el.clientWidth;
+      if (!width) return;
+      const sizes = Array.from(visible.children, (child) => {
+        const element = child as HTMLElement;
+        return [element.dataset.logRow!, element.offsetHeight] as const;
+      });
+      setMeasured((previous) => {
+        const sameWidth = width === previous.width;
+        if (sameWidth && sizes.every(([id, size]) => (previous.heights.get(id) ?? height) === size))
+          return previous;
+        const heights = new Map(sameWidth ? previous.heights : []);
+        for (const [id, size] of sizes) heights.set(id, size || height);
+        return { width, heights };
+      });
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    observer.observe(visible);
+    return () => observer.disconnect();
+  }, [wrap, active, selected, rows, start, end]);
   return (
     <div className="log-viewer" ref={root}>
       {showToolbar && (compact ? (
@@ -309,6 +372,7 @@ export function VirtualLogs({
       )}
       <div
         className="log-viewport"
+        data-wrap={wrap}
         aria-label={label}
         role="log"
         ref={viewport}
@@ -326,11 +390,11 @@ export function VirtualLogs({
         }}
       >
         <div ref={content} className="log-content">
-          <div style={{ height: rows.length * height, position: 'relative', minWidth: '100%' }}>
-            <div style={{ position: 'absolute', top: start * height, minWidth: '100%' }}>
+          <div style={{ height: rowOffset(rows.length), position: 'relative', minWidth: '100%' }}>
+            <div ref={batch} style={{ position: 'absolute', top: rowOffset(start), minWidth: '100%', width: wrap ? '100%' : undefined }}>
               {rows.slice(start, end).map((row) =>
                 row.kind === 'group' ? (
-                  <div key={row.id} className="log-group">
+                  <div key={row.id} className="log-group" data-log-row={row.id}>
                     <button
                       aria-expanded={!collapsed.has(row.step)}
                       onClick={() =>
@@ -346,12 +410,13 @@ export function VirtualLogs({
                     </button>
                   </div>
                 ) : row.kind === 'command' ? (
-                  <div key={row.id} className="log-command" title={row.line.command}>
+                  <div key={row.id} className="log-command" title={row.line.command} data-log-row={row.id}>
                     命令上下文：{row.line.command}
                   </div>
                 ) : (
                   <div
                     data-log-line
+                    data-log-row={row.id}
                     key={row.id}
                     className={
                       'log-line ' +

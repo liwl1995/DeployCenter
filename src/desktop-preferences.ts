@@ -4,6 +4,7 @@ export type DesktopPreferences = {
   zoom: (typeof zoomOptions)[number];
   rememberWindow: boolean;
   followLogs: boolean;
+  wrapLogs: boolean;
   launchAtLogin: boolean;
   closeToTray: boolean;
   updatePolicy: UpdatePolicy;
@@ -15,6 +16,7 @@ export const desktopPreferenceDefaults: DesktopPreferences = {
   zoom: 100,
   rememberWindow: true,
   followLogs: true,
+  wrapLogs: false,
   launchAtLogin: false,
   closeToTray: false,
   updatePolicy: 'manual',

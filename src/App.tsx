@@ -63,6 +63,7 @@ import './style.css';
 import { LegacyArtifactReview } from './DataSettings';
 import { SettingsWorkspace, settingsLabels, type SettingsSection } from './SettingsWorkspace';
 import { desktopPreferenceDefaults } from './desktop-preferences';
+import { LogWrapContext } from './log-wrap';
 import type { SnapshotAvailability } from './features';
 import {
   confirmProduction,
@@ -867,6 +868,18 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   }
   const serviceActions = (s: Service) => (
     <div className="entity-actions">
+      <Button variant="neutral" size="compact" onClick={() => setDialog({ kind: 'service', value: s })}>
+        编辑
+      </Button>
+      <Button
+        variant="default" size="compact"
+        onClick={() => {
+          selectService(s.id);
+          setPage('deploy');
+        }}
+      >
+        去部署
+      </Button>
       <MoreMenu
         label={'更多服务' + s.name + '操作'}
         actions={[
@@ -890,26 +903,27 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           },
         ]}
       />
-      <Button variant="neutral" size="compact" onClick={() => setDialog({ kind: 'service', value: s })}>
+    </div>
+  );
+  const targetActions = (t: Target, detail = false) => (
+    <div className="entity-actions">
+      {detail && desktop && <Button variant="neutral" size="compact" onClick={() => setNativeDialog({ title: '线上日志', logs: t.id })}>
+        <ScrollText size={15} />线上日志
+      </Button>}
+      <Button variant="neutral" size="compact" onClick={() => setDialog({ kind: 'target', value: t })}>
+        <Pencil size={15} />
         编辑
       </Button>
-
       <Button
         variant="default" size="compact"
         onClick={() => {
-          selectService(s.id);
+          selectService(t.serviceId);
+          setSelected([t.id]);
           setPage('deploy');
         }}
       >
         去部署
       </Button>
-    </div>
-  );
-  const targetActions = (t: Target) => (
-    <div className="entity-actions">
-      {desktop && <Button variant="neutral" size="compact" onClick={() => setNativeDialog({ title: '线上日志', logs: t.id })}>
-        <ScrollText size={15} />线上日志
-      </Button>}
       <MoreMenu
         label={'更多目标' + t.name + '操作'}
         actions={[
@@ -967,20 +981,6 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           },
         ]}
       />
-      <Button variant="neutral" size="compact" onClick={() => setDialog({ kind: 'target', value: t })}>
-        <Pencil size={15} />
-        编辑
-      </Button>
-      <Button
-        variant="default" size="compact"
-        onClick={() => {
-          selectService(t.serviceId);
-          setSelected([t.id]);
-          setPage('deploy');
-        }}
-      >
-        去部署
-      </Button>
     </div>
   );
   const serverActions = (s: Server) => (
@@ -992,6 +992,16 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       >
         <Pencil size={15} />
         编辑
+      </Button>
+      <Button
+        variant="default" size="compact"
+        onClick={() =>
+          fixture
+            ? notify('原型未发起连接。正式版将展示主机指纹及认证结果。')
+            : setNativeDialog({ title: '测试连接 · ' + s.name, server: s })
+        }
+      >
+        测试连接
       </Button>
       <MoreMenu
         label={'更多服务器' + s.name + '操作'}
@@ -1038,17 +1048,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
             onClick: () => setDialog({ kind: 'delete', entity: 'server', id: s.id }),
           },
         ]}
-      />{' '}
-      <Button
-        variant="default" size="compact"
-        onClick={() =>
-          fixture
-            ? notify('原型未发起连接。正式版将展示主机指纹及认证结果。')
-            : setNativeDialog({ title: '测试连接 · ' + s.name, server: s })
-        }
-      >
-        测试连接
-      </Button>
+      />
     </div>
   );
   const cardTime = (value?: string) => (deploymentTime(value) ? fmtTime(value!).slice(5, 16) : '—');
@@ -1275,8 +1275,10 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   };
 
   return (
+    <LogWrapContext.Provider value={desktopPreferences.wrapLogs}>
     <div
       className={desktop ? "app desktop-shell" : "app"}
+      data-wrap-logs={desktopPreferences.wrapLogs}
       onDragOver={(e) => {
         if (desktop && e.dataTransfer.types.includes('Files')) e.preventDefault();
       }}
@@ -1921,7 +1923,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               onDensity={setDensity}
               migrationBlock={isActive(task) ? '任务执行或取消中，不能迁移数据目录。' : unfinished.length ? '有未处理的中断任务，请先核实结果再迁移。' : undefined}
               busy={isActive(task)}
-              version={boot?.version || '2.3.2'}
+              version={boot?.version || '2.3.3'}
               preferences={desktopPreferences}
               onPreferences={setDesktopPreferences}
               showDemo={fixture}
@@ -2485,6 +2487,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         </div>
       )}
     </div>
+    </LogWrapContext.Provider>
   );
 }
 

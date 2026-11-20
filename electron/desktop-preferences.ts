@@ -9,6 +9,7 @@ export const preferencesSchema = z.object({
   zoom: z.union([z.literal(90), z.literal(100), z.literal(110), z.literal(125)]),
   rememberWindow: z.boolean(),
   followLogs: z.boolean(),
+  wrapLogs: z.boolean(),
   launchAtLogin: z.boolean(),
   closeToTray: z.boolean(),
   updatePolicy: z.enum(['manual', 'check', 'download']),

@@ -22,7 +22,7 @@ it('本机偏好按数据目录保存，关闭记忆后不再恢复旧窗口', (
     const window = { x: -987, y: 60, width: 1000, height: 620, maximized: true };
     const preferences = {
       ...first.preferences, zoom: 125 as const, closeToTray: true, followLogs: false,
-      sortSidebarByDeployment: true, sidebarServiceOrder: ['second', 'first'],
+      sortSidebarByDeployment: true, sidebarServiceOrder: ['second', 'first'], wrapLogs: true,
     };
     first.save(preferences, window);
     const reopened = new DesktopPreferenceStore(dir);

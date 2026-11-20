@@ -1,16 +1,17 @@
-import { expect, test, _electron as electron } from '@playwright/test';
+import { expect, test, _electron as electron, type ElectronApplication } from '@playwright/test';
 import ssh2 from 'ssh2';
 import type { AddressInfo } from 'node:net';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { emptyDatabase, newService, newTargetTemplate } from '../src/defaults';
 import { runProcess } from '../electron/process';
+import { Storage } from '../electron/storage';
 import { expectViewport } from './window-size';
 
 const distro = process.env.DEPLOY_CENTER_IMAGE_TEST_WSL;
 test.skip(process.platform !== 'win32' || !distro, '需指定本机 WSL 发行版来执行真实只读日志命令');
 
-test('服务工作台与目标快捷入口共享日志界面，通过回环 SSH 跟随、搜索、下载', async ({}, info) => {
+test('服务工作台与目标详情共享日志界面，通过回环 SSH 跟随、搜索、下载', async ({}, info) => {
   test.setTimeout(120_000);
   const base = path.resolve('.test-data');
   await mkdir(base, { recursive: true });
@@ -19,7 +20,8 @@ test('服务工作台与目标快捷入口共享日志界面，通过回环 SSH 
   const destination = path.join(dir, '原始应用日志.log');
   const secret = 'fixture-secret-online-only';
   const line = '[ERROR] sync-orders ' + secret;
-  const text = '启动完毕\r\n' + line + '\r\n请求已返回\r\n';
+  const longLine = '线上长行 ' + 'x'.repeat(350);
+  const text = '启动完毕\r\n' + line + '\r\n请求已返回\r\n' + longLine + '\r\n';
   await writeFile(fixture, text);
   const wsl = (args: string[]) =>
     runProcess('wsl.exe', ['-d', distro!, '--exec', ...args], {
@@ -88,15 +90,8 @@ test('服务工作台与目标快捷入口共享日志界面，通过回环 SSH 
     DEPLOY_CENTER_TESTING: '1',
   };
   delete env.ELECTRON_RUN_AS_NODE;
-  const app = await electron.launch({
-    executablePath:
-      process.env.DEPLOY_CENTER_TEST_EXE || path.resolve('node_modules/electron/dist/electron.exe'),
-    args: process.env.DEPLOY_CENTER_TEST_EXE ? [] : [path.resolve('.')],
-    env: env as Record<string, string>,
-  });
+  let app: ElectronApplication | undefined;
   try {
-    const page = await app.firstWindow();
-    const button = (name: string) => page.getByRole('button', { name, exact: true });
     const db = emptyDatabase();
     const service = {
       ...newService(),
@@ -136,8 +131,24 @@ test('服务工作台与目标快捷入口共享日志界面，通过回环 SSH 
     db.lastService = service.id;
     db.history = [];
     db.settings.theme = 'dark';
-    await page.evaluate((input) => window.deployCenter!.save(input), db);
-    await page.reload();
+    await mkdir(env.DEPLOY_CENTER_DATA_DIR, { recursive: true });
+    const storage = new Storage(env.DEPLOY_CENTER_DATA_DIR, {
+      encrypt: async () => { throw new Error('验收不保存凭据'); },
+      decrypt: async () => { throw new Error('验收不读取已保存凭据'); },
+    });
+    try {
+      storage.saveConfig(db);
+    } finally {
+      storage.close();
+    }
+    app = await electron.launch({
+      executablePath:
+        process.env.DEPLOY_CENTER_TEST_EXE || path.resolve('node_modules/electron/dist/electron.exe'),
+      args: process.env.DEPLOY_CENTER_TEST_EXE ? [] : [path.resolve('.')],
+      env: env as Record<string, string>,
+    });
+    const page = await app.firstWindow();
+    const button = (name: string) => page.getByRole('button', { name, exact: true });
     await expect(page.getByRole('tablist', { name: '服务工作台' }).getByRole('tab')).toHaveText([
       '部署目标', '发布记录', '构建配置', '日志',
     ]);
@@ -155,6 +166,10 @@ test('服务工作台与目标快捷入口共享日志界面，通过回环 SSH 
     await button('信任并继续').click();
     const rawLine = page.getByText(line, { exact: true });
     await expect(rawLine).toBeVisible();
+    await page.evaluate(() => window.deployCenter!.saveDesktopPreferences({ wrapLogs: true }));
+    const viewport = page.getByRole('log', { name: '应用日志内容' });
+    await expect(viewport).toHaveAttribute('data-wrap', 'true');
+    await expect.poll(() => viewport.getByText(longLine).evaluate((row) => row.offsetHeight)).toBeGreaterThan(28);
     await button('暂停跟随').click();
     sendLine!('实时新输出\n');
     await expect
@@ -203,6 +218,7 @@ test('服务工作台与目标快捷入口共享日志界面，通过回环 SSH 
     await page.getByText('范围内第 2 行').click();
     await expect(page.locator('.online-log-results pre')).toContainText(line);
     await expect(page.locator('.online-log-results pre')).toContainText('请求已返回');
+    await expect(page.locator('.online-log-results pre')).toHaveCSS('white-space', 'pre-wrap');
     await app.evaluate(({ dialog }, file) => {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath: file });
     }, destination);
@@ -232,7 +248,9 @@ test('服务工作台与目标快捷入口共享日志界面，通过回环 SSH 
     ).toBeVisible();
     await page.keyboard.press('Escape');
     await button('部署目标').click();
-    await button('线上日志').first().click();
+    await expect(button('线上日志')).toHaveCount(0);
+    await button('查看部署目标正式日志目标详情').click();
+    await button('线上日志').click();
     await expect(
       page.getByRole('dialog', { name: '线上日志' }).getByRole('region', { name: '线上应用日志' }),
     ).toBeVisible();
@@ -270,7 +288,7 @@ test('服务工作台与目标快捷入口共享日志界面，通过回环 SSH 
     );
     await writeFile(info.outputPath('线上日志-浅色-125.png'), Buffer.from(preview, 'base64'));
   } finally {
-    await app.close();
+    await app?.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (path.dirname(dir) === base && path.basename(dir).startsWith('online-e2e-'))
       await rm(dir, { recursive: true, force: true });

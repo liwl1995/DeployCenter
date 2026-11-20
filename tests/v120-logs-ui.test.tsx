@@ -1,8 +1,9 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { LogAccumulator, logLevel, type LogLine } from '../src/log-model';
 import { VirtualLogs } from '../src/LogViewer';
+import { LogWrapContext } from '../src/log-wrap';
 afterEach(() => {
   cleanup();
   window.getSelection()?.removeAllRanges();
@@ -118,4 +119,35 @@ it('真实滚动内容包含可变高进度区和滚动条时，跟随底部不�
   );
   expect(viewport.scrollTop).toBe(3200 - 383);
   expect(screen.getByText('最后一行')).toBeTruthy();
+});
+
+it('折行时只测量虚拟窗口内的日志，跳转位置包含已折行行的实际高度', async () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(480);
+  const heights = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+    return this.dataset.logRow === 'long' ? 112 : 28;
+  });
+  try {
+    const entries: LogLine[] = Array.from({ length: 1000 }, (_, index) => ({
+      id: index === 0 ? 'long' : String(index),
+      text: index === 0 ? '长日志'.repeat(80) : '日志 ' + index,
+    }));
+    const { container, rerender } = render(
+      <LogWrapContext.Provider value={true}>
+        <VirtualLogs entries={entries} initialFollow={false} grouped={false} />
+      </LogWrapContext.Provider>,
+    );
+    const viewport = container.querySelector<HTMLElement>('.log-viewport')!;
+    expect(viewport.dataset.wrap).toBe('true');
+    expect(viewport.querySelectorAll('[data-log-row]').length).toBeLessThanOrEqual(40);
+    rerender(
+      <LogWrapContext.Provider value={true}>
+        <VirtualLogs entries={entries} initialFollow={false} grouped={false} focusLine={{ id: '10', nonce: 1 }} />
+      </LogWrapContext.Provider>,
+    );
+    await vi.waitFor(() => expect(viewport.scrollTop).toBe(112 + 9 * 28));
+    expect(screen.getByText('日志 10').parentElement?.classList.contains('log-match')).toBe(true);
+  } finally {
+    width.mockRestore();
+    heights.mockRestore();
+  }
 });

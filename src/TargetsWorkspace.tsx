@@ -18,7 +18,7 @@ export function TargetsWorkspace({
   serviceId: string;
   onService: (id: string) => void;
   onAdd: () => void;
-  renderActions: (target: Target) => ReactNode;
+  renderActions: (target: Target, detail?: boolean) => ReactNode;
 }) {
   const targets = db.targets.filter((target) => target.serviceId === serviceId);
   const cardTime = (value: string) => (deploymentTime(value) ? fmtTime(value).slice(5, 16) : '—');
@@ -94,7 +94,7 @@ export function TargetsWorkspace({
                 <Badge kind={t.production ? 'warn' : ''}>{modeLabel(t.mode)}</Badge>
               </span>
             }
-            action={targetActions(t)}
+            action={targetActions(t, true)}
           >
             <TargetConfiguration target={t} server={db.servers.find((s) => s.id === t.serverId)} />
           </EntityDetail>

@@ -196,6 +196,9 @@ export function SettingsWorkspace({
             <Card title="任务与提醒" className="preference-list">
               <Switch label="任务日志默认跟随最新" checked={preferences.followLogs} disabled={saving}
                 onChange={(followLogs) => void changePreferences({ followLogs })} />
+              <Switch label="日志自动折行" description="随窗口宽度折行，部署、镜像和线上日志共用此设置。"
+                checked={preferences.wrapLogs} disabled={saving}
+                onChange={(wrapLogs) => void changePreferences({ wrapLogs })} />
               <Switch
                 label="Windows 系统通知"
                 checked={db.settings.notifications !== false}

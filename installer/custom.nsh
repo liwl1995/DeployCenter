@@ -56,7 +56,19 @@ Var DC_OldUninstaller
 Var DC_OldName
 Var DC_OldPublisher
 Var DC_OldShortcut
+Var DC_ProgramWithdrawn
+!define DC_PENDING_EXE ".deploy-center-installing.exe"
 !endif
+
+!macro DC_StageProgramExecutable
+  ; 所有文件准备好之前，解包结果中的 EXE 只使用暂存文件名。
+  ClearErrors
+  Rename "$OUTDIR\${APP_EXECUTABLE_FILENAME}" "$OUTDIR\${DC_PENDING_EXE}"
+  ${If} ${Errors}
+    Push "无法暂存主程序"
+    Call DC_AbortProgramInstall
+  ${EndIf}
+!macroend
 
 !macro customInstallMode
   StrCpy $isForceCurrentInstall "1"
@@ -386,10 +398,17 @@ Function DC_OptionsLeave
 FunctionEnd
 
 Function .onInstFailed
-  ${If} $DC_Rollback != ""
+  ${If} $DC_ProgramWithdrawn == "1"
     CreateDirectory "$DC_BackupSource"
     ClearErrors
-    CopyFiles /SILENT "$DC_Rollback\*.*" "$DC_BackupSource"
+    ; 恢复旧版时同样先恢复依赖，最后恢复原有快捷方式对应的 EXE。
+    Rename "$DC_Rollback\$DC_OldExecutable" "$DC_Rollback\${DC_PENDING_EXE}"
+    ${IfNot} ${Errors}
+      CopyFiles /SILENT "$DC_Rollback\*.*" "$DC_BackupSource"
+      ${IfNot} ${Errors}
+        Rename "$DC_BackupSource\${DC_PENDING_EXE}" "$DC_BackupSource\$DC_OldExecutable"
+      ${EndIf}
+    ${EndIf}
     ${IfNot} ${Errors}
       WriteRegStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "$DC_BackupSource"
       WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" DisplayName "$DC_OldName"
@@ -408,6 +427,7 @@ Function .onInstFailed
   ${EndIf}
   CreateDirectory "$DC_InstallerLogs"
   FileOpen $DC_Log "$DC_InstallerLogs\last-install.log" a
+  FileSeek $DC_Log 0 END
   FileWrite $DC_Log "安装未完成，目录：$INSTDIR。请查看向导详细信息并确认目录权限、空间和应用运行状态。$\r$\n"
   FileClose $DC_Log
   MessageBox MB_OK|MB_ICONSTOP "YOTOO 部署中心 安装未完成。$\r$\n请检查安装目录权限、磁盘空间，以及应用是否已退出。$\r$\n安装日志：$DC_InstallerLogs\last-install.log$\r$\n用户配置和部署历史不会因此被清空。" /SD IDOK
@@ -469,6 +489,82 @@ Function .onInstSuccess
     ${EndIf}
   ${EndIf}
 FunctionEnd
+
+Function DC_WithdrawProgram
+  ${If} $DC_Rollback == ""
+    Return
+  ${EndIf}
+  !insertmacro customCheckAppRunning
+  ; 备份完成后先移除旧快捷方式的启动目标，避免卸载过程中启动半套程序。
+  ClearErrors
+  Delete "$DC_BackupSource\$DC_OldExecutable"
+  ${If} ${Errors}
+    Push "无法关闭旧版程序入口"
+    Call DC_AbortProgramInstall
+  ${EndIf}
+  StrCpy $DC_ProgramWithdrawn "1"
+FunctionEnd
+
+Function DC_AbortProgramInstall
+  Pop $0
+  DetailPrint "$0"
+  FileOpen $DC_Log "$DC_InstallerLogs\last-install.log" a
+  FileSeek $DC_Log 0 END
+  FileWrite $DC_Log "$0$\r$\n"
+  FileClose $DC_Log
+  SetErrorLevel 1603
+  Abort
+FunctionEnd
+
+Function DC_PublishProgram
+  ; EXE 的版本号不能证明应用归档和依赖已经可读。静默安装返回前实际加载启动依赖，
+  ; 让已有更新助手也只在完整程序可用后重启。Node 模式不会打开窗口或读取用户数据。
+  File /oname=$PLUGINSDIR\dc-verify.cjs "${PROJECT_DIR}\installer\verify-installed.cjs"
+  ReadEnvStr $2 "ELECTRON_RUN_AS_NODE"
+  System::Call 'kernel32::SetEnvironmentVariableW(w "ELECTRON_RUN_AS_NODE", w "1")'
+  StrCpy $3 0
+  ${Do}
+    nsExec::ExecToStack /TIMEOUT=15000 '"$INSTDIR\${DC_PENDING_EXE}" "$PLUGINSDIR\dc-verify.cjs" "${VERSION}"'
+    Pop $0
+    Pop $1
+    ${If} $0 == "0"
+    ${AndIf} $1 == "YOTOO_PROGRAM_READY"
+      ${ExitDo}
+    ${EndIf}
+    ; 新写入的文件可能暂时被系统扫描。每次重试期间仍关闭对外入口。
+    IntOp $3 $3 + 1
+    ${If} $3 < 3
+    ${AndIf} $0 != "timeout"
+      Sleep 500
+    ${Else}
+      ${ExitDo}
+    ${EndIf}
+  ${Loop}
+  ${If} $2 == ""
+    System::Call 'kernel32::SetEnvironmentVariableW(w "ELECTRON_RUN_AS_NODE", p0)'
+  ${Else}
+    System::Call 'kernel32::SetEnvironmentVariableW(w "ELECTRON_RUN_AS_NODE", w r2)'
+  ${EndIf}
+  ${If} $0 != "0"
+  ${OrIf} $1 != "YOTOO_PROGRAM_READY"
+    Push "程序依赖检查失败：$0 $1"
+    Call DC_AbortProgramInstall
+  ${EndIf}
+  StrCpy $3 0
+  ${Do}
+    ClearErrors
+    Rename "$INSTDIR\${DC_PENDING_EXE}" "$appExe"
+    ${IfNot} ${Errors}
+      Return
+    ${EndIf}
+    IntOp $3 $3 + 1
+    ${If} $3 < 3
+      Sleep 500
+    ${EndIf}
+  ${LoopWhile} $3 < 3
+  Push "无法启用主程序入口"
+  Call DC_AbortProgramInstall
+FunctionEnd
 !endif
 !macroend
 
@@ -476,6 +572,14 @@ FunctionEnd
   Page custom DC_OptionsCreate DC_OptionsLeave
   !define MUI_PAGE_CUSTOMFUNCTION_SHOW DC_ShowInstallProgress
   !define MUI_PAGE_CUSTOMFUNCTION_LEAVE DC_CloseInstallProgress
+!macroend
+
+!macro customUnInstallCheck
+  ; 已关闭旧入口后，卸载失败也要走安装失败回调，恢复备份里的旧程序。
+  ${If} $R0 != 0
+    Push "卸载旧程序失败，退出码：$R0"
+    Call DC_AbortProgramInstall
+  ${EndIf}
 !macroend
 
 !macro customInstall

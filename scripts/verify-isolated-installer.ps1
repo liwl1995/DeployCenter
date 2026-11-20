@@ -86,8 +86,6 @@ try{
   Check '静默更新保留已有桌面快捷方式' ((Run $installer "/S /YOTOOUPDATE /D=$program") -eq 0 -and (Test-Path -LiteralPath $desktopLink))
   Remove-Item -LiteralPath $desktopLink
   $helper=Join-Path $program 'resources/update-helper.exe'
-  $helperCopy=Join-Path $qaRoot 'update-helper.exe'
-  Copy-Item -LiteralPath $helper -Destination $helperCopy
   $log=Join-Path $data 'logs/update/update-install.log'
   New-Item -ItemType Directory -Path (Split-Path -Parent $log) -Force | Out-Null
   function Encode([string]$Value){[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Value))}
@@ -102,19 +100,29 @@ try{
   } while([DateTime]::UtcNow -lt $deadline)
   Check '旧应用等待交接时保持运行' (-not $parent.HasExited -and $parent.MainWindowHandle -ne 0)
   $handoff="$($parent.Id) $(Encode $installer) $digest $(Encode $program) $(Encode $log) $version $(Encode $exe)"
-  $start=[Diagnostics.ProcessStartInfo]::new($helperCopy,$handoff)
+  $start=[Diagnostics.ProcessStartInfo]::new($helper,$handoff)
+  $start.WorkingDirectory=$program
   $start.UseShellExecute=$false
   $start.CreateNoWindow=$true
   $start.RedirectStandardOutput=$true
+  $testTemp=Join-Path $data 'tmp/system'
+  New-Item -ItemType Directory -Path $testTemp -Force | Out-Null
+  $start.Environment['TEMP']=$testTemp
+  $start.Environment['TMP']=$testTemp
   $child=[Diagnostics.Process]::Start($start)
   $ready=$child.StandardOutput.ReadLineAsync()
   Check '助手就绪后才退出旧应用' ($ready.Wait(15000) -and $ready.Result -eq 'UPDATE_READY' -and -not $parent.HasExited)
   $null=$parent.CloseMainWindow()
+  $deadline=[DateTime]::UtcNow.AddSeconds(45)
+  while ((Test-Path -LiteralPath $exe) -and -not $child.HasExited -and [DateTime]::UtcNow -lt $deadline) {
+    Start-Sleep -Milliseconds 25
+  }
+  Check '静默安装期间快捷方式没有可执行目标' (-not ($child.HasExited) -and -not (Test-Path -LiteralPath $exe))
   Check '独立助手静默覆盖原目录' ($child.WaitForExit(180000) -and $child.ExitCode -eq 0)
   $deadline=[DateTime]::UtcNow.AddSeconds(30)
   do {
     $restarted=Get-Process -Name $product -ErrorAction SilentlyContinue | Where-Object {
-      $_.Path -eq $exe -and $_.MainWindowHandle -ne 0
+      $_.Path -eq $exe -and $_.MainWindowTitle -ceq 'YOTOO 部署中心'
     } | Select-Object -First 1
     if(-not $restarted){Start-Sleep -Milliseconds 250}
   } until($restarted -or [DateTime]::UtcNow -ge $deadline)
