@@ -24,3 +24,5 @@ __pycache__/
 *.tsbuildinfo
 /SHA256SUMS
 /.workbuddy/
+/AGENTS.md
+clean-generated.ps1
