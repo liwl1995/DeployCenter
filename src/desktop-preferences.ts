@@ -9,6 +9,7 @@ export type DesktopPreferences = {
   closeToTray: boolean;
   updatePolicy: UpdatePolicy;
   checkUpdatesOnStartup: boolean;
+  tutorialInstallId?: string;
   sortSidebarByDeployment: boolean;
   sidebarServiceOrder: string[];
 };

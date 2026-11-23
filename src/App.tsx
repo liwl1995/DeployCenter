@@ -62,6 +62,7 @@ import { ServiceForm, ServerForm, TargetForm, BackupFields } from './forms';
 import './style.css';
 import { LegacyArtifactReview } from './DataSettings';
 import { SettingsWorkspace, settingsLabels, type SettingsSection } from './SettingsWorkspace';
+import { TutorialGuide } from './TutorialGuide';
 import { desktopPreferenceDefaults } from './desktop-preferences';
 import { newerVersion } from './app-update';
 import { applyDocumentTheme } from './document-theme';
@@ -253,8 +254,22 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   }, []);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general');
   const [desktopPreferences, setDesktopPreferences] = useState(boot?.preferences ?? desktopPreferenceDefaults);
+  const [tutorialInstallId, setTutorialInstallId] = useState(boot?.tutorialInstallId);
+  const [tutorialOpen, setTutorialOpen] = useState(!!boot?.tutorialInstallId);
+  const acknowledgedTutorial = useRef<string | undefined>(undefined);
   const [nativeDark, setNativeDark] = useState(boot?.darkTheme);
   const [update, setUpdate] = useState(boot?.update);
+  function showInstalledTutorial(id: string | undefined) {
+    if (!id || id === acknowledgedTutorial.current) return;
+    setTutorialInstallId(id);
+    setTutorialOpen(true);
+  }
+  useEffect(() => {
+    if (!desktop || !tutorialOpen || !tutorialInstallId || acknowledgedTutorial.current === tutorialInstallId) return;
+    acknowledgedTutorial.current = tutorialInstallId;
+    void desktop.saveDesktopPreferences({ tutorialInstallId }).then(setDesktopPreferences)
+      .catch(() => notify('未能保存教学向导偏好'));
+  }, [tutorialInstallId, tutorialOpen]);
   const updateAvailable = !!update?.release && newerVersion(update.release.version, update.currentVersion);
   const sidebarEntries = useMemo(() => sidebarServices(db, desktopPreferences), [db, desktopPreferences]);
   const [savingSidebarOrder, setSavingSidebarOrder] = useState(false);
@@ -423,6 +438,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       void desktop!.listTasks().then(setTaskRows);
       void desktop!.listSchedules().then(setSchedules);
       void desktop!.load().then((value) => {
+        showInstalledTutorial(value.tutorialInstallId);
         if (revision === updateRevision) setUpdate(value.update);
         setSaved(value.savedCredentials);
         setUnfinished(value.unfinished);
@@ -432,6 +448,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     refresh();
     if (!boot?.preferences) void desktop.desktopPreferences?.().then(setDesktopPreferences).catch(() => {});
     return desktop!.onEvent((event) => {
+      if (event.kind === 'show-install-tutorial') showInstalledTutorial(event.id);
       if (event.kind === 'native-theme') setNativeDark(event.dark);
       if (event.kind === 'update') {
         updateRevision++;
@@ -1968,6 +1985,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               preferences={desktopPreferences}
               onPreferences={setDesktopPreferences}
               showDemo={fixture}
+              onTutorial={() => setTutorialOpen(true)}
               onImport={() => {
                 if (desktop) void importNative();
                 else if (fixture) importRef.current?.click();
@@ -2406,6 +2424,13 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
             </footer>
           </form>
         </Modal>
+      )}
+      {tutorialOpen && (
+        <TutorialGuide onClose={() => setTutorialOpen(false)} onNavigate={(destination) => {
+          setTutorialOpen(false);
+          if (destination === 'deploy') setServiceTab('deploy');
+          setPage(destination);
+        }} />
       )}
       {nativeDialog && (
         <Modal title={nativeDialog.title} wide onClose={() => {

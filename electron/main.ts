@@ -32,6 +32,7 @@ import { createTrayPanel } from './tray-panel';
 import { backgroundUpdates } from './background-updates';
 import type { DesktopPreferences, UpdatePolicy } from '../src/desktop-preferences';
 import { cleanCompletedInstallerBackups, dataPaths, DirectoryLocator } from './data-paths';
+import { plainPath } from './managed-path';
 import { allowedProjectLink } from '../src/update-links';
 import { prepareDataHome, recoverDataHome, testLocator } from './data-home';
 import { singleInstance } from './single-instance';
@@ -548,6 +549,15 @@ async function boot() {
     const testing = process.env.DEPLOY_CENTER_TESTING === '1' || smoke;
     const login = { path: executable, args: ['--login-start'] };
     const preferences = new DesktopPreferenceStore(dataDir);
+    let tutorialInstallId: string | undefined;
+    if (!smoke && (installed || testing)) {
+      try {
+        const marker = plainPath(path.join(dataPaths(dataDir).control, 'install-tutorial.id'));
+        tutorialInstallId = preferencesSchema.shape.tutorialInstallId.parse(fs.readFileSync(marker, 'utf8'));
+      } catch { /* 没有新安装标记时，教学向导仍可从设置打开。 */ }
+    }
+    const pendingTutorial = () => tutorialInstallId !== preferences.preferences.tutorialInstallId
+      ? tutorialInstallId : undefined;
     if (installed && !testing)
       preferences.preferences.launchAtLogin = app.getLoginItemSettings(login).openAtLogin;
     const savedWindow = preferences.preferences.rememberWindow ? preferences.window : undefined;
@@ -615,6 +625,8 @@ async function boot() {
       }
       win.show();
       win.focus();
+      const notice = startInTray ? pendingTutorial() : undefined;
+      if (notice) emit({ kind: 'show-install-tutorial', id: notice });
     };
     activateWindow = foreground;
     const applyZoom = () => win?.webContents.setZoomFactor(preferences.preferences.zoom / 100);
@@ -870,6 +882,7 @@ async function boot() {
     handle('load', async () => ({
       database: storage.database(),
       version: app.getVersion(),
+      tutorialInstallId: showOnStartup || win?.isVisible() ? pendingTutorial() : undefined,
       recovery: storage.recovery,
       task: storage.latestTask(),
       unfinished: storage.unfinished(),

@@ -1,6 +1,6 @@
 import { Button } from './design/ui/button';
 import { useRef, useState, type Dispatch, type SetStateAction } from 'react';
-import { BookOpen, ChevronRight, Code2, Download, Info, Upload } from 'lucide-react';
+import { BookOpen, ChevronRight, Code2, Download, GraduationCap, Info, Upload } from 'lucide-react';
 import { AppUpdateSettings } from './AppUpdateSettings';
 import { DataSettings } from './DataSettings';
 import { DirectorySettings } from './DirectorySettings';
@@ -39,6 +39,7 @@ export function SettingsWorkspace({
   showDemo,
   onImport,
   onExport,
+  onTutorial,
 }: {
   desktop?: DesktopAPI;
   db: Database;
@@ -56,6 +57,7 @@ export function SettingsWorkspace({
   showDemo?: boolean;
   onImport: () => void;
   onExport: () => void;
+  onTutorial: () => void;
 }) {
   const usageRef = useRef<HTMLDListElement>(null);
   const [saving, setSaving] = useState(false);
@@ -371,6 +373,14 @@ export function SettingsWorkspace({
             <Card className="help-settings-section">
               <h2>帮助与项目</h2>
               <div className="help-resource-list">
+                <button className="help-resource-row" onClick={onTutorial}>
+                  <span className="help-resource-icon"><GraduationCap size={18} /></span>
+                  <span className="help-resource-copy">
+                    <strong>教学向导</strong>
+                    <span>用五步完成配置和第一次部署</span>
+                  </span>
+                  <ChevronRight size={16} aria-hidden="true" />
+                </button>
                 <button
                   className="help-resource-row"
                   aria-label="使用说明"

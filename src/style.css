@@ -1161,6 +1161,71 @@ p.code,
 .modal-footer .confirm-error {
   margin-bottom: 7px;
 }
+
+.modal-content:has(> .tutorial-pages) {
+  scrollbar-width: none;
+}
+.tutorial-pages {
+  display: grid;
+}
+/* 五步叠放在同一个网格内，由内容最高的一步决定弹窗高度。 */
+.tutorial-lesson {
+  grid-area: 1 / 1;
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: var(--space-3);
+}
+.tutorial-lesson[aria-hidden="true"] {
+  visibility: hidden;
+}
+.tutorial-lesson h3, .tutorial-lesson p, .tutorial-lesson ol {
+  margin: 0;
+}
+.tutorial-lesson h3 {
+  margin-top: var(--space-1);
+}
+.tutorial-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: min(26vh, 174px);
+  object-fit: contain;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-panel);
+}
+.tutorial-lesson ol {
+  list-style: decimal;
+  padding-inline-start: var(--space-6);
+}
+.tutorial-lesson li + li {
+  margin-top: var(--space-1);
+}
+.tutorial-link {
+  justify-self: start;
+}
+.tutorial-actions, .tutorial-navigation {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.tutorial-actions {
+  justify-content: space-between;
+}
+@media (max-height: 430px) {
+  .modal-content:has(> .tutorial-pages) {
+    padding-bottom: var(--space-2);
+  }
+  .tutorial-lesson {
+    gap: var(--space-2);
+  }
+  .tutorial-lesson h3 {
+    margin-top: 0;
+  }
+  .tutorial-image {
+    max-height: 19vh;
+  }
+}
 @keyframes dialog-in {
   from {
     opacity: 0;

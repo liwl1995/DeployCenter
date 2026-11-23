@@ -14,6 +14,7 @@ export const preferencesSchema = z.object({
   closeToTray: z.boolean(),
   updatePolicy: z.enum(['manual', 'check', 'download']),
   checkUpdatesOnStartup: z.boolean(),
+  tutorialInstallId: z.string().regex(/^\d{12,20}-\d{1,10}$/).optional(),
   sortSidebarByDeployment: z.boolean(),
   sidebarServiceOrder: z.array(z.string()),
 });

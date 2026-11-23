@@ -212,6 +212,18 @@ function Wait-QaWindow([string]$Exe) {
     Start-Sleep -Milliseconds 200
   } while ([DateTime]::UtcNow -lt $deadline)
 }
+function Test-QaTutorialSeen([string]$Id) {
+  $file = Join-Path $data 'desktop-preferences.json'
+  $deadline = [DateTime]::UtcNow.AddSeconds(10)
+  do {
+    try {
+      $saved = Get-Content -LiteralPath $file -Raw -ErrorAction Stop | ConvertFrom-Json
+      if ($saved.preferences.tutorialInstallId -eq $Id) { return $true }
+    } catch { }
+    Start-Sleep -Milliseconds 200
+  } while ([DateTime]::UtcNow -lt $deadline)
+  return $false
+}
 function Formal-Snapshot {
   $key='HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\331cf176-7a71-5b12-9fb9-5cf75e4f46af'
   if(Test-Path -LiteralPath $key){return (Get-ItemProperty -LiteralPath $key | Select-Object DisplayName,DisplayVersion,InstallLocation,UninstallString | ConvertTo-Json -Compress)}
@@ -254,6 +266,9 @@ try{
   $env:DEPLOY_CENTER_TESTING='1'
   Check '首次安装没有预建数据目录或位置记录' (-not(Test-Path -LiteralPath $data) -and -not(Test-Path -LiteralPath "HKCU:\$locationKey"))
   Check '首次安装自动创建数据目录并支持中文安装路径' ((Run $installer "/S /D=$program") -eq 0 -and (Test-Path -LiteralPath $data))
+  $tutorialMarker = Join-Path $data 'Control/install-tutorial.id'
+  $firstTutorial = Get-Content -LiteralPath $tutorialMarker -Raw
+  Check '首次安装生成教学标记' ($firstTutorial -match '^\d{12,20}-\d{1,10}$')
   Set-Content -LiteralPath (Join-Path $data '.yotoo-data-owner.ini') -Value "[application]`r`nid=local.deploycenter.desktop`r`n" -Encoding utf8
   Set-Content -LiteralPath (Join-Path $data 'keep-user-data.txt') -Value $id -Encoding utf8
   New-Item -Path "HKCU:\$locationKey" -Force | Out-Null
@@ -273,6 +288,7 @@ try{
   try {
     Check '程序集被占用时安全停止升级并保留旧入口' ((Run $installer '/S') -eq 1603 -and
       (Test-Path -LiteralPath $exe) -and (Get-FileHash -LiteralPath $archive).Hash -eq $packageSha256)
+    Check '升级失败保留原教学标记' ((Get-Content -LiteralPath $tutorialMarker -Raw) -eq $firstTutorial)
   } finally { $lock.Dispose() }
   $shell = New-Object -ComObject WScript.Shell
   $broken = $shell.CreateShortcut($shortcuts[0])
@@ -281,6 +297,8 @@ try{
   $broken.Save()
   Test-InteractiveInstaller $installer $program -Install
   Check '交互覆盖安装完成页可点击且能打开应用' ($null -ne (Wait-QaWindow $exe))
+  $interactiveTutorial = Get-Content -LiteralPath $tutorialMarker -Raw
+  Check '同版本覆盖后首次打开应用展示教学' ($interactiveTutorial -ne $firstTutorial -and (Test-QaTutorialSeen $interactiveTutorial))
   Close-QaApp @($exe)
   Start-Process -FilePath $shortcuts[1]
   $desktopApp = Wait-QaWindow $exe
@@ -318,6 +336,7 @@ try{
   } while([DateTime]::UtcNow -lt $deadline)
   Check '旧应用等待交接时保持运行' (-not $parent.HasExited -and $parent.MainWindowHandle -ne 0)
   $handoff="$($parent.Id) $(Encode $installer) $digest $(Encode $program) $(Encode $log) $version $(Encode $exe)"
+  $beforeSilentTutorial = Get-Content -LiteralPath $tutorialMarker -Raw
   $start=[Diagnostics.ProcessStartInfo]::new($helper,$handoff)
   $start.WorkingDirectory=$program
   $start.UseShellExecute=$false
@@ -346,6 +365,8 @@ try{
     if(-not $restarted){Start-Sleep -Milliseconds 250}
   } until($restarted -or [DateTime]::UtcNow -ge $deadline)
   Check '静默安装后自动打开主窗口' ($null -ne $restarted)
+  $silentTutorial = Get-Content -LiteralPath $tutorialMarker -Raw
+  Check '静默安装重启后展示新一轮教学' ($silentTutorial -ne $beforeSilentTutorial -and (Test-QaTutorialSeen $silentTutorial))
   Check '静默安装后开始菜单入口和图标有效' (Test-QaShortcut $shortcuts[0] $exe)
   if($restarted){$null=$restarted.CloseMainWindow();$null=$restarted.WaitForExit(10000)}
   Check '静默更新保留原目录及用户数据和快捷方式选择' ((Test-Path -LiteralPath $exe) -and -not(Test-Path -LiteralPath $desktopLink) -and (Get-Content (Join-Path $data 'keep-user-data.txt') -Raw).Trim() -eq $id)

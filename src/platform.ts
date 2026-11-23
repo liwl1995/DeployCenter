@@ -78,6 +78,7 @@ export type TaskSummary = {
 };
 export type Startup = {
   version?: string;
+  tutorialInstallId?: string;
   darkTheme?: boolean;
   preferences?: import('./desktop-preferences').DesktopPreferences;
   update?: import('./app-update').AppUpdate;
@@ -95,6 +96,7 @@ export type Startup = {
   dataLocation?: { previous?: string; pending?: string; previousKept?: boolean };
 };
 export type DesktopEvent =
+  | { kind: 'show-install-tutorial'; id: string }
   | { kind: 'operation'; record: import('./operations').OperationRecord }
   | { kind: 'native-theme'; dark: boolean }
   | { kind: 'image-job'; job: ImageJob }

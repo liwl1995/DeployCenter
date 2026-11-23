@@ -659,11 +659,53 @@ FunctionEnd
   ${Else}
     !insertmacro DC_ReplaceShortcut "$newDesktopLink"
   ${EndIf}
+  !insertmacro DC_MarkTutorial
   CreateDirectory "$DC_InstallerLogs"
   FileOpen $DC_Log "$DC_InstallerLogs\last-install.log" a
   FileWrite $DC_Log "安装成功 ${VERSION}，目录：$INSTDIR$\r$\n"
   FileClose $DC_Log
   !insertmacro DC_InstallStage 4 "程序文件与快捷方式已安装完成"
+!macroend
+
+!macro DC_MarkTutorial
+  ; 每次成功安装都生成新标记，包括同版本覆盖和静默更新。
+  StrCpy $3 "$DC_DataRoot\Control"
+  CreateDirectory "$3"
+  System::Call 'kernel32::GetFileAttributesW(w r3)i.r0'
+  IntOp $1 $0 & 0x400
+  ${If} $0 == -1
+  ${OrIf} $1 != 0
+    Push "无法写入安装后教学向导标记：$3"
+    Call DC_AbortProgramInstall
+  ${EndIf}
+  ClearErrors
+  GetTempFileName $4 "$3"
+  ${IfNot} ${Errors}
+    FileOpen $DC_Log "$4" w
+    ${IfNot} ${Errors}
+      System::Call 'kernel32::GetSystemTimeAsFileTime(*l .r0)'
+      System::Call 'kernel32::GetCurrentProcessId() i .r1'
+      FileWrite $DC_Log "$0-$1"
+      ${IfNot} ${Errors}
+        FileClose $DC_Log
+        StrCpy $1 "$3\install-tutorial.id"
+        System::Call 'kernel32::MoveFileExW(w r4, w r1, i 9)i.r2'
+      ${Else}
+        FileClose $DC_Log
+        StrCpy $2 0
+      ${EndIf}
+    ${Else}
+      StrCpy $2 0
+    ${EndIf}
+    ${If} $2 == 0
+      Delete "$4"
+      SetErrors
+    ${EndIf}
+  ${EndIf}
+  ${If} ${Errors}
+    Push "无法写入安装后教学向导标记：$3"
+    Call DC_AbortProgramInstall
+  ${EndIf}
 !macroend
 
 !macro DC_ReplaceShortcut LINK
