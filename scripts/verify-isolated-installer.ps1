@@ -4,8 +4,10 @@ $ErrorActionPreference='Stop'
 $repoRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $version=(Get-Content (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json).version
 $id=[guid]::NewGuid().ToString()
-$qaRoot=Join-Path $repoRoot ".test-data/installer-qa-$id"
+$testRoot=Join-Path $repoRoot '.test-data'
+$qaRoot=Join-Path $testRoot "installer-qa-$id"
 $program=Join-Path $qaRoot '中文 Space/程序'
+$newProgram=Join-Path $qaRoot '新位置 Space/程序'
 $data=Join-Path $qaRoot '中文 数据/DeployCenter'
 $build=Join-Path $qaRoot 'build'
 $locationKey="Software\YOTOO\DeployCenter.Tests\$id"
@@ -14,6 +16,12 @@ $qaPackage="deploy-center-qa-$id"
 $sharedCache=Join-Path $env:LOCALAPPDATA 'deploy-center-updater/installer.exe'
 $sharedHash=if(Test-Path -LiteralPath $sharedCache){(Get-FileHash -LiteralPath $sharedCache -Algorithm SHA256).Hash}else{''}
 $appId="local.deploycenter.desktop.qa.$id"
+$uninstallKey="HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$id"
+$installKey="HKCU:\Software\$id"
+$shortcuts=@(
+  (Join-Path ([Environment]::GetFolderPath('Programs')) "$product.lnk"),
+  (Join-Path ([Environment]::GetFolderPath('Desktop')) "$product.lnk")
+)
 $report=Join-Path $repoRoot "release/installer-qa-$version.json"
 $source=$null
 if($Prepackaged){
@@ -35,21 +43,50 @@ if($Prepackaged){
 }
 $checks=[System.Collections.Generic.List[object]]::new()
 function Check([string]$Name,[bool]$Passed){$checks.Add(@{name=$Name;passed=$Passed});if(-not $Passed){throw "验收失败：$Name"};Write-Output "PASS $Name"}
-function Run([string]$File,[string]$Arguments){$p=Start-Process -FilePath $File -ArgumentList $Arguments -PassThru -WindowStyle Hidden;if(-not $p.WaitForExit(180000)){throw '隔离安装程序未正常退出'};return $p.ExitCode}
+function Run([string]$File,[string]$Arguments){
+  $p=Start-Process -FilePath $File -ArgumentList $Arguments -PassThru -WindowStyle Hidden
+  if(-not $p.WaitForExit(180000)){
+    $script:timedOutProcess=$p
+    throw '隔离安装程序未正常退出'
+  }
+  return $p.ExitCode
+}
+function Close-QaApp([string[]]$Paths){
+  foreach($running in @(Get-Process -Name $product -ErrorAction SilentlyContinue | Where-Object { $_.Path -in $Paths })){
+    $null=$running.CloseMainWindow()
+    if(-not $running.WaitForExit(5000)){
+      $running.Kill()
+      if(-not $running.WaitForExit(5000)){throw '隔离程序尚未退出'}
+    }
+  }
+}
 function Formal-Snapshot {
   $key='HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\331cf176-7a71-5b12-9fb9-5cf75e4f46af'
   if(Test-Path -LiteralPath $key){return (Get-ItemProperty -LiteralPath $key | Select-Object DisplayName,DisplayVersion,InstallLocation,UninstallString | ConvertTo-Json -Compress)}
   return ''
 }
 $before=Formal-Snapshot
+$owned=$false
+$child=$null
+$timedOutProcess=$null
+$previousEnvironment=@{
+  DEPLOY_CENTER_DATA_DIR=$env:DEPLOY_CENTER_DATA_DIR
+  DEPLOY_CENTER_SETTINGS_DIR=$env:DEPLOY_CENTER_SETTINGS_DIR
+  DEPLOY_CENTER_TESTING=$env:DEPLOY_CENTER_TESTING
+}
+$result=@{ok=$false;version=$version;namespace=$appId;locationKey=$locationKey;root=$qaRoot;checks=$checks}
 try{
-  if(-not $qaRoot.StartsWith((Join-Path $repoRoot '.test-data')+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'QA 路径越界'}
+  if([IO.Path]::GetDirectoryName($qaRoot) -ne $testRoot -or (Test-Path -LiteralPath $qaRoot)){throw 'QA 路径无效或已存在'}
+  $testDirectory=Get-Item -LiteralPath $testRoot -Force -ErrorAction SilentlyContinue
+  if($testDirectory -and ($testDirectory.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'QA 上级目录不能是链接'}
+  New-Item -ItemType Directory -Path $qaRoot | Out-Null
+  $owned=$true
   $roaming=Split-Path -Parent $data
   $legacy=Join-Path $qaRoot '空的旧设置'
   New-Item -ItemType Directory -Path $qaRoot,$roaming,$build -Force | Out-Null
   $wrapper=Join-Path $qaRoot 'custom.nsh'
   Set-Content -LiteralPath $wrapper -Value "!define YOTOO_LOCATION_KEY `"$locationKey`"`r`n!define YOTOO_ROAMING_DATA `"$roaming`"`r`n!define YOTOO_LEGACY_SETTINGS `"$legacy`"`r`n!include `"$repoRoot\installer\custom.nsh`"" -Encoding utf8
-  $builderArgs=@("--config.extraMetadata.name=$qaPackage",'--win','nsis','--x64',"--config.appId=$appId","--config.productName=$product","--config.nsis.shortcutName=$product","--config.nsis.include=$wrapper","--config.directories.output=$build",'--config.win.artifactName=QA-Setup.exe','--publish','never')
+  $builderArgs=@("--config.extraMetadata.name=$qaPackage",'--win','nsis','--x64',"--config.appId=$appId","--config.productName=$product","--config.nsis.guid=$id","--config.nsis.shortcutName=$product","--config.nsis.include=$wrapper","--config.directories.output=$build",'--config.win.artifactName=QA-Setup.exe','--publish','never')
   if($source){
     $clone=Join-Path $qaRoot 'packaged'
     New-Item -ItemType Directory -Path $clone -Force | Out-Null
@@ -75,7 +112,7 @@ try{
   Check '框架不再产生额外用户目录缓存' (-not(Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA "$qaPackage-updater/installer.exe")))
   Check '安装日志在配置目录' (Test-Path -LiteralPath (Join-Path $data 'logs/installer/last-install.log'))
   $entry=@(Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty | Where-Object {$_.DisplayName -like "$product*"})
-  Check '独立应用注册项' ($entry.Count -eq 1 -and $entry[0].DisplayVersion -eq $version)
+  Check '独立应用注册项' ($entry.Count -eq 1 -and $entry[0].PSChildName -eq $id -and $entry[0].DisplayVersion -eq $version)
   Check '开始菜单和桌面独立快捷方式' ((Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('Programs')) "$product.lnk")) -and (Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('Desktop')) "$product.lnk")))
   Check '已安装程序实际启动与 SQLite 加密渲染' ((Run $exe '--smoke') -eq 0 -and (Get-Content (Join-Path $data 'smoke-result.json') -Raw | ConvertFrom-Json).ok)
   Start-Sleep -Milliseconds 800
@@ -137,7 +174,6 @@ try{
   $marker=Join-Path $occupied 'keep.txt'
   Set-Content -LiteralPath $marker -Value $id -Encoding utf8
   Check '拒绝占用含其他文件的目录' ((Run $installer "/S /D=$occupied") -ne 0 -and (Get-Content -LiteralPath $marker -Raw).Trim() -eq $id)
-  $newProgram=Join-Path $qaRoot '新位置 Space/程序'
   Check '升级可更换程序目录' ((Run $installer "/S /D=$newProgram") -eq 0)
   $newExe=Join-Path $newProgram "$product.exe"
   $entry=@(Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty | Where-Object {$_.DisplayName -like "$product*"})
@@ -157,20 +193,78 @@ try{
   Check '正式安装注册保持原样' ((Formal-Snapshot) -eq $before)
   $afterShared=if(Test-Path -LiteralPath $sharedCache){(Get-FileHash -LiteralPath $sharedCache -Algorithm SHA256).Hash}else{''}
   Check '共享安装缓存未被验收修改' ($afterShared -eq $sharedHash)
-  @{ok=$true;version=$version;packageSha256=$packageSha256;namespace=$appId;locationKey=$locationKey;root=$qaRoot;checks=$checks} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $report -Encoding utf8
+  $result.packageSha256=$packageSha256
 }catch{
-  @{ok=$false;version=$version;error=$_.Exception.Message;root=$qaRoot;checks=$checks} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $report -Encoding utf8
-  throw
+  $result.error=$_.Exception.Message
 }finally{
-  # 验收途中失败时也尽量卸载独立应用，保留该次日志。
-  if($program.StartsWith($qaRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){
-    $qaExe=Join-Path $program "$product.exe"
-    foreach($running in @(Get-Process -Name $product -ErrorAction SilentlyContinue | Where-Object Path -eq $qaExe)){
-      $null=$running.CloseMainWindow()
-      if(-not $running.WaitForExit(5000)){$running.Kill();$running.WaitForExit()}
+  if($owned){
+    # 更换安装目录中途失败时，程序可能位于原目录或新目录。
+    $cleanupWarnings=[System.Collections.Generic.List[string]]::new()
+    $installDirs=@((Join-Path $qaRoot '中文 Space/程序'),$newProgram) |
+      ForEach-Object { [IO.Path]::GetFullPath($_) }
+    $qaExecutables=@($installDirs | ForEach-Object { Join-Path $_ "$product.exe" })
+    try{
+      Close-QaApp $qaExecutables
+      if($child -and -not $child.HasExited){
+        if(-not $child.WaitForExit(180000)){throw '隔离更新助手尚未结束'}
+        # 关闭旧窗口可能让更新助手完成交接并重启 QA 应用。
+        Close-QaApp $qaExecutables
+      }
+      if($timedOutProcess -and -not $timedOutProcess.HasExited){throw '隔离安装程序尚未结束'}
+      if(Test-Path -LiteralPath $uninstallKey){
+        $installed=(Get-ItemProperty -LiteralPath $uninstallKey).InstallLocation
+        if($installed -notin $installDirs){throw 'QA 注册项的安装位置超出本次验收目录'}
+        $qaUninstaller=Join-Path $installed "Uninstall $product.exe"
+        if(Test-Path -LiteralPath $qaUninstaller){
+          try{
+            # _?= 让 NSIS 在当前进程中执行卸载，可等待实际完成。
+            $code=Run $qaUninstaller "/S _?=$installed"
+            if($code -ne 0){$cleanupWarnings.Add("隔离卸载退出码 $code")}
+          }catch{
+            if($timedOutProcess -and -not $timedOutProcess.HasExited){throw}
+            $cleanupWarnings.Add($_.Exception.Message)
+          }
+        }
+      }
+      # 只清理由本轮 GUID 和产品名确定的注册项及快捷方式。
+      foreach($key in @($uninstallKey,$installKey,"HKCU:\$locationKey")){
+        if(Test-Path -LiteralPath $key){Remove-Item -LiteralPath $key}
+      }
+      foreach($shortcut in $shortcuts){
+        if(Test-Path -LiteralPath $shortcut){Remove-Item -LiteralPath $shortcut}
+      }
+      Check '本轮 QA 注册项和快捷方式已清除' (-not (@($uninstallKey,$installKey,"HKCU:\$locationKey") + $shortcuts | Where-Object { Test-Path -LiteralPath $_ }))
+      Check '收尾后正式安装注册保持原样' ((Formal-Snapshot) -eq $before)
+    }catch{$result.cleanupError=$_.Exception.Message}
+    try{
+      # 报告只保留诊断所需的日志尾部，构建副本和安装包随验收目录清理。
+      $result.logs=@{}
+      foreach($relative in @('build.log','old-app.stderr.log','中文 数据/DeployCenter/logs/installer/last-install.log','中文 数据/DeployCenter/logs/update/update-install.log')){
+        $logFile=Join-Path $qaRoot $relative
+        if(Test-Path -LiteralPath $logFile -PathType Leaf){$result.logs[$relative]=@(Get-Content -LiteralPath $logFile -Tail 40)}
+      }
+      if($cleanupWarnings.Count){$result.cleanupWarnings=$cleanupWarnings.ToArray()}
+      if(!$result.cleanupError){
+        $directory=Get-Item -LiteralPath $qaRoot -Force
+        $parentDirectory=Get-Item -LiteralPath $testRoot -Force
+        if($directory.Parent.FullName -ne $parentDirectory.FullName -or $directory.Name -cne "installer-qa-$id" -or
+          (($directory.Attributes -bor $parentDirectory.Attributes) -band [IO.FileAttributes]::ReparsePoint) -or
+          (Get-ChildItem -LiteralPath $qaRoot -Force -Recurse -Attributes ReparsePoint | Select-Object -First 1)){
+          throw '本轮 QA 目录越界或包含链接，已保留现场'
+        }
+        Remove-Item -LiteralPath $qaRoot -Recurse -Force
+        Check '本轮 QA 临时目录已清除' (-not(Test-Path -LiteralPath $qaRoot))
+      }
+    }catch{
+      $result.cleanupError=(@($result.cleanupError,$_.Exception.Message) | Where-Object { $_ }) -join '；'
     }
-    $qaUninstaller=Join-Path $program "Uninstall $product.exe"
-    if(Test-Path -LiteralPath $qaUninstaller){try{$null=Run $qaUninstaller '/S'}catch{Write-Warning $_}}
   }
-  if($locationKey -match '^Software\\YOTOO\\DeployCenter\.Tests\\[a-f0-9-]{36}$' -and (Test-Path -LiteralPath "HKCU:\$locationKey")){Remove-Item -LiteralPath "HKCU:\$locationKey" -Recurse}
+  foreach($entry in $previousEnvironment.GetEnumerator()){
+    if($null -eq $entry.Value){Remove-Item -LiteralPath "Env:$($entry.Key)" -ErrorAction SilentlyContinue}
+    else{[Environment]::SetEnvironmentVariable($entry.Key,$entry.Value,'Process')}
+  }
+  $result.ok=-not($result.error -or $result.cleanupError)
+  New-Item -ItemType Directory -Path (Split-Path -Parent $report) -Force | Out-Null
+  $result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $report -Encoding utf8
 }
+if(!$result.ok){throw ((@($result.error,$result.cleanupError) | Where-Object { $_ }) -join '；')}
