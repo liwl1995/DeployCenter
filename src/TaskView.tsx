@@ -118,6 +118,7 @@ export function TaskView({
   onPromote,
   onRecheck,
   onDiagnose,
+  onRuntimeStatus,
   onIdentity,
   onReport,
   onRollback,
@@ -142,6 +143,7 @@ export function TaskView({
   onPromote?: () => void;
   onRecheck?: () => void;
   onDiagnose?: (kind: DiagnosticKind) => void;
+  onRuntimeStatus?: () => void;
   onIdentity: () => void;
   onReport?: () => void;
   onRollback?: () => void;
@@ -286,6 +288,7 @@ export function TaskView({
       more.push({ label: '重新检查', onClick: onRecheck });
     if (onObserve) more.push({ label: '查看或停止日志观察', onClick: onObserve });
     if (onBackups) more.push({ label: '查看远程备份保留建议', onClick: onBackups });
+    if (run?.error && onRuntimeStatus) more.push({ label: '查看运行状态', onClick: onRuntimeStatus });
     if (run?.error && onDiagnose) {
       const advice = failureAdvice(run.error);
       if (advice.action === 'identity') more.push({ label: '查看服务器配置', onClick: onIdentity });

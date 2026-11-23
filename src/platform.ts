@@ -95,6 +95,7 @@ export type Startup = {
   dataLocation?: { previous?: string; pending?: string; previousKept?: boolean };
 };
 export type DesktopEvent =
+  | { kind: 'operation'; record: import('./operations').OperationRecord }
   | { kind: 'native-theme'; dark: boolean }
   | { kind: 'image-job'; job: ImageJob }
   | { kind: 'online-log-download'; token: string; bytes: number }
@@ -139,6 +140,11 @@ export type DesktopEvent =
   | { kind: 'open-task'; taskId: string }
   | { kind: 'update'; update: import('./app-update').AppUpdate };
 export interface DesktopAPI {
+  operationsList(target: string): Promise<import('./operations').OperationRecord[]>;
+  operationsStatus(target: string, credential: string): Promise<import('./operations').OperationStatus>;
+  operationsPrepare(target: string, action: import('./operations').ServiceOperation): Promise<import('./operations').OperationPlan>;
+  operationsRun(token: string, confirmation: string, stopped: boolean, credential: string): Promise<import('./operations').OperationRecord>;
+  operationsSettle(target: string, record: string, confirmation: string, credential: string): Promise<import('./operations').OperationRecord>;
   startupPainted(): Promise<void>;
   imageDistributions(): Promise<string[]>;
   probeImageEngine(engine: ImageEngine): Promise<string>;

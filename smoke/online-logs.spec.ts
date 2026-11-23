@@ -150,11 +150,11 @@ test('服务工作台与目标详情共享日志界面，通过回环 SSH 跟随
     const page = await app.firstWindow();
     const button = (name: string) => page.getByRole('button', { name, exact: true });
     await expect(page.getByRole('tablist', { name: '服务工作台' }).getByRole('tab')).toHaveText([
-      '部署目标', '发布记录', '构建配置', '日志',
+      '部署目标', '发布记录', '构建配置', '运维',
     ]);
     await button('查看线上日志 · 正式日志目标').click();
     await expect(page.getByText('正式环境 · 只读', { exact: true })).toBeVisible();
-    await expect(page.getByText(/回环夹具 · 127\.0\.0\.1/)).toBeVisible();
+    await expect(page.getByRole('region', { name: '线上应用日志' }).getByText(/回环夹具 · 127\.0\.0\.1/)).toBeVisible();
     await expect(button('连接日志')).toHaveCSS('background-color', 'rgb(234, 88, 12)');
     await expect(button('连接日志')).toHaveCSS('color', 'rgb(255, 255, 255)');
     await button('连接日志').click();
@@ -240,7 +240,10 @@ test('服务工作台与目标详情共享日志界面，通过回环 SSH 跟随
     ).toHaveLength(1);
     expect(commands.join('\n')).not.toMatch(/\b(?:mkdir|systemctl|docker restart)\b/);
 
-    await page.getByRole('combobox', { name: '日志目标' }).selectOption('unconfigured-log');
+    await expect(page.getByRole('combobox', { name: '日志目标' })).toHaveCount(0);
+    await button('返回运维').click();
+    await page.getByRole('combobox', { name: '运维目标' }).selectOption('unconfigured-log');
+    await button('查看日志').click();
     await expect(button('配置日志路径')).toBeVisible();
     await button('配置日志路径').click();
     await expect(
@@ -251,13 +254,11 @@ test('服务工作台与目标详情共享日志界面，通过回环 SSH 跟随
     await expect(button('线上日志')).toHaveCount(0);
     await button('查看部署目标正式日志目标详情').click();
     await button('线上日志').click();
-    await expect(
-      page.getByRole('dialog', { name: '线上日志' }).getByRole('region', { name: '线上应用日志' }),
-    ).toBeVisible();
+    await expect(page.getByRole('region', { name: '线上应用日志' })).toBeVisible();
     await more.click();
     await expect(page.getByRole('menuitem', { name: '断开' })).toBeVisible();
     await page.keyboard.press('Escape');
-    await expect(page.getByRole('dialog', { name: '线上日志' })).toBeVisible();
+    await expect(page.getByRole('region', { name: '线上应用日志' })).toBeVisible();
     await expect(more).toBeFocused();
     await more.click();
     await page.getByRole('menuitem', { name: '断开' }).click();

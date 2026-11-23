@@ -36,16 +36,41 @@ function protectProgramLaunch(source) {
   const newline = source.includes('\r\n') ? '\r\n' : '\n';
   const uninstall = '!insertmacro uninstallOldVersion SHELL_CONTEXT';
   const install = '!insertmacro installApplicationFiles';
-  // 已移除旧 EXE 时旧卸载器会清理快捷方式，安装器须按原选择重建。
-  const withdraw = [
-    'Call DC_WithdrawProgram',
-    '${If} $DC_ProgramWithdrawn == "1"',
-    '  StrCpy $keepShortcuts "false"',
-    '${EndIf}',
-    uninstall,
+  const guarded = replaceOnce(source, uninstall, 'Call DC_WithdrawProgram' + newline + uninstall);
+  const published = replaceOnce(guarded, install, install + newline + 'Call DC_PublishProgram');
+  const shortcuts = [
+    '!insertmacro addStartMenuLink $keepShortcuts',
+    '!insertmacro addDesktopLink $keepShortcuts',
   ].join(newline);
-  const guarded = replaceOnce(source, uninstall, withdraw);
-  return replaceOnce(guarded, install, install + newline + 'Call DC_PublishProgram');
+  return replaceOnce(published, shortcuts, '; Windows 快捷方式由 customInstall 统一写入。');
+}
+function preserveUpgradeShortcuts(source) {
+  const newline = source.includes('\r\n') ? '\r\n' : '\n';
+  const options = '  !insertMacro setIsTryToKeepShortcuts';
+  const sameDirectory = [
+    options,
+    '  ${If} $DC_ProgramWithdrawn == "1"',
+    '  ${AndIf} $DC_OldExecutable == "${APP_EXECUTABLE_FILENAME}"',
+    '  ${AndIf} $DC_BackupSource == $installationDir',
+    '  ${AndIf} $installationDir == $INSTDIR',
+    '    StrCpy $isTryToKeepShortcuts "true"',
+    '  ${EndIf}',
+  ].join(newline);
+  const previous = [
+    '    ${andIf} ${FileExists} "$appExe"',
+    '      StrCpy $0 "$0 --keep-shortcuts"',
+  ].join(newline);
+  // 旧入口在卸载前已下线，原目录升级仍须保留 Windows 快捷方式和固定项。
+  return replaceOnce(replaceOnce(source, options, sameDirectory), previous, [
+    '      ${If} $DC_ProgramWithdrawn == "1"',
+    '      ${AndIf} $DC_OldExecutable == "${APP_EXECUTABLE_FILENAME}"',
+    '      ${AndIf} $DC_BackupSource == $installationDir',
+    '      ${AndIf} $installationDir == $INSTDIR',
+    '        StrCpy $0 "$0 --keep-shortcuts"',
+    '      ${ElseIf} ${FileExists} "$appExe"',
+    '        StrCpy $0 "$0 --keep-shortcuts"',
+    '      ${EndIf}',
+  ].join(newline));
 }
 /** 打包期间修改所需模板，完成或失败均还原；独占锁阻止两次打包互相覆盖。 */
 export async function withNsisTemplate(action, project = process.cwd()) {
@@ -53,6 +78,7 @@ export async function withNsisTemplate(action, project = process.cwd()) {
   const changes = [
     ['include/installer.nsh', withoutInstallerCache],
     ['include/extractAppPackage.nsh', stageProgramExecutable],
+    ['include/installUtil.nsh', preserveUpgradeShortcuts],
     ['installSection.nsh', protectProgramLaunch],
   ];
   const lockFile = path.join(directory, 'include/installer.nsh.yotoo-lock');

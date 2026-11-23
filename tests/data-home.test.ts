@@ -2,7 +2,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { dataPaths, transferTree, finishTransfer } from '../electron/data-paths';
+import { cleanCompletedInstallerBackups, dataPaths, transferTree, finishTransfer } from '../electron/data-paths';
 import { prepareDataHome } from '../electron/data-home';
 import { singleInstance } from '../electron/single-instance';
 const base = path.resolve('.test-data');
@@ -29,6 +29,19 @@ it('所有可控数据路径从当前配置派生，中文空格路径和更换�
   expect(changed.updates).not.toBe(paths.updates);
   expect(changed.logs).not.toBe(paths.logs);
   expect(() => dataPaths(path.join(root, '..', '..') + path.sep + '..')).toThrow();
+});
+it('后台只清理成功安装的备份，保留未确认备份和含目录联接的副本', async () => {
+  const root = await fixture();
+  const backup = dataPaths(root).installerBackup;
+  for (const name of ['completed-123', '124', 'completed-125', 'legacy']) {
+    const dir = path.join(backup, name);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, 'program.exe'), 'fixture');
+  }
+  await fs.symlink(path.join(backup, '124'), path.join(backup, 'completed-125', 'linked'), 'junction');
+  await cleanCompletedInstallerBackups(root);
+  expect((await fs.readdir(backup)).sort()).toEqual(['124', 'completed-125', 'legacy']);
+  expect(await fs.readFile(path.join(backup, '124', 'program.exe'), 'utf8')).toBe('fixture');
 });
 it('旧版定位、运行资料、安装包和日志先验证转移，确认启动后才清理原件', async () => {
   const root = await fixture(),

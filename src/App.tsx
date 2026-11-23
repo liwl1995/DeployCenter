@@ -1,6 +1,6 @@
 import { ReleaseSchedules } from './ReleaseSchedules';
 import type { ReleaseSchedule } from './schedules';
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Rocket,
   Activity,
@@ -124,6 +124,8 @@ import {
   LockTakeover,
 } from './DesktopViews';
 import { OnlineLogsWorkspace } from './OnlineLogsWorkspace';
+import { OperationsWorkspace } from './OperationsWorkspace';
+import type { OperationStatus } from './operations';
 
 type Page = WorkspacePage;
 const fixture = prototype && !desktop;
@@ -244,6 +246,11 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   const historyViews = useRef(new Map<string, HistoryViewState>());
   const [serviceTab, setServiceTab] = useState('deploy');
   const [logTarget, setLogTarget] = useState('');
+  const [showOperationLogs, setShowOperationLogs] = useState(false);
+  const [runtime, setRuntime] = useState<Record<string, OperationStatus>>({});
+  const rememberRuntime = useCallback((id: string, status: OperationStatus) => {
+    setRuntime((current) => ({ ...current, [id]: status }));
+  }, []);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general');
   const [desktopPreferences, setDesktopPreferences] = useState(boot?.preferences ?? desktopPreferenceDefaults);
   const [nativeDark, setNativeDark] = useState(boot?.darkTheme);
@@ -339,6 +346,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   const targets = db.targets.filter((t) => t.serviceId === serviceId);
   const selectedLogTarget = targets.find((target) => target.id === logTarget) ||
     targets.find((target) => !target.production) || targets[0];
+  const viewingOperationLogs = page === 'deploy' && serviceTab === 'ops' && showOperationLogs;
   const chosen = targets.filter((t) => selected.includes(t.id));
   const effective = (t: Target) => overrides[t.id] || t.backup;
   const notify = (text: string) => setMessage(text);
@@ -390,7 +398,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     document.documentElement.dataset.density = density;
     try { localStorage.setItem('deploy-center-density', density); } catch { /* 界面偏好仍在本次会话生效。 */ }
   }, [density]);
-  useEffect(() => { setServiceTab('deploy'); setEnvironment('all'); }, [serviceId]);
+  useEffect(() => { setEnvironment('all'); }, [serviceId]);
   useEffect(() => {
     if (!fixture || !isActive(task)) return;
     const timer = setInterval(() => setTask((current) => (current ? tick(current) : null)), 850);
@@ -615,6 +623,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   function selectService(id: string) {
     const s = db.services.find((s) => s.id === id);
     if (!s) return;
+    setServiceTab('deploy');
+    setShowOperationLogs(false);
     setRetrySource(undefined);
     setDeployNote(undefined);
     setObservationOverrides({});
@@ -629,6 +639,13 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     setArtifact((fixture ? artifactFor : initialArtifact)(s));
     setOverrides({});
     setDb((old) => ({ ...old, lastService: id }));
+  }
+  function openOperations(target: Target, logs = false) {
+    if (target.serviceId !== serviceId) selectService(target.serviceId);
+    setLogTarget(target.id);
+    setShowOperationLogs(logs);
+    setServiceTab('ops');
+    setPage('deploy');
   }
   traySelectService.current = (id) => {
     if (id !== serviceId) selectService(id);
@@ -917,7 +934,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   );
   const targetActions = (t: Target, detail = false) => (
     <div className="entity-actions">
-      {detail && desktop && <Button variant="neutral" size="compact" onClick={() => setNativeDialog({ title: '线上日志', logs: t.id })}>
+      {detail && desktop && <Button variant="neutral" size="compact" onClick={() => openOperations(t, true)}>
         <ScrollText size={15} />线上日志
       </Button>}
       <Button variant="neutral" size="compact" onClick={() => setDialog({ kind: 'target', value: t })}>
@@ -943,6 +960,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           },
           ...(desktop
             ? [
+                { label: '运维', onClick: () => openOperations(t) },
                 {
                   label: '查看并清理远程备份',
                   onClick: () => setBackupTarget(t),
@@ -1364,11 +1382,14 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
             className="desktop-page-header"
             truncateTitle
             icon={page === 'deploy' && db.services.length ? <Box size={20} strokeWidth={1.5} /> : page === 'settings' ? <SettingsIcon size={18} strokeWidth={1.5} /> : undefined}
-            title={page === 'deploy' && db.services.length ? service.name :
+            title={viewingOperationLogs ? service.name + ' · ' + (selectedLogTarget?.name ?? '') + ' · 线上日志' :
+              page === 'deploy' && db.services.length ? service.name :
               page === 'settings' && desktop ? settingsLabels[settingsSection] :
               workspacePages.find((entry) => entry.page === page)?.name || 'YOTOO 部署中心'}
-            subtitle={page === 'deploy' && service.description ? service.description : undefined}
-            actions={page === 'deploy' && !!db.services.length ? <>
+            subtitle={page === 'deploy' && !viewingOperationLogs && service.description ? service.description : undefined}
+            actions={viewingOperationLogs ?
+              <Button variant="neutral" size="compact" onClick={() => setShowOperationLogs(false)}><ArrowLeft size={15} />返回运维</Button>
+              : page === 'deploy' && !!db.services.length ? <>
               <Button variant="quiet" size="compact" onClick={() => setDialog({ kind: 'presets' })}><FolderOpen size={15} />部署预设</Button>
               <Button variant="ghost" size="icon-compact" aria-label="编辑配置" title="编辑服务" onClick={() => setDialog({ kind: 'service', value: service })}><Pencil size={15} /></Button>
               <Button variant="neutral" size="compact" disabled={!db.servers.length} onClick={() => setDialog({ kind: 'target', value: newTarget() })}><Plus size={15} />添加部署目标</Button>
@@ -1471,28 +1492,36 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           )}
           {page === 'deploy' && !!db.services.length && (
             <section className="service-workspace" aria-label="服务工作台">
-              <PageTabs
+              {!viewingOperationLogs && <PageTabs
                 aria-label="服务工作台"
                 value={serviceTab}
-                onValueChange={setServiceTab}
+                onValueChange={(value) => { setShowOperationLogs(false); setServiceTab(value); }}
                 items={[
                   { value: 'deploy', label: '部署目标' },
                   { value: 'records', label: '发布记录' },
                   { value: 'build', label: '构建配置' },
-                  ...(desktop ? [{ value: 'logs', label: '日志' }] : []),
+                  ...(desktop ? [{ value: 'ops', label: '运维' }] : []),
                 ]}
                 className="service-workspace-tabs"
-              />
-              {serviceTab === 'logs' && desktop ? <div className="service-workspace-scroll online-log-workspace">
-                <OnlineLogsWorkspace api={desktop} targets={targets}
-                  key={selectedLogTarget?.appLogPath}
-                  targetId={selectedLogTarget?.id}
-                  onTarget={setLogTarget} initialFollow={desktopPreferences.followLogs}
-                  onConfigure={() => {
-                    if (selectedLogTarget) setDialog({ kind: 'target', value: selectedLogTarget, initialTab: '健康检查' });
-                  }}
-                />
-              </div> : serviceTab === 'records' ? <div ref={serviceScrollRef} className="service-workspace-scroll" key={serviceId}>{renderHistory(true)}</div> :
+              />}
+              {serviceTab === 'ops' && desktop ? <>
+                <div className="service-workspace-scroll operation-scroll" hidden={viewingOperationLogs}>
+                  <OperationsWorkspace api={desktop} targets={targets} servers={db.servers} target={selectedLogTarget}
+                    saved={saved} onTarget={setLogTarget} onStatus={rememberRuntime} followLogs={desktopPreferences.followLogs} visible={!viewingOperationLogs}
+                    blocked={isActive(task) ? '有部署或回滚正在执行，请等待结束。' : undefined}
+                    onLogs={() => setShowOperationLogs(true)}
+                    onEdit={() => { if (selectedLogTarget) setDialog({ kind: 'target', value: selectedLogTarget }); }} />
+                </div>
+                {viewingOperationLogs && <div className="service-workspace-scroll online-log-workspace">
+                  <OnlineLogsWorkspace api={desktop} targets={targets}
+                    key={selectedLogTarget?.appLogPath}
+                    targetId={selectedLogTarget?.id}
+                    initialFollow={desktopPreferences.followLogs}
+                    onConfigure={() => {
+                      if (selectedLogTarget) setDialog({ kind: 'target', value: selectedLogTarget, initialTab: '健康检查' });
+                    }} />
+                </div>}
+              </> : serviceTab === 'records' ? <div ref={serviceScrollRef} className="service-workspace-scroll" key={serviceId}>{renderHistory(true)}</div> :
                 serviceTab === 'build' ? <div ref={serviceScrollRef} className="service-workspace-scroll">
                   <ServiceForm key={service.id} initial={service} db={db} onClose={() => setServiceTab('deploy')}
                     onSave={(value) => {
@@ -1663,7 +1692,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                             </div>
                             <div className="deployment-target-actions">
                               {desktop && <Button variant="ghost" size="icon-compact" aria-label={'查看线上日志 · ' + t.name} title="查看线上日志"
-                                onClick={() => { setLogTarget(t.id); setServiceTab('logs'); }}><ScrollText size={15} /></Button>}
+                                onClick={() => openOperations(t, true)}><ScrollText size={15} /></Button>}
                               <Button variant="ghost" size="icon-compact" aria-label={'编辑' + t.name} onClick={() => setDialog({ kind: 'target', value: t })}><Pencil size={15} /></Button>
                               <Button variant="ghost" size="icon-compact" aria-label={'本次策略 · ' + t.name} aria-expanded={open}
                                 onClick={() => setExpanded((old) => open ? old.filter((id) => id !== t.id) : [...old, t.id])}><ChevronDown size={15} /></Button>
@@ -1858,7 +1887,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
             />
           )}
           {page === 'services' && <ServicesWorkspace db={db} taskRows={taskRows} onAdd={() => setDialog({ kind: 'service', value: { ...newService(), id: uid() } })} renderActions={serviceActions} />}
-          {page === 'targets' && <TargetsWorkspace db={db} serviceId={serviceId} onService={selectService} onAdd={() => setDialog({ kind: 'target', value: newTarget() })} renderActions={targetActions} />}
+          {page === 'targets' && <TargetsWorkspace db={db} serviceId={serviceId} runtime={runtime} onService={selectService} onAdd={() => setDialog({ kind: 'target', value: newTarget() })} renderActions={targetActions} />}
           {page === 'servers' && (
             <ServersWorkspace
               db={db}
@@ -1991,6 +2020,10 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                     if (target && server)
                       setNativeDialog({ title: '只读诊断', diagnostic: { target, server, kind } });
                   }}
+                  onRuntimeStatus={desktop ? () => {
+                    const target = db.targets.find((entry) => entry.id === task.targets[viewedTarget]?.target.id);
+                    if (target) openOperations(target);
+                  } : undefined}
                   onIdentity={() => setPage('servers')}
                   onReport={
                     desktop
@@ -2173,7 +2206,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
             initial={dialog.value}
             db={db}
             onClose={() => setDialog(null)}
-            onSave={desktop && serviceTab === 'logs' ? saveLogTarget : saveTarget}
+            onSave={desktop && viewingOperationLogs ? saveLogTarget : saveTarget}
           />
         </Modal>
       )}

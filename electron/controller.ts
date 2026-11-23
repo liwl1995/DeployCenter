@@ -81,12 +81,17 @@ export class Controller {
     private options: {
       resolveBuild?: typeof resolveBuild;
       onFinished?: (task: Task, credentials: Record<string, string>) => void;
+      operationBlock?: (task: Task) => string | undefined;
     } = {},
   ) {
     this.trust = new TrustBroker(storage, emit);
   }
   active() {
     return !!this.worker;
+  }
+  private assertOperations(task: Task) {
+    const reason = this.options.operationBlock?.(task);
+    if (reason) throw new Error(reason);
   }
   async prepare(value: unknown) {
     if (this.storage.recovery) throw new Error('请先确认配置恢复，禁止覆盖原始数据');
@@ -343,6 +348,7 @@ export class Controller {
     const credentials = await this.credentials(task, values);
     // 读取凭据期间配置可能被另一请求更新，不能发布未经确认的新配置。
     if (this.active()) throw new Error('已有任务正在执行');
+    this.assertOperations(task);
     if (schedule && scheduleConfiguration(this.storage.database(), task) !== pending.configuration)
       throw new Error('确认期间关键配置已变化，请重新准备');
     this.activeCredentials = credentials;
@@ -425,6 +431,7 @@ export class Controller {
     task.scheduleId = plan.id;
     const credentials = await this.credentials(task, {});
     if (this.active()) throw new Error('已有任务正在执行');
+    this.assertOperations(task);
     if (
       scheduleConfiguration(this.storage.database(), plan.task) !== plan.configuration ||
       schedulePins(plan.task, this.storage.pins()) !== plan.pins
@@ -521,10 +528,13 @@ export class Controller {
       this.emit({ kind: 'task', task });
       return task;
     }
-    this.activeCredentials = await this.credentials(
+    const credentials = await this.credentials(
       { ...task, targets: task.targets.filter((r) => r.remote && r.remote.phase !== 'complete') },
       values,
     );
+    if (this.active()) throw new Error('已有任务正在执行');
+    this.assertOperations(task);
+    this.activeCredentials = credentials;
     task.status = 'running';
     this.launch({
       kind: 'recover',

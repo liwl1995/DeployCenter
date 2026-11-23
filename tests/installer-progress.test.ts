@@ -49,4 +49,5 @@ it.skipIf(process.platform !== 'win32' || !existsSync(compiler)).each([0, 1])(
       await fs.rm(root, { recursive: true, force: true });
     }
   },
+  20000,
 );

@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -22,6 +23,33 @@ export function dataPaths(directory: string) {
   };
   for (const value of Object.values(result)) plainPath(value);
   return result;
+}
+
+/** 只清理安装器标记成功的旧程序副本，保留未确认、含链接或正在使用的目录。 */
+export async function cleanCompletedInstallerBackups(directory: string) {
+  const root = dataPaths(directory).installerBackup;
+  const entries = await fsp.readdir(root, { withFileTypes: true }).catch((error) => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  });
+  const isPlainTree = async (file: string): Promise<boolean> => {
+    const stat = await fsp.lstat(file);
+    if (stat.isFile()) return true;
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
+    for (const name of await fsp.readdir(file))
+      if (!(await isPlainTree(path.join(file, name)))) return false;
+    return true;
+  };
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^completed--?\d{1,10}$/.test(entry.name)) continue;
+    const backup = path.join(root, entry.name);
+    try {
+      if (await isPlainTree(plainPath(backup)))
+        await fsp.rm(plainPath(backup), { recursive: true, force: true });
+    } catch {
+      // 被占用的副本可在下次启动时继续清理。
+    }
+  }
 }
 /** 原生助手只读写当前用户的目录位置；没有数据库、缓存或凭据写入注册表。 */
 export class DirectoryLocator {

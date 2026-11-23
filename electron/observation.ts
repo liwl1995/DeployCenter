@@ -18,6 +18,7 @@ type Active = {
 export class LogSessions {
   private closed = false;
   private pending = new Set<Transport>();
+  private reservations = 0;
   private active = new Map<string, Active>();
   private buffers = new Map<string, LogSessionSnapshot>();
   private sizes = new Map<string, number>();
@@ -26,6 +27,12 @@ export class LogSessions {
     private emit: (event: DesktopEvent) => void,
     private now: () => number = Date.now,
   ) {}
+  reserve() {
+    if (this.closed || this.pending.size + this.active.size + this.reservations >= onlineLogSessionLimit)
+      throw new Error('已达到 3 个查看会话上限，请先停止其他目标的日志连接');
+    this.reservations++;
+    return () => { this.reservations--; };
+  }
   private forget(id: string) {
     clearTimeout(this.expiry.get(id));
     this.expiry.delete(id);
@@ -68,7 +75,7 @@ export class LogSessions {
       transport.close();
       throw new Error('日志观察已关闭');
     }
-    if (this.pending.size + this.active.size >= onlineLogSessionLimit) {
+    if (this.pending.size + this.active.size + this.reservations >= onlineLogSessionLimit) {
       transport.close();
       throw new Error('已达到 3 个日志会话上限，请先停止其他目标的日志连接');
     }

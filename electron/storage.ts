@@ -21,12 +21,13 @@ import { parseTaskRecord } from './task-record';
 import { backupConnection, RemoteBackupCatalog } from './backup-catalog';
 import type { Receipt } from './workbench';
 import type { MaintenanceRecord } from '../src/features';
+import type { OperationRecord } from '../src/operations';
 
 export type Cryptography = {
   encrypt(value: string): Promise<Buffer>;
   decrypt(value: Buffer): Promise<string>;
 };
-export const databaseVersion = 6;
+export const databaseVersion = 7;
 export const productionSeed = emptyDatabase;
 export class Storage {
   private sql!: Sqlite.Database;
@@ -89,6 +90,7 @@ export class Storage {
             'CREATE TABLE IF NOT EXISTS workbench_receipts (scope TEXT NOT NULL, owner TEXT NOT NULL, json TEXT NOT NULL, PRIMARY KEY (scope,owner));',
           );
           this.sql.exec('CREATE TABLE IF NOT EXISTS release_schedules (id TEXT PRIMARY KEY, json TEXT NOT NULL);');
+          this.sql.exec('CREATE TABLE IF NOT EXISTS service_operations (id TEXT PRIMARY KEY, scope TEXT NOT NULL, started INTEGER NOT NULL, json TEXT NOT NULL); CREATE INDEX IF NOT EXISTS service_operations_scope ON service_operations(scope, started DESC);');
           this.sql.pragma('user_version = ' + databaseVersion);
         })();
       }
@@ -151,6 +153,14 @@ export class Storage {
   }
   database() {
     return structuredClone(this.state);
+  }
+  saveOperation(record: OperationRecord) {
+    this.sql.prepare('INSERT INTO service_operations VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json')
+      .run(record.id, record.scope, record.started, JSON.stringify(record));
+  }
+  operations(scope: string) {
+    return (this.sql.prepare('SELECT json FROM service_operations WHERE scope=? ORDER BY started DESC LIMIT 30')
+      .all(scope) as { json: string }[]).map(({ json }) => JSON.parse(json) as OperationRecord);
   }
   private writeState() {
     if (!this.recovery)

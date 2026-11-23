@@ -39,6 +39,7 @@ Var DC_LogoHandle
 
 !ifndef BUILD_UNINSTALLER
 Var DC_ChosenDir
+Var DC_WizardDir
 Var DC_PreviousDir
 Var DC_BackupSource
 Var DC_PathInput
@@ -49,6 +50,7 @@ Var DC_Checkbox
 Var DC_Dialog
 Var DC_Log
 Var DC_Rollback
+Var DC_BackupId
 Var DC_OldVersion
 Var DC_OldDesktop
 Var DC_OldExecutable
@@ -57,6 +59,7 @@ Var DC_OldName
 Var DC_OldPublisher
 Var DC_OldShortcut
 Var DC_ProgramWithdrawn
+Var DC_InstallError
 !define DC_PENDING_EXE ".deploy-center-installing.exe"
 !endif
 
@@ -107,7 +110,8 @@ Var DC_ProgramWithdrawn
   ${IfNot} ${Silent}
     !insertmacro DC_LoadBrandIcon
   ${EndIf}
-  ReadRegStr $DC_PreviousDir HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
+  Call DC_ReadPreviousDirectory
+  StrCpy $DC_WizardDir $INSTDIR
   !ifdef APP_64_UNPACKED_SIZE
     IntOp $DC_RequiredMB ${APP_64_UNPACKED_SIZE} / 1024
     IntOp $DC_RequiredMB $DC_RequiredMB * 2
@@ -138,8 +142,56 @@ Var DC_ProgramWithdrawn
   ${If} ${Silent}
     Call DC_ValidateDirectory
     StrCpy $DC_ChosenDir $INSTDIR
-    Call DC_BackupOldProgram
   ${EndIf}
+!macroend
+
+!macro DC_PreviousDirectoryFunction
+Function DC_ReadPreviousDirectory
+  ReadRegStr $DC_PreviousDir HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
+  ${If} $DC_PreviousDir == ""
+    ; 旧版的框架位置可能为空。仅接受同一安装标识且和旧卸载器指向一致的位置。
+    ReadRegStr $0 HKCU "${UNINSTALL_REGISTRY_KEY}" InstallLocation
+    ReadRegStr $1 HKCU "${UNINSTALL_REGISTRY_KEY}" UninstallString
+    ${If} $0 == ""
+      Return
+    ${EndIf}
+    GetFullPathName $0 "$0"
+    StrCpy $2 $0 1 -1
+    ${If} $2 == "\"
+      StrCpy $0 $0 -1
+    ${EndIf}
+    StrCpy $2 $0 2 1
+    ${If} $2 != ":\"
+      Return
+    ${EndIf}
+    IfFileExists "$0\resources\app.asar" 0 DC_NoPreviousDirectory
+    StrCpy $2 "${APP_EXECUTABLE_FILENAME}"
+    IfFileExists "$0\$2" DC_MatchUninstaller 0
+    StrCpy $2 "Deploy Center.exe"
+    IfFileExists "$0\$2" 0 DC_NoPreviousDirectory
+    DC_MatchUninstaller:
+    IfFileExists "$0\Uninstall $2" 0 DC_NoPreviousDirectory
+    StrCpy $3 '$\"$0\Uninstall $2$\"'
+    StrLen $2 $3
+    StrCpy $1 $1 $2
+    ${If} $1 != $3
+      Return
+    ${EndIf}
+    StrCpy $DC_PreviousDir $0
+  ${Else}
+    GetFullPathName $DC_PreviousDir "$DC_PreviousDir"
+    StrCpy $0 $DC_PreviousDir 1 -1
+    ${If} $0 == "\"
+      StrCpy $DC_PreviousDir $DC_PreviousDir -1
+    ${EndIf}
+  ${EndIf}
+  ; 保留显式 /D，尤其是静默更新传入的路径，仍由原有路径校验判断。
+  !insertmacro GetDParameter $0
+  ${If} $0 == ""
+    StrCpy $INSTDIR $DC_PreviousDir
+  ${EndIf}
+  DC_NoPreviousDirectory:
+FunctionEnd
 !macroend
 
 !macro DC_CenteredLabel Y H TEXT FONT COLOR
@@ -216,7 +268,8 @@ FunctionEnd
 
 !macro customFinishPage
   Function DC_StartApp
-    ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" ""
+    ; 当前用户安装。直接启动已校验的入口，避免在完成页等待资源管理器解析快捷方式。
+    Exec '"$INSTDIR\${APP_EXECUTABLE_FILENAME}"'
   FunctionEnd
   !define MUI_FINISHPAGE_RUN
   !define MUI_FINISHPAGE_RUN_FUNCTION DC_StartApp
@@ -242,6 +295,7 @@ ManifestDPIAware true
 SetFont /LANG=2052 "Microsoft YaHei" 9
 !ifndef BUILD_UNINSTALLER
 !insertmacro DC_WizardVisuals
+!insertmacro DC_PreviousDirectoryFunction
 Function DC_ValidateDirectory
   StrCpy $0 $INSTDIR 2 1
   System::Call 'shlwapi::PathGetDriveNumberW(w "$INSTDIR")i.r1'
@@ -337,6 +391,7 @@ FunctionEnd
 Function DC_RefreshSpace
   Pop $0
   ${NSD_GetText} $DC_PathInput $1
+  StrCpy $DC_WizardDir $1
   StrCpy $2 $1 3
   System::Call 'kernel32::GetDiskFreeSpaceExW(w r2,*l .r3,p0,p0)i.r4'
   ${If} $4 != 0
@@ -371,7 +426,8 @@ Function DC_OptionsCreate
   Pop $0
   ${NSD_CreateLabel} 0 29u 100% 13u "安装目录"
   Pop $0
-  ${NSD_CreateDirRequest} 0 44u 80% 17u "$INSTDIR"
+  ; 交互式安装模式页即使跳过，也会重算 $INSTDIR。使用向导自己的路径，并保留用户编辑。
+  ${NSD_CreateDirRequest} 0 44u 80% 17u "$DC_WizardDir"
   Pop $DC_PathInput
   ${NSD_CreateBrowseButton} 82% 44u 18% 17u "浏览..."
   Pop $0
@@ -394,7 +450,6 @@ Function DC_OptionsLeave
   ${NSD_GetText} $DC_PathInput $INSTDIR
   Call DC_ValidateDirectory
   StrCpy $DC_ChosenDir $INSTDIR
-  Call DC_BackupOldProgram
 FunctionEnd
 
 Function .onInstFailed
@@ -430,7 +485,10 @@ Function .onInstFailed
   FileSeek $DC_Log 0 END
   FileWrite $DC_Log "安装未完成，目录：$INSTDIR。请查看向导详细信息并确认目录权限、空间和应用运行状态。$\r$\n"
   FileClose $DC_Log
-  MessageBox MB_OK|MB_ICONSTOP "YOTOO 部署中心 安装未完成。$\r$\n请检查安装目录权限、磁盘空间，以及应用是否已退出。$\r$\n安装日志：$DC_InstallerLogs\last-install.log$\r$\n用户配置和部署历史不会因此被清空。" /SD IDOK
+  ${If} $DC_InstallError == ""
+    StrCpy $DC_InstallError "请检查安装目录权限、磁盘空间，以及应用是否已退出。"
+  ${EndIf}
+  MessageBox MB_OK|MB_ICONSTOP "YOTOO 部署中心 安装未完成。$\r$\n$DC_InstallError$\r$\n安装日志：$DC_InstallerLogs\last-install.log$\r$\n用户配置和部署历史不会因此被清空。" /SD IDOK
 FunctionEnd
 Function DC_BackupOldProgram
   ${If} $DC_Rollback != ""
@@ -460,7 +518,8 @@ Function DC_BackupOldProgram
   IfFileExists "$DESKTOP\$DC_OldShortcut.lnk" 0 +2
   StrCpy $DC_OldDesktop 1
   System::Call 'kernel32::GetTickCount() i .r0'
-  StrCpy $DC_Rollback "$DC_InstallerBackups\$0"
+  StrCpy $DC_BackupId $0
+  StrCpy $DC_Rollback "$DC_InstallerBackups\$DC_BackupId"
   CreateDirectory "$DC_Rollback"
   ClearErrors
   CopyFiles /SILENT "$DC_BackupSource\*.*" "$DC_Rollback"
@@ -476,21 +535,26 @@ FunctionEnd
 Function .onInstSuccess
   SetErrorLevel 0
   ${If} $DC_Rollback != ""
-    ; 路径只由固定应用目录与 GetTickCount 生成，禁止使用用户输入作为删除目标。
-    StrLen $0 "$DC_InstallerBackups\"
-    StrCpy $1 $DC_Rollback $0
-    ${If} $1 == "$DC_InstallerBackups\"
-      StrCpy $DC_PurgeError ""
-      Push $DC_Rollback
-      Call DC_CheckDataTree
-      ${If} $DC_PurgeError == ""
-        RMDir /r "$DC_Rollback"
-      ${EndIf}
-    ${EndIf}
+    ; 仅标记本次成功升级的备份。应用启动后在后台清理，保留未确认的备份。
+    Rename "$DC_Rollback" "$DC_InstallerBackups\completed-$DC_BackupId"
   ${EndIf}
 FunctionEnd
 
 Function DC_WithdrawProgram
+  ${If} $DC_PreviousDir != ""
+    ; 旧卸载器需要搬走 app.asar。先检查删除共享权限，避免被其他进程占用时先删掉入口。
+    StrCpy $0 "$DC_PreviousDir\resources\app.asar"
+    ${If} ${FileExists} "$0"
+      System::Call 'kernel32::CreateFileW(w r0, i 0x10000, i 7, p0, i 3, i 0x80, p0)p.r1'
+      ${If} $1 == -1
+        Push "旧版程序文件正被占用或无法修改。请关闭占用该文件的程序后重试：$0"
+        Call DC_AbortProgramInstall
+      ${EndIf}
+      System::Call 'kernel32::CloseHandle(p r1)'
+    ${EndIf}
+  ${EndIf}
+  !insertmacro DC_InstallStage 1 "正在准备安装；覆盖升级时备份旧版程序"
+  Call DC_BackupOldProgram
   ${If} $DC_Rollback == ""
     Return
   ${EndIf}
@@ -507,6 +571,7 @@ FunctionEnd
 
 Function DC_AbortProgramInstall
   Pop $0
+  StrCpy $DC_InstallError $0
   DetailPrint "$0"
   FileOpen $DC_Log "$DC_InstallerLogs\last-install.log" a
   FileSeek $DC_Log 0 END
@@ -583,15 +648,50 @@ FunctionEnd
 !macroend
 
 !macro customInstall
+  WriteRegStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "$INSTDIR"
   WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" InstallLocation "$INSTDIR"
+  SetOutPath "$INSTDIR"
+  File /oname=deploy-center.ico "${PROJECT_DIR}\assets\icon.ico"
+  ; 先写独立快捷方式，再替换旧文件，避免 Windows 继续解析已有快捷方式的坏目标。
+  !insertmacro DC_ReplaceShortcut "$newStartMenuLink"
   ${If} $DC_DesktopChoice == ${BST_UNCHECKED}
-    Delete "$DESKTOP\${SHORTCUT_NAME}.lnk"
+    Delete "$newDesktopLink"
+  ${Else}
+    !insertmacro DC_ReplaceShortcut "$newDesktopLink"
   ${EndIf}
   CreateDirectory "$DC_InstallerLogs"
   FileOpen $DC_Log "$DC_InstallerLogs\last-install.log" a
   FileWrite $DC_Log "安装成功 ${VERSION}，目录：$INSTDIR$\r$\n"
   FileClose $DC_Log
   !insertmacro DC_InstallStage 4 "程序文件与快捷方式已安装完成"
+!macroend
+
+!macro DC_ReplaceShortcut LINK
+  StrCpy $4 "${LINK}"
+  StrCpy $7 0
+  ${GetParent} "$4" $5
+  CreateDirectory "$5"
+  ClearErrors
+  GetTempFileName $6 "$5"
+  ${IfNot} ${Errors}
+    Delete "$6"
+    StrCpy $6 "$6.lnk"
+    ClearErrors
+    CreateShortCut "$6" "$appExe" "" "$INSTDIR\deploy-center.ico" 0 "" "" "${APP_DESCRIPTION}"
+    ${IfNot} ${Errors}
+      WinShell::SetLnkAUMI "$6" "${APP_ID}"
+      System::Call 'kernel32::MoveFileExW(w r6, w r4, i 9)i.r7'
+    ${EndIf}
+    ${If} $7 == 0
+      Delete "$6"
+    ${EndIf}
+  ${EndIf}
+  ${If} $7 == 0
+    Push "无法创建 Windows 快捷方式：$4"
+    Call DC_AbortProgramInstall
+  ${EndIf}
+  ; 通知 Explorer 更新这个入口，避免清理全局图标缓存。
+  System::Call 'shell32::SHChangeNotify(i 0x2000, i 5, w r4, p0)'
 !macroend
 
 ; 卸载组件页默认不勾选数据清理。升级时即使被传入该选项，也不执行删除。

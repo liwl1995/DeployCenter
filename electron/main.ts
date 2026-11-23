@@ -31,7 +31,7 @@ import { DesktopPreferenceStore, fitWindow, preferencesSchema } from './desktop-
 import { createTrayPanel } from './tray-panel';
 import { backgroundUpdates } from './background-updates';
 import type { DesktopPreferences, UpdatePolicy } from '../src/desktop-preferences';
-import { dataPaths, DirectoryLocator } from './data-paths';
+import { cleanCompletedInstallerBackups, dataPaths, DirectoryLocator } from './data-paths';
 import { allowedProjectLink } from '../src/update-links';
 import { prepareDataHome, recoverDataHome, testLocator } from './data-home';
 import { singleInstance } from './single-instance';
@@ -39,9 +39,10 @@ import { windowsRoot } from './system-paths';
 import { migrationDestination, DataDirectory } from './data-directory';
 import { BackupManager } from './backup-manager';
 import { WorkbenchRecovery } from './workbench-recovery';
-import { workbenchHeader, workbenchPath } from './workbench';
+import { workbenchHeader, workbenchPath, workbenchScope } from './workbench';
 import { ReleaseScheduler, validScheduleTime, scheduleConfiguration, schedulePins } from './scheduler';
 import { pendingSchedule } from '../src/schedules';
+import { ServiceOperations } from './service-operations';
 import { confirmProduction } from '../src/presentation';
 import { parseApproval } from './validate';
 import { Controller } from './controller';
@@ -69,7 +70,8 @@ import type { DesktopEvent } from '../src/platform';
 import type { WorkerMessage } from './contracts';
 
 app.setName('YOTOO 部署中心');
-if (process.platform === 'win32') app.setAppUserModelId('local.deploycenter.desktop');
+const windowsAppId = 'local.deploycenter.desktop';
+if (process.platform === 'win32') app.setAppUserModelId(windowsAppId);
 const defaultDataDir = path.resolve(
   process.env.DEPLOY_CENTER_DATA_DIR ||
     path.join(app.getPath('appData'), app.isPackaged ? 'DeployCenter' : 'DeployCenter-Development'),
@@ -188,6 +190,7 @@ let migrating = false,
   dataNotice: string | undefined;
 const readOnlyDuringMigration = new Set([
   'load',
+  'operations-list',
   'startup-painted',
   'data-directory',
   'migration-state',
@@ -394,6 +397,8 @@ async function boot() {
     directories.markOwned(dataDir);
     dataNotice = [dataNotice, home.complete(dataDir)].filter(Boolean).join('；') || undefined;
     storage.markInterrupted();
+    if (app.isPackaged && process.platform === 'win32')
+      void cleanCompletedInstallerBackups(dataDir).catch((error) => console.warn('安装备份清理失败', error));
     await storage.maintainStartup();
     await fsp.mkdir(path.join(dataDir, 'tmp'), { recursive: true });
     const imageJobs = new ImageJobs(dataDir, {
@@ -401,6 +406,7 @@ async function boot() {
       log: (id, chunks) => emit({ kind: 'image-log', id, chunks }),
     });
     const approvedImagePaths = new Map<string, Set<string>>();
+    let operations: ServiceOperations;
     controller = new Controller(
       storage,
       (onMessage, onExit) => {
@@ -415,6 +421,9 @@ async function boot() {
       },
       emit,
       {
+        operationBlock: (task) =>
+          operations?.isBusy() ? '服务运维正在执行，请等待结束' :
+            task.dryRun ? undefined : task.targets.map((run) => operations?.reason(workbenchScope(run.target, run.server))).find(Boolean),
         onFinished: (task, credentials) => {
           try {
             finishedTask(task, credentials);
@@ -445,6 +454,25 @@ async function boot() {
         trust: (r, k) => controller.trust.request(r, k),
       }),
       () => !controller.active() && !backups.isBusy() && !storage.artifacts.isBusy(),
+    );
+    operations = new ServiceOperations(
+      storage,
+      async (server, supplied, signal) => {
+        const secret = supplied || (server.credentialMode === 'windows' ? await storage.credential(server.id) : '') || '';
+        if (server.auth === 'password' && !secret) throw new Error('请输入登录密码');
+        return {
+          secret,
+          transport: createTransport(server, {
+            credential: secret, signal, pins: storage.pins(),
+            trust: (request, key) => controller.trust.request(request, key),
+          }),
+        };
+      },
+      () => controller.active() || scheduler?.isDispatching() ? '有部署、回滚或定时发布任务正在执行' :
+        migrating || pendingRestart || backups.isBusy() || workbench.isBusy() ? '其他远程维护或数据迁移正在进行' :
+        storage.recovery || storage.hasUnreadableTasks() || storage.unfinished().length ? '请先核实中断部署或恢复记录' :
+        undefined,
+      (record) => emit({ kind: 'operation', record: { ...record } }),
     );
     const scheduleNotices = new Map<string, string>();
     const scheduleChanged = () => {
@@ -501,6 +529,7 @@ async function boot() {
         imageJobs.usingMaven() ||
         backups.isBusy() ||
         workbench.isBusy() ||
+        operations.isBusy() ||
         storage.artifacts.isBusy(),
       publishSchedules,
     );
@@ -540,7 +569,7 @@ async function boot() {
         titleBarStyle: 'hidden',
         titleBarOverlay: { color: '#00000000', symbolColor: toolbarColor(), height: 52 },
       } : {}),
-      icon,
+      icon: path.join(__dirname, '..', 'assets', 'icon.png'),
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),
         nodeIntegration: false,
@@ -552,6 +581,17 @@ async function boot() {
         devTools: !app.isPackaged,
       },
     });
+    if (process.platform === 'win32' && app.isPackaged) {
+      const executable = app.getPath('exe');
+      const installedIcon = path.join(path.dirname(executable), 'deploy-center.ico');
+      win.setAppDetails({
+        appId: windowsAppId,
+        appIconPath: fs.existsSync(installedIcon) ? installedIcon : executable,
+        appIconIndex: 0,
+        relaunchCommand: '"' + executable + '"',
+        relaunchDisplayName: app.name,
+      });
+    }
     let restoreMaximized = Boolean(savedWindow?.maximized && !smoke);
     let startupPainted = false;
     let showOnStartup = !smoke && (!startInTray || activationPending);
@@ -727,6 +767,10 @@ async function boot() {
           throw new Error('正在处理远程备份，请等待结果后再操作');
         if (scheduler?.isDispatching() && !readOnlyDuringMigration.has(name) && !['trust', 'cancel', 'cancel-schedule'].includes(name))
           throw new Error('定时发布正在启动，请稍后再操作');
+        if (operations.isBusy() && [
+          'prepare', 'start', 'recover', 'create-schedule', 'reschedule', 'takeover-lock',
+          'resolve-workbench', 'apply-backups', 'migrate-directory', 'restart', 'import-config',
+        ].includes(name)) throw new Error('服务运维正在执行，请等待结束');
         return fn(...args);
       });
     handle('copy-text', (value) => {
@@ -773,7 +817,7 @@ async function boot() {
         if (migrating || pendingRestart) return '请先完成数据迁移并重启，再安装更新';
         if (imageJobs.busy()) return '镜像任务正在执行，请等待完成后再安装更新';
         if (onlineLogs.isExporting()) return '线上日志正在下载，请完成或取消后再安装更新';
-        if (backups.isBusy() || workbench.isBusy() || storage.artifacts.isBusy())
+        if (backups.isBusy() || workbench.isBusy() || operations.isBusy() || storage.artifacts.isBusy())
           return '远程维护或本地清理尚未结束，请等待后再安装更新';
         if (scheduler?.isDispatching()) return '定时发布正在启动，请稍后再安装更新';
         return undefined;
@@ -1529,6 +1573,20 @@ async function boot() {
     });
     handle('online-log-search', (session, request) => onlineLogs.search(text(session, 100), onlineSearchSchema.parse(request)));
     handle('online-log-sessions', () => onlineLogs.list());
+    handle('operations-list', (target) => operations.list(id(target)));
+    const inspectService = async <T>(inspect: () => Promise<T>) => {
+      const release = sessions.reserve();
+      try { return await inspect(); }
+      finally { release(); }
+    };
+    handle('operations-status', (target, supplied) =>
+      inspectService(() => operations.status(id(target), text(supplied, 8192))));
+    handle('operations-prepare', (target, action) =>
+      operations.prepare(id(target), z.enum(['start', 'stop', 'restart']).parse(action)));
+    handle('operations-run', (token, confirmation, stopped, supplied) =>
+      operations.run(text(token, 100), text(confirmation, 1000), z.boolean().parse(stopped), text(supplied, 8192)));
+    handle('operations-settle', (target, record, confirmation, supplied) =>
+      inspectService(() => operations.settle(id(target), id(record), text(confirmation, 1000), text(supplied, 8192))));
     handle('online-log-download-prepare', (session) => onlineLogs.prepare(text(session, 100)));
     handle('online-log-download-save', (token) => onlineLogs.download(text(token, 100)));
     handle('online-log-download-cancel', (token) => onlineLogs.cancel(text(token, 100)));
@@ -1665,7 +1723,7 @@ async function boot() {
       }
     });
     handle('restart', async () => {
-      if (migrating || controller.active() || imageJobs.busy() || onlineLogs.isExporting()) throw new Error('请等待任务、下载或迁移结束');
+      if (migrating || controller.active() || operations.isBusy() || imageJobs.busy() || onlineLogs.isExporting()) throw new Error('请等待任务、下载或迁移结束');
       if (!(await confirmScheduleExit())) return;
       app.relaunch();
       app.quit();
@@ -1701,6 +1759,11 @@ async function boot() {
       if (onlineLogs.isExporting()) {
         event.preventDefault();
         void dialog.showMessageBox(win!, { message: '线上日志正在下载，请完成或取消后再退出', buttons: ['返回'] });
+        return;
+      }
+      if (operations.isBusy()) {
+        event.preventDefault();
+        void dialog.showMessageBox(win!, { message: '服务运维正在执行，请等待结果后再退出', buttons: ['返回'] });
         return;
       }
       if (migrating || backups.isBusy() || workbench.isBusy()) {
