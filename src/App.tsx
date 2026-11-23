@@ -1,6 +1,6 @@
 import { ReleaseSchedules } from './ReleaseSchedules';
 import type { ReleaseSchedule } from './schedules';
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Rocket,
   Activity,
@@ -63,6 +63,8 @@ import './style.css';
 import { LegacyArtifactReview } from './DataSettings';
 import { SettingsWorkspace, settingsLabels, type SettingsSection } from './SettingsWorkspace';
 import { desktopPreferenceDefaults } from './desktop-preferences';
+import { newerVersion } from './app-update';
+import { applyDocumentTheme } from './document-theme';
 import { LogWrapContext } from './log-wrap';
 import type { SnapshotAvailability } from './features';
 import {
@@ -243,7 +245,10 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   const [serviceTab, setServiceTab] = useState('deploy');
   const [logTarget, setLogTarget] = useState('');
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general');
-  const [desktopPreferences, setDesktopPreferences] = useState(desktopPreferenceDefaults);
+  const [desktopPreferences, setDesktopPreferences] = useState(boot?.preferences ?? desktopPreferenceDefaults);
+  const [nativeDark, setNativeDark] = useState(boot?.darkTheme);
+  const [update, setUpdate] = useState(boot?.update);
+  const updateAvailable = !!update?.release && newerVersion(update.release.version, update.currentVersion);
   const sidebarEntries = useMemo(() => sidebarServices(db, desktopPreferences), [db, desktopPreferences]);
   const [savingSidebarOrder, setSavingSidebarOrder] = useState(false);
   const traySelectService = useRef<(id: string) => void>(() => {});
@@ -373,17 +378,14 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     const timer = setTimeout(() => setMessage(''), 4500);
     return () => clearTimeout(timer);
   }, [message]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const media = window.matchMedia?.('(prefers-color-scheme: dark)');
-    const update = () => {
-      const dark = db.settings.theme === 'dark' || (db.settings.theme === 'system' && media?.matches);
-      document.documentElement.dataset.theme = db.settings.theme;
-      document.documentElement.classList.toggle('dark', !!dark);
-    };
+    const update = () => applyDocumentTheme(db.settings.theme, nativeDark);
     update();
+    if (nativeDark !== undefined) return;
     media?.addEventListener('change', update);
     return () => media?.removeEventListener('change', update);
-  }, [db.settings.theme]);
+  }, [db.settings.theme, nativeDark]);
   useEffect(() => {
     document.documentElement.dataset.density = density;
     try { localStorage.setItem('deploy-center-density', density); } catch { /* 界面偏好仍在本次会话生效。 */ }
@@ -407,18 +409,26 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   }, [db.history.length, db.settings.historyLimit]);
   useEffect(() => {
     if (!desktop) return;
+    let updateRevision = 0;
     const refresh = () => {
+      const revision = updateRevision;
       void desktop!.listTasks().then(setTaskRows);
       void desktop!.listSchedules().then(setSchedules);
       void desktop!.load().then((value) => {
+        if (revision === updateRevision) setUpdate(value.update);
         setSaved(value.savedCredentials);
         setUnfinished(value.unfinished);
         setTaskIssues(value.taskIssues || []);
       });
     };
     refresh();
-    void desktop.desktopPreferences?.().then(setDesktopPreferences).catch(() => {});
+    if (!boot?.preferences) void desktop.desktopPreferences?.().then(setDesktopPreferences).catch(() => {});
     return desktop!.onEvent((event) => {
+      if (event.kind === 'native-theme') setNativeDark(event.dark);
+      if (event.kind === 'update') {
+        updateRevision++;
+        setUpdate(event.update);
+      }
       if (event.kind === 'schedules') setSchedules(event.schedules);
       if (event.kind === 'open-schedules') setPage('schedules');
       if (event.kind === 'desktop-preferences') setDesktopPreferences(event.preferences);
@@ -1312,6 +1322,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       }}
     >
       <ServiceSidebar
+        updateAvailable={updateAvailable}
         services={sidebarEntries}
         onReorder={saveSidebarOrder}
         savingOrder={savingSidebarOrder}
@@ -1914,6 +1925,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           )}
           {page === 'settings' && (
             <SettingsWorkspace
+              updateAvailable={updateAvailable}
               desktop={desktop}
               db={db}
               setDb={setDb}

@@ -58,8 +58,8 @@ for (const scale of [1, 1.25, 1.5]) {
       await page.getByRole('tab', { name: '通用', exact: true }).click();
       await page.getByRole('switch', { name: '任务日志默认跟随最新' }).click();
       await expect(page.getByRole('switch', { name: '任务日志默认跟随最新' })).not.toBeChecked();
-      await page.getByRole('switch', { name: '关闭到托盘' }).click();
-      await expect(page.getByRole('switch', { name: '关闭到托盘' })).toBeChecked();
+      await page.getByRole('switch', { name: '关闭时最小化到托盘' }).click();
+      await expect(page.getByRole('switch', { name: '关闭时最小化到托盘' })).toBeChecked();
       await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
       await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isVisible())).toBe(false);
       await app.close();
@@ -69,7 +69,7 @@ for (const scale of [1, 1.25, 1.5]) {
       await page.getByRole('button', { name: '设置', exact: true }).click();
       await expect(option('界面缩放', '125%')).toHaveAttribute('aria-pressed', 'true');
       await expect(page.getByRole('switch', { name: '任务日志默认跟随最新' })).not.toBeChecked();
-      await expect(page.getByRole('switch', { name: '关闭到托盘' })).toBeChecked();
+      await expect(page.getByRole('switch', { name: '关闭时最小化到托盘' })).toBeChecked();
     } finally {
       await app.close().catch(() => {});
     }

@@ -20,3 +20,19 @@ export type AppUpdate = {
   speed: number;
   message?: string;
 };
+
+/** 仅比较正式版本，避免按字符串排序把 1.10 判为旧于 1.9。 */
+export function versionParts(value: string): number[] {
+  const match = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(value);
+  if (!match) throw new Error('版本号不是受支持的正式版本');
+  const parts = match.slice(1).map(Number);
+  if (parts.some((part) => !Number.isSafeInteger(part))) throw new Error('版本号超出范围');
+  return parts;
+}
+
+export function newerVersion(next: string, current: string): boolean {
+  const a = versionParts(next),
+    b = versionParts(current);
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i];
+  return false;
+}

@@ -188,6 +188,7 @@ let migrating = false,
   dataNotice: string | undefined;
 const readOnlyDuringMigration = new Set([
   'load',
+  'startup-painted',
   'data-directory',
   'migration-state',
   'cancel-migration',
@@ -246,7 +247,7 @@ let confirmedScheduleExit = false;
 let scheduler: ReleaseScheduler | undefined;
 let updater: AppUpdater | undefined;
 let trayPanel: ReturnType<typeof createTrayPanel> | undefined;
-let setBackgroundUpdatePolicy: ((policy: UpdatePolicy) => void) | undefined;
+let setBackgroundUpdatePolicy: ((policy: UpdatePolicy, checkOnStartup?: boolean) => void) | undefined;
 let explicitExit = false;
 let backups: BackupManager;
 let workbench: WorkbenchRecovery;
@@ -530,7 +531,7 @@ async function boot() {
       minWidth: 900,
       autoHideMenuBar: true,
       minHeight: 600,
-      show: !smoke && !startInTray,
+      show: false,
       backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff',
       title: 'YOTOO 部署中心',
       ...(windowsChrome ? {
@@ -545,12 +546,19 @@ async function boot() {
         sandbox: true,
         webSecurity: true,
         backgroundThrottling: false,
+        zoomFactor: preferences.preferences.zoom / 100,
         devTools: !app.isPackaged,
       },
     });
-    let restoreMaximized = Boolean(savedWindow?.maximized && startInTray);
+    let restoreMaximized = Boolean(savedWindow?.maximized && !smoke);
+    let startupPainted = false;
+    let showOnStartup = !smoke && !startInTray;
     const foreground = () => {
       if (!win || win.isDestroyed()) return;
+      if (!startupPainted && !smoke) {
+        showOnStartup = true;
+        return;
+      }
       if (win.isMinimized()) win.restore();
       if (restoreMaximized) {
         restoreMaximized = false;
@@ -566,7 +574,6 @@ async function boot() {
       win.show();
       win.focus();
     };
-    if (savedWindow?.maximized && !startInTray && !smoke) win.maximize();
     const applyZoom = () => win?.webContents.setZoomFactor(preferences.preferences.zoom / 100);
     win.webContents.on('did-finish-load', applyZoom);
     let saveBoundsTimer: ReturnType<typeof setTimeout> | undefined;
@@ -648,10 +655,11 @@ async function boot() {
         });
       } catch (error) { console.warn('无法创建托盘', error); }
     }
-    if (startInTray && !trayPanel) foreground();
+    if (!smoke && !trayPanel) showOnStartup = true;
     const syncToolbar = () => {
       if (windowsChrome && win && !win.isDestroyed()) win.setTitleBarOverlay({ symbolColor: toolbarColor() });
       trayPanel?.refresh();
+      emit({ kind: 'native-theme', dark: nativeTheme.shouldUseDarkColors });
     };
     nativeTheme.on('updated', syncToolbar);
     win.once('closed', () => nativeTheme.removeListener('updated', syncToolbar));
@@ -724,6 +732,12 @@ async function boot() {
       return clipboard.writeText(content);
     });
     handle('desktop-preferences', () => preferences.preferences);
+    handle('startup-painted', () => {
+      // 原生 ready-to-show 可能早于 HTML 骨架显示，等页面交出首帧再显示窗口。
+      if (startupPainted) return;
+      startupPainted = true;
+      if (showOnStartup) foreground();
+    });
     handle('save-desktop-preferences', savePreferences);
     updater = new AppUpdater({
       currentVersion: app.getVersion(),
@@ -776,7 +790,6 @@ async function boot() {
         check: () => updater!.check(),
         download: () => updater!.download(),
       }, (error) => console.warn('后台检查更新失败', error));
-      setBackgroundUpdatePolicy(preferences.preferences.updatePolicy);
     }
     await fsp.mkdir(dataPaths(dataDir).updates, { recursive: true });
     handle('update-state', () => updater!.restore());
@@ -811,6 +824,9 @@ async function boot() {
       dataUsage: storage.artifacts.usage(),
       taskIssues: storage.taskIssues,
       dataLocation: directories.state(),
+      darkTheme: nativeTheme.shouldUseDarkColors,
+      preferences: preferences.preferences,
+      update: updater?.state(),
     }));
     handle('save', (value) => {
       const config = validateDatabase(value);
@@ -1714,7 +1730,9 @@ async function boot() {
       trayPanel?.close();
       trayPanel = undefined;
     });
-    await win.loadFile(page);
+    // Windows 上页面的媒体查询可能晚于原生主题更新，用首帧参数直接设置骨架。
+    await win.loadFile(page, { hash: nativeTheme.shouldUseDarkColors ? 'startup-dark' : '' });
+    setBackgroundUpdatePolicy?.(preferences.preferences.updatePolicy, preferences.preferences.checkUpdatesOnStartup);
     const updateError = path.join(dataPaths(dataDir).updateLogs, 'last-update-error.txt');
     try {
       const details = await fsp.readFile(updateError, 'utf8');

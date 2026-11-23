@@ -1,2 +1,71 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'"><title>YOTOO 部署中心</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-QwOPYgtTwxdBQILxF2Av+dn5zKq7uW/HrI0UEmPtuUQ=' 'sha256-0OBS/3m0Gg32wHznTsmjxS3Ojvs8dJhwGZGu37BBI28='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="color-scheme" content="light dark">
+  <title>YOTOO 部署中心</title>
+  <script>document.documentElement.dataset.startupTheme = location.hash === '#startup-dark' ? 'dark' : 'light';</script>
+  <style>
+    /* 骨架首帧不依赖应用脚本，尺寸与工作台对应。 */
+    #startup-shell {
+      --startup-app: #fff;
+      --startup-sidebar: #f5f5f7;
+      --startup-line: #e3e3e9;
+      --startup-block: #efeff2;
+      --startup-text: #18181b;
+      position: fixed;
+      inset: 0;
+      display: grid;
+      grid-template-columns: 200px minmax(0, 1fr);
+      overflow: hidden;
+      background: var(--startup-app);
+      color: var(--startup-text);
+      font: 600 13px/1.5 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
+    }
+    html[data-startup-theme="light"]:has(#startup-shell) { color-scheme: light; }
+    html[data-startup-theme="dark"]:has(#startup-shell) { color-scheme: dark; }
+    html[data-startup-theme="dark"] #startup-shell {
+      --startup-app: #1c1c1e;
+      --startup-sidebar: #161618;
+      --startup-line: #3b3b40;
+      --startup-block: #26262a;
+      --startup-text: #e4e4e7;
+    }
+    #startup-shell aside { background: var(--startup-sidebar); border-right: 1px solid var(--startup-line); }
+    .startup-brand { height: 44px; padding: 0 12px; display: flex; align-items: center; gap: 8px; }
+    .startup-brand img { width: 21px; height: 21px; }
+    .startup-services { display: grid; gap: 8px; padding: 12px 8px; }
+    .startup-bar, .startup-card { background: var(--startup-block); border-radius: 6px; }
+    .startup-services .startup-bar { height: 28px; }
+    .startup-heading { height: 52px; border-bottom: 1px solid var(--startup-line); display: flex; align-items: center; padding: 0 24px; }
+    .startup-heading .startup-bar { width: 112px; height: 20px; }
+    .startup-body { padding: 0 24px; }
+    .startup-tabs { height: 36px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid var(--startup-line); }
+    .startup-tabs .startup-bar { width: 52px; height: 12px; }
+    .startup-artifact { width: 172px; height: 32px; margin: 16px 0 36px; }
+    .startup-card { height: 64px; margin-bottom: 8px; border: 1px solid var(--startup-line); border-radius: 10px; }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div id="startup-shell" role="status" aria-label="正在启动 YOTOO 部署中心">
+      <aside aria-hidden="true">
+        <div class="startup-brand"><img src="/assets/brand-mark.svg" alt="">YOTOO 部署中心</div>
+        <div class="startup-services"><div class="startup-bar"></div><div class="startup-bar"></div><div class="startup-bar"></div><div class="startup-bar"></div></div>
+      </aside>
+      <div aria-hidden="true">
+        <div class="startup-heading"><div class="startup-bar"></div></div>
+        <div class="startup-body">
+          <div class="startup-tabs"><div class="startup-bar"></div><div class="startup-bar"></div><div class="startup-bar"></div></div>
+          <div class="startup-artifact startup-bar"></div>
+          <div class="startup-card"></div><div class="startup-card"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>requestAnimationFrame(() => requestAnimationFrame(() => { window.deployCenter?.startupPainted().catch(console.error); }));</script>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+</html>

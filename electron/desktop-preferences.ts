@@ -13,6 +13,7 @@ export const preferencesSchema = z.object({
   launchAtLogin: z.boolean(),
   closeToTray: z.boolean(),
   updatePolicy: z.enum(['manual', 'check', 'download']),
+  checkUpdatesOnStartup: z.boolean(),
   sortSidebarByDeployment: z.boolean(),
   sidebarServiceOrder: z.array(z.string()),
 });

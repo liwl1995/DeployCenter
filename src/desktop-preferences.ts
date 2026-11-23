@@ -8,6 +8,7 @@ export type DesktopPreferences = {
   launchAtLogin: boolean;
   closeToTray: boolean;
   updatePolicy: UpdatePolicy;
+  checkUpdatesOnStartup: boolean;
   sortSidebarByDeployment: boolean;
   sidebarServiceOrder: string[];
 };
@@ -20,6 +21,7 @@ export const desktopPreferenceDefaults: DesktopPreferences = {
   launchAtLogin: false,
   closeToTray: false,
   updatePolicy: 'manual',
+  checkUpdatesOnStartup: false,
   sortSidebarByDeployment: false,
   sidebarServiceOrder: [],
 };

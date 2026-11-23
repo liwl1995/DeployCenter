@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { DesktopAPI, DesktopEvent } from '../src/platform';
 const invoke = (name: string, ...args: unknown[]) => ipcRenderer.invoke('deploy:' + name, ...args);
 const api: DesktopAPI = {
+  startupPainted: () => invoke('startup-painted'),
   imageDistributions: () => invoke('image-distributions'),
   probeImageEngine: (engine) => invoke('image-probe-engine', engine),
   listImageJobs: () => invoke('image-list'),

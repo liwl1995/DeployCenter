@@ -311,6 +311,15 @@ hr {
   text-overflow: ellipsis;
   font-weight: 600;
 }
+.update-notification-dot {
+  display: inline-block;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-inline-start: auto;
+  border-radius: var(--radius-pill);
+  background: var(--success-text);
+}
 .sidebar-directory {
   padding: 0 8px;
   display: flex;

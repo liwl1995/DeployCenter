@@ -168,7 +168,7 @@ export function WorkspaceTabs({
   navigationTarget,
 }: {
   label: string;
-  sections: { id: string; label: string; description?: string; content: ReactNode }[];
+  sections: { id: string; label: string; description?: string; notification?: string; content: ReactNode }[];
   value?: string;
   onChange?: (id: string) => void;
   navigationTarget?: string;
@@ -200,6 +200,7 @@ export function WorkspaceTabs({
             role="tab"
             className={directory ? 'sidebar-link' : undefined}
             aria-label={section.label}
+            aria-description={section.notification}
             title={directory ? section.label : undefined}
             id={id + '-tab-' + section.id}
             aria-controls={id + '-panel-' + section.id}
@@ -225,6 +226,7 @@ export function WorkspaceTabs({
           >
             {directory && <Icon size={16} strokeWidth={1.6} />}
             <span>{section.label}</span>
+            {section.notification && <i className="update-notification-dot" aria-hidden="true" title={section.notification} />}
           </button>
         );
       })}

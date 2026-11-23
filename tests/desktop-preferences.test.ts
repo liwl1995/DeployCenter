@@ -23,6 +23,7 @@ it('本机偏好按数据目录保存，关闭记忆后不再恢复旧窗口', (
     const preferences = {
       ...first.preferences, zoom: 125 as const, closeToTray: true, followLogs: false,
       sortSidebarByDeployment: true, sidebarServiceOrder: ['second', 'first'], wrapLogs: true,
+      checkUpdatesOnStartup: true,
     };
     first.save(preferences, window);
     const reopened = new DesktopPreferenceStore(dir);
@@ -88,4 +89,24 @@ it('关闭后台检查后，正在返回的检查结果不会触发新下载', a
   finish({ currentVersion: '2.1.0', stage: 'available', received: 0, speed: 0 });
   await vi.advanceTimersByTimeAsync(6 * 3600_000);
   expect(server.download).not.toHaveBeenCalled();
+});
+
+it('启用启动检查时立即检查一次，手动模式不创建周期任务', async () => {
+  vi.useFakeTimers();
+  const server = {
+    isBusy: () => false,
+    check: vi.fn().mockResolvedValue({ stage: 'available' }),
+    download: vi.fn(),
+  };
+  const policy = backgroundUpdates(server, vi.fn());
+  policy('manual', true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(server.check).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(6 * 3600_000);
+  expect(server.check).toHaveBeenCalledTimes(1);
+  expect(server.download).not.toHaveBeenCalled();
+  policy('check', true);
+  await vi.advanceTimersByTimeAsync(0);
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(server.check).toHaveBeenCalledTimes(2);
 });

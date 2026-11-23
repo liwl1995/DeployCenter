@@ -28,6 +28,7 @@ export function ServiceSidebar({
   global,
   task,
   settingsNavigation,
+  updateAvailable,
 }: {
   services: { id: string; name: string; tone: number }[];
   onReorder: (ids: string[]) => Promise<void>;
@@ -41,6 +42,7 @@ export function ServiceSidebar({
   global: ReactNode;
   task: ReactNode;
   settingsNavigation: ReactNode;
+  updateAvailable: boolean;
 }) {
   const ref = useRef<HTMLElement>(null);
   const draggedService = useRef<string | undefined>(undefined);
@@ -193,11 +195,13 @@ export function ServiceSidebar({
         <button
           className="sidebar-link"
           aria-label="设置"
+          aria-description={updateAvailable ? '有可用的软件更新' : undefined}
           aria-current={page === 'settings' ? 'page' : undefined}
           onClick={() => onPage('settings')}
         >
           <Settings size={16} strokeWidth={1.6} />
           <span>设置</span>
+          {updateAvailable && <i className="update-notification-dot" aria-hidden="true" title="有可用的软件更新" />}
         </button>
       </div>
     </aside>

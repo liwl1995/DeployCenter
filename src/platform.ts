@@ -78,6 +78,9 @@ export type TaskSummary = {
 };
 export type Startup = {
   version?: string;
+  darkTheme?: boolean;
+  preferences?: import('./desktop-preferences').DesktopPreferences;
+  update?: import('./app-update').AppUpdate;
   database: Database;
   recovery?: Recovery;
   task?: Task;
@@ -92,6 +95,7 @@ export type Startup = {
   dataLocation?: { previous?: string; pending?: string; previousKept?: boolean };
 };
 export type DesktopEvent =
+  | { kind: 'native-theme'; dark: boolean }
   | { kind: 'image-job'; job: ImageJob }
   | { kind: 'online-log-download'; token: string; bytes: number }
   | { kind: 'image-log'; id: string; chunks: ImageLogChunk[] }
@@ -135,6 +139,7 @@ export type DesktopEvent =
   | { kind: 'open-task'; taskId: string }
   | { kind: 'update'; update: import('./app-update').AppUpdate };
 export interface DesktopAPI {
+  startupPainted(): Promise<void>;
   imageDistributions(): Promise<string[]>;
   probeImageEngine(engine: ImageEngine): Promise<string>;
   listImageJobs(): Promise<{ directory: string; jobs: ImageJob[] }>;

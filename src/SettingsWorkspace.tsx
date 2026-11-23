@@ -33,6 +33,7 @@ export function SettingsWorkspace({
   migrationBlock,
   busy,
   version,
+  updateAvailable,
   preferences,
   onPreferences,
   showDemo,
@@ -49,6 +50,7 @@ export function SettingsWorkspace({
   migrationBlock?: string;
   busy: boolean;
   version: string;
+  updateAvailable?: boolean;
   preferences: DesktopPreferences;
   onPreferences: (preferences: DesktopPreferences) => void;
   showDemo?: boolean;
@@ -187,7 +189,7 @@ export function SettingsWorkspace({
                 onChange={(rememberWindow) => void changePreferences({ rememberWindow })} />
               <Switch label="开机启动" checked={preferences.launchAtLogin} disabled={saving}
                 onChange={(launchAtLogin) => void changePreferences({ launchAtLogin })} />
-              <Switch label="关闭到托盘" description="关闭窗口后继续执行部署和发布计划。"
+              <Switch label="关闭时最小化到托盘" description="点击窗口关闭按钮后隐藏到系统托盘，部署和发布计划继续运行。"
                 checked={preferences.closeToTray} disabled={saving}
                 onChange={(closeToTray) => void changePreferences({ closeToTray })} />
             </Card>
@@ -335,13 +337,17 @@ export function SettingsWorkspace({
     {
       id: 'update',
       label: settingsLabels.update,
+      notification: updateAvailable ? '有可用的软件更新' : undefined,
       content: (
         <div className="stack">
           <AppUpdateSettings api={desktop} version={version} active={busy} />
           {desktop && <Card title="检查方式" className="preference-list">
+            <Switch label="启动时检查更新" description="每次打开应用时检查新版本，并在设置入口显示提醒。"
+              checked={preferences.checkUpdatesOnStartup} disabled={saving}
+              onChange={(checkUpdatesOnStartup) => void changePreferences({ checkUpdatesOnStartup })} />
             <PreferenceChoice
               label="更新检查方式"
-              hint="自动模式启动 1 分钟后检查，之后每 6 小时检查一次。安装由你确认。"
+              hint="自动模式每 6 小时检查一次。启动检查关闭时，自动模式首次检查在启动 1 分钟后。"
               value={preferences.updatePolicy}
               disabled={saving}
               onValueChange={(updatePolicy) => void changePreferences({ updatePolicy })}
@@ -415,7 +421,7 @@ export function SettingsWorkspace({
         </div>
       ),
     },
-  ] satisfies { id: SettingsSection; label: string; description?: string; content: React.ReactNode }[];
+  ] satisfies { id: SettingsSection; label: string; description?: string; notification?: string; content: React.ReactNode }[];
   return (
     <WorkspaceTabs
       label="设置分类"

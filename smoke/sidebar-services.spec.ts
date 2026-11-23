@@ -47,6 +47,17 @@ test('侧栏支持滚动、最近部署排序和手动排序，其他页面保�
     const back = () => page.getByRole('button', { name: '返回应用', exact: true });
     const theme = (name: string) =>
       page.getByRole('group', { name: '界面主题', exact: true }).getByRole('button', { name, exact: true });
+    await page.addInitScript(() => {
+      const observer = new MutationObserver(() => {
+        const names = Array.from(document.querySelectorAll('.sidebar-services button span:first-of-type'), (item) => item.textContent);
+        if (!names.length) return;
+        document.documentElement.dataset.firstSidebarServices = JSON.stringify(names);
+        observer.disconnect();
+      });
+      observer.observe(document, { subtree: true, childList: true });
+    });
+    const expectInitialOrder = (order: string[]) =>
+      expect(page.locator('html')).toHaveAttribute('data-first-sidebar-services', JSON.stringify(order));
 
     await expect(rows()).toHaveText(names);
     await expect(list()).toHaveCSS('scrollbar-width', 'none');
@@ -66,6 +77,8 @@ test('侧栏支持滚动、最近部署排序和手动排序，其他页面保�
     await back().click();
     const recentOrder = [names[2], names[1], names[0], ...names.slice(3)];
     await expect(rows()).toHaveText(recentOrder);
+    await page.reload();
+    await expectInitialOrder(recentOrder);
 
     await rows().nth(1).dragTo(rows().nth(0), { targetPosition: { x: 50, y: 22 } });
     await expect(rows()).toHaveText(recentOrder);
@@ -88,6 +101,8 @@ test('侧栏支持滚动、最近部署排序和手动排序，其他页面保�
     await rows().nth(1).press('Alt+ArrowUp');
     const manualOrder = [names[1], names[0], ...names.slice(2)];
     await expect(rows()).toHaveText(manualOrder);
+    await page.reload();
+    await expectInitialOrder(manualOrder);
 
     await settings().click();
     await expect(toggle()).not.toBeChecked();

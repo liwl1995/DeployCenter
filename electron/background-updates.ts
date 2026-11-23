@@ -22,15 +22,15 @@ export function backgroundUpdates(
       } catch (error) {
         onError(error);
       } finally {
-        if (attempt === generation) schedule(interval, attempt);
+        if (attempt === generation && policy !== 'manual') schedule(interval, attempt);
       }
     }, delay);
     timer.unref();
   };
-  return (next: UpdatePolicy) => {
+  return (next: UpdatePolicy, checkOnStartup = false) => {
     clearTimeout(timer);
     policy = next;
     generation++;
-    if (policy !== 'manual') schedule(firstDelay, generation);
+    if (checkOnStartup || policy !== 'manual') schedule(checkOnStartup ? 0 : firstDelay, generation);
   };
 }

@@ -3,7 +3,9 @@ import path from 'node:path';
 import { createReadStream } from 'node:fs';
 import { plainPath } from './managed-path';
 import { createHash } from 'node:crypto';
-import type { AppUpdate } from '../src/app-update';
+import { newerVersion, versionParts, type AppUpdate } from '../src/app-update';
+
+export { newerVersion } from '../src/app-update';
 
 const repository = 'https://github.com/liwl1995/DeployCenter';
 export const latestReleaseUrl =
@@ -23,20 +25,6 @@ type Options = {
     unprotect: (value: Buffer) => Promise<string>;
   };
 };
-/** 仅比较正式版本，避免按字符串排序把 1.10 判为旧于 1.9。 */
-export function versionParts(value: string): number[] {
-  const match = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(value);
-  if (!match) throw new Error('版本号不是受支持的正式版本');
-  const parts = match.slice(1).map(Number);
-  if (parts.some((part) => !Number.isSafeInteger(part))) throw new Error('版本号超出范围');
-  return parts;
-}
-export function newerVersion(next: string, current: string): boolean {
-  const a = versionParts(next),
-    b = versionParts(current);
-  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i];
-  return false;
-}
 /** 每一跳重定向都校验，远端内容不能指定任意下载站或本机地址。 */
 export function allowedUpdateUrl(value: string): boolean {
   try {
