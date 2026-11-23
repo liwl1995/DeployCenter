@@ -265,6 +265,7 @@ export interface DesktopAPI {
 }
 declare global {
   interface Window {
+    deployStartup?: Promise<void>;
     deployCenter?: DesktopAPI;
   }
 }

@@ -8,7 +8,7 @@ async function mount() {
   try {
     if (typeof __PROTOTYPE__ !== 'undefined' && !__PROTOTYPE__ && !desktop)
       throw new Error('桌面接口未加载，请使用 Deploy Center.exe 启动');
-    const boot = desktop ? await desktop.load() : undefined;
+    const [boot] = await Promise.all([desktop?.load(), window.deployStartup]);
     applyDocumentTheme(boot?.database.settings.theme ?? 'system', boot?.darkTheme);
     createRoot(document.getElementById('root')!).render(<App boot={boot} />);
   } catch (error) {

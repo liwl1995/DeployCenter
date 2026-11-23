@@ -12,20 +12,27 @@ test('启动骨架、工作台首帧与原生主题一致，更新提醒同步�
   const exe = process.env.DEPLOY_CENTER_TEST_EXE;
   const entry = path.join(dir, 'observe-startup.cjs');
   if (!exe) await fs.writeFile(entry, `
-    const { app, ipcMain } = require('electron');
-    const handle = ipcMain.handle.bind(ipcMain);
-    ipcMain.handle = (name, listener) => handle(name, name === 'deploy:load' ? async (...args) => {
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-      return listener(...args);
-    } : listener);
+    const { app } = require('electron');
     app.once('browser-window-created', (_, window) => {
-      window.once('show', () => {
+      window.once('show', () => { globalThis.opacityAtShow = window.getOpacity(); });
+      const setOpacity = window.setOpacity.bind(window);
+      window.setOpacity = (opacity) => {
+        setOpacity(opacity);
+        if (opacity !== 1) return;
+        globalThis.revealTime = Date.now();
         globalThis.firstVisibleFrame = window.webContents.capturePage({ x: 30, y: 50, width: 1, height: 24 })
           .then((image) => {
             const bitmap = image.toBitmap();
             return bitmap.length > 4 && bitmap[0] !== bitmap[bitmap.length - 4];
           });
-      });
+        window.webContents.executeJavaScript(\`
+          new MutationObserver((_, observer) => {
+            if (!document.querySelector('.desktop-shell')) return;
+            document.documentElement.dataset.workspaceTime = String(Date.now());
+            observer.disconnect();
+          }).observe(document.getElementById('root'), { childList: true });
+        \`);
+      };
     });
     require(${JSON.stringify(path.resolve('dist-electron/main.cjs'))});
   `);
@@ -38,7 +45,13 @@ test('启动骨架、工作台首帧与原生主题一致，更新提醒同步�
     const page = await app.firstWindow();
     await expect(page.locator('.desktop-shell')).toBeVisible();
     await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible())).toBe(true);
-    if (!exe) expect(await app.evaluate(() => Reflect.get(globalThis, 'firstVisibleFrame'))).toBe(true);
+    if (!exe) {
+      expect(await app.evaluate(() => Reflect.get(globalThis, 'opacityAtShow'))).toBe(0);
+      expect(await app.evaluate(() => Reflect.get(globalThis, 'firstVisibleFrame'))).toBe(true);
+      const reveal = await app.evaluate(() => Number(Reflect.get(globalThis, 'revealTime')));
+      const workspace = Number(await page.locator('html').getAttribute('data-workspace-time'));
+      expect(workspace - reveal).toBeGreaterThanOrEqual(1000);
+    }
     const boot = await page.evaluate(() => window.deployCenter!.load());
     await page.addInitScript(() => {
       const colors = new Set<string>();

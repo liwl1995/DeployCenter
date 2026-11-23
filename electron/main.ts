@@ -208,9 +208,11 @@ const readOnlyDuringMigration = new Set([
   'cancel-update',
 ]);
 let instance: Awaited<ReturnType<typeof singleInstance>> | undefined;
+let activationPending = false;
+let activateWindow: (() => void) | undefined;
 const activate = () => {
-  win?.show();
-  win?.focus();
+  if (activateWindow) activateWindow();
+  else activationPending = true;
 };
 const startup = async () => {
   if (process.platform === 'win32') {
@@ -311,8 +313,7 @@ const finishedTask = (task: import('../src/model').Task, credentials: Record<str
     icon: path.join(__dirname, '..', 'assets', 'icon.ico'),
   });
   notification.on('click', () => {
-    win?.show();
-    win?.focus();
+    activate();
     emit({ kind: 'open-task', taskId: task.id });
   });
   notification.show();
@@ -535,6 +536,7 @@ async function boot() {
       backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff',
       title: 'YOTOO 部署中心',
       ...(windowsChrome ? {
+        opacity: smoke ? 1 : 0,
         titleBarStyle: 'hidden',
         titleBarOverlay: { color: '#00000000', symbolColor: toolbarColor(), height: 52 },
       } : {}),
@@ -552,7 +554,7 @@ async function boot() {
     });
     let restoreMaximized = Boolean(savedWindow?.maximized && !smoke);
     let startupPainted = false;
-    let showOnStartup = !smoke && !startInTray;
+    let showOnStartup = !smoke && (!startInTray || activationPending);
     const foreground = () => {
       if (!win || win.isDestroyed()) return;
       if (!startupPainted && !smoke) {
@@ -574,6 +576,7 @@ async function boot() {
       win.show();
       win.focus();
     };
+    activateWindow = foreground;
     const applyZoom = () => win?.webContents.setZoomFactor(preferences.preferences.zoom / 100);
     win.webContents.on('did-finish-load', applyZoom);
     let saveBoundsTimer: ReturnType<typeof setTimeout> | undefined;
@@ -732,11 +735,21 @@ async function boot() {
       return clipboard.writeText(content);
     });
     handle('desktop-preferences', () => preferences.preferences);
-    handle('startup-painted', () => {
-      // 原生 ready-to-show 可能早于 HTML 骨架显示，等页面交出首帧再显示窗口。
+    handle('startup-painted', async () => {
       if (startupPainted) return;
       startupPainted = true;
-      if (showOnStartup) foreground();
+      const window = win!;
+      if (showOnStartup) {
+        foreground();
+        if (windowsChrome) {
+          // 让 Chromium 先提交窗口画面，再解除透明，避免 Windows 先显示纯色底面。
+          try { await window.webContents.capturePage({ x: 0, y: 0, width: 1, height: 1 }); }
+          catch (error) { console.warn('启动画面提交失败', error); }
+        }
+      }
+      if (window.isDestroyed()) return;
+      if (windowsChrome && !smoke) window.setOpacity(1);
+      if (showOnStartup) await new Promise<void>((resolve) => setTimeout(resolve, 1000));
     });
     handle('save-desktop-preferences', savePreferences);
     updater = new AppUpdater({
