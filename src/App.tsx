@@ -102,6 +102,7 @@ import { AppPageHeader } from './design/shell/AppPageHeader';
 import { ServiceSidebar } from './design/shell/ServiceSidebar';
 import { sidebarServices } from './sidebar-services';
 import { Button } from './design/ui/button';
+import { HoverTip } from './design/ui/hover-tip';
 import { Checkbox } from './design/ui/checkbox';
 import { PageTabs } from './design/ui/page-tabs';
 import { BuildArtifactChoice } from './BuildArtifactChoice';
@@ -190,12 +191,24 @@ function LogViewer({ lines, active = true }: { lines: string[]; active?: boolean
     </pre>
   );
 }
-function OldArtifactWarning({ value, service }: { value: Artifact; service: ServiceSnapshot }) {
+function ConfirmWarning({ label, text }: { label: string; text: string }) {
+  return (
+    <HoverTip content={<span className="confirm-warning-text">{text}</span>} disableHoverableContent>
+      <Button type="button" size="icon-compact" className="confirm-warning-icon" aria-label={label}>
+        <AlertTriangle size={15} aria-hidden="true" />
+      </Button>
+    </HoverTip>
+  );
+}
+
+function OldArtifactWarning({ value, service, compact }: { value: Artifact; service: ServiceSnapshot; compact?: boolean }) {
   if (!value.exists || !(new Date(value.modified) < new Date(service.git.time))) return null;
+  const text = 'JAR 早于当前 Git 提交，请确认是否需要重新构建。';
+  if (compact) return <ConfirmWarning label="产物版本提示" text={text} />;
   return (
     <p className="warning">
       <AlertTriangle size={15} />
-      JAR 早于当前 Git 提交，请确认是否需要重新构建。
+      {text}
     </p>
   );
 }
@@ -2763,13 +2776,13 @@ function Confirm({
                 ? '重新构建一次'
                 : '使用现有 JAR'}
         </Badge>
+        <OldArtifactWarning value={initial.artifact} service={initial.service} compact />
       </div>
       <p className="confirm-brief">
         {initial.targets.length} 个目标 · {initial.artifact.name} ·{' '}
         {initial.failurePolicy === 'stop' ? '失败后停止后续目标' : '失败后继续其他目标'}
       </p>
       {initial.note && <p className="note">本次内容：{initial.note}</p>}
-      <OldArtifactWarning value={initial.artifact} service={initial.service} />
       {initial.operation === 'rollback' && (
         <>
           <Field label="恢复来源">
@@ -2787,7 +2800,21 @@ function Confirm({
         {initial.targets.map((r) => (
           <div className="confirm-target" key={r.target.id}>
             <div className="row spread">
-              <h3>{r.target.name}</h3>
+              <div className="row wrap">
+                <h3>{r.target.name}</h3>
+                {initial.operation === 'deploy' &&
+                  initial.artifact.sha256 &&
+                  initial.artifact.sha256 === r.target.currentHash && (
+                    <ConfirmWarning label="线上产物提示" text={'与线上相同：JAR 指纹一致，仍可继续部署以重新启动。' +
+                      (initial.build === 'rebuild' ? '本次重新构建后会再次校验产物。' : '')} />
+                  )}
+                {initial.operation === 'deploy' && !r.backup.enabled && (
+                  <ConfirmWarning label="备份提示" text="不备份：无法使用本次备份回滚。" />
+                )}
+                {r.target.createDirectory && (
+                  <ConfirmWarning label="远程目录提示" text={'已允许创建缺失目录：' + r.target.directory} />
+                )}
+              </div>
               <Badge kind={r.target.production ? 'warn' : ''}>
                 {r.target.production && '正式 · '}
                 {modeLabel(r.target.mode)}
@@ -2797,24 +2824,13 @@ function Confirm({
               {r.server.name} · {serverAddress(r.server)}
             </p>
             <p className="path">远程文件：{remoteJar(r.target)}</p>
-            {initial.operation === 'deploy' &&
-              initial.artifact.sha256 &&
-              initial.artifact.sha256 === r.target.currentHash && (
-                <p className="warning">
-                  与线上相同：JAR 指纹一致，仍可继续部署以重新启动。
-                  {initial.build === 'rebuild' ? '本次重新构建后会再次校验产物。' : ''}
-                </p>
-              )}
-            {initial.operation === 'deploy' &&
-              (r.backup.enabled ? (
-                <p className="muted">
-                  {r.target.hasOldJar
-                    ? '保留备份，回滚前需要确认'
-                    : '首次部署无旧 JAR，跳过备份'}
-                </p>
-              ) : (
-                <p className="warning">不备份：无法使用本次备份回滚。</p>
-              ))}
+            {initial.operation === 'deploy' && r.backup.enabled && (
+              <p className="muted">
+                {r.target.hasOldJar
+                  ? '保留备份，回滚前需要确认'
+                  : '首次部署无旧 JAR，跳过备份'}
+              </p>
+            )}
             {r.target.health.type === 'none' && (
               <p className="muted">未配置健康检查，结果将标记健康未验证</p>
             )}
@@ -2837,9 +2853,6 @@ function Confirm({
                   <p className="path">备份预览：{r.plannedBackupPath}</p>
                 )}
               </details>
-            )}
-            {r.target.createDirectory && (
-              <p className="warning">已允许创建缺失目录：{r.target.directory}</p>
             )}
           </div>
         ))}
@@ -2865,16 +2878,16 @@ function Confirm({
       )}
       {servers.map((s) => (
         <div className="confirm-target mt" key={s.id}>
-          <h3>{s.name} · 本次认证</h3>
-          {s.credentialMode === 'windows' && (
-            <p className="warning">
-              {fixture
+          <div className="row wrap">
+            <h3>{s.name} · 本次认证</h3>
+            {s.credentialMode === 'windows' && (
+              <ConfirmWarning label="口令保存提示" text={fixture
                 ? 'Windows 凭据管理器是正式版能力。原型仍需本次输入，不会保存。'
                 : saved.includes(s.id)
                   ? '已保存本机 DPAPI 加密凭据；留空复用，输入新值将更新。'
-                  : '输入后使用当前 Windows 用户的 DPAPI 加密保存到本机。'}
-            </p>
-          )}
+                  : '输入后使用当前 Windows 用户的 DPAPI 加密保存到本机。'} />
+            )}
+          </div>
           <Field
             label={
               (s.auth === 'password' ? '登录密码' : '私钥口令（未加密可留空）') + ' · ' + s.name

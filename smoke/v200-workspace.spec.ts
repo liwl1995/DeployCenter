@@ -48,6 +48,7 @@ test('服务工作台在桌面窗口中可切换、筛选、打开任务和设�
     id: 'staging-sample',
     name: '测试环境',
     directory: '/fixture/staging',
+    createDirectory: true,
     production: false,
     lastDeploy: new Date().toISOString(),
     healthState: '上次检查通过',
@@ -224,6 +225,22 @@ test('服务工作台在桌面窗口中可切换、筛选、打开任务和设�
         await expect(confirm).toBeInViewport({ ratio: 1 });
         await expect(confirm).toBeDisabled();
         await expect(dialog.locator('input[data-autofocus]')).toBeFocused();
+        const directoryWarning = dialog.getByRole('button', { name: '远程目录提示' });
+        const warningText = window.locator('[data-side] > .confirm-warning-text');
+        await expect(directoryWarning).toBeVisible();
+        await window.mouse.move(1, height - 1);
+        await expect(warningText).toHaveCount(0);
+        await directoryWarning.scrollIntoViewIfNeeded();
+        await directoryWarning.hover();
+        await expect(warningText).toHaveText('已允许创建缺失目录：/fixture/staging');
+        await expect(warningText).toBeInViewport({ ratio: 1 });
+        await window.mouse.move(1, height - 1);
+        await expect(warningText).toHaveCount(0);
+        await window.keyboard.press('Tab');
+        await directoryWarning.focus();
+        await expect(warningText).toBeVisible();
+        await dialog.getByRole('button', { name: '返回检查' }).focus();
+        await expect(warningText).toHaveCount(0);
         await window.screenshot({
           path: path.join(captures, `确认-${width}x${height}-${theme}.png`),
           animations: 'disabled',
