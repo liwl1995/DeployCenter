@@ -20,23 +20,48 @@ export function withoutInstallerCache(source) {
     .replace(instruction, '; 应用使用配置目录内的更新缓存，不再保存框架的额外副本。')
     .replace(
       extraction,
-      '!insertmacro DC_InstallStage 2 "正在解压并安装程序文件"' + newline + '      ' + extraction,
-    );
+      'Call DC_CopyPreparedProgram',
+    )
+    .concat(newline, [
+      '!macro DC_PrepareEmbeddedProgram',
+      '  !ifdef APP_BUILD_DIR',
+      '    !error "YOTOO 安装器只支持先解压再验证的离线安装包"',
+      '  !endif',
+      '  !ifdef APP_PACKAGE_URL',
+      '    !error "YOTOO 安装器只支持先解压再验证的离线安装包"',
+      '  !endif',
+      '  !ifdef ZIP_COMPRESSION',
+      '    !error "YOTOO 安装器只支持 7z 安装包"',
+      '  !endif',
+      '  !insertmacro DC_InstallStage 2 "正在解压并校验新版程序"',
+      '  ' + extraction,
+      '  Call DC_VerifyPreparedProgram',
+      '!macroend',
+      '',
+    ].join(newline));
 }
 function stageProgramExecutable(source) {
-  // CopyFiles 的重试只能复制暂存好的内容。框架的兜底解压会直接写入启动入口。
-  const extract = 'Nsis7z::Extract "${FILE}"';
+  // 只在 NSIS 私有目录中解包，验证通过前不运行旧版卸载器。
   const newline = source.includes('\r\n') ? '\r\n' : '\n';
-  const fallback = [extract, '    Goto DoneExtract7za', '', '  AbortExtract7za:', '    Quit'];
-  const abort = ['SetErrorLevel 1603', '    Abort', '', '  AbortExtract7za:', '    SetErrorLevel 1603', '    Abort'];
-  const guarded = replaceOnce(source, fallback.join(newline), abort.join(newline));
-  return replaceOnce(guarded, extract, extract + newline + '  !insertmacro DC_StageProgramExecutable');
+  const marker = '!macro extractUsing7za FILE' + newline;
+  if (source.split(marker).length !== 2 || !source.trimEnd().endsWith('DoneExtract7za:' + newline + '!macroend'))
+    throw new Error('NSIS 解包模板已变化，必须核对后再构建安装包');
+  return source.slice(0, source.indexOf(marker)) + [
+    '!macro extractUsing7za FILE',
+    '  SetOutPath "$PLUGINSDIR\\7z-out"',
+    '  Nsis7z::Extract "${FILE}"',
+    '  SetOutPath "$PLUGINSDIR"',
+    '!macroend',
+    '',
+  ].join(newline);
 }
 function protectProgramLaunch(source) {
   const newline = source.includes('\r\n') ? '\r\n' : '\n';
   const uninstall = '!insertmacro uninstallOldVersion SHELL_CONTEXT';
   const install = '!insertmacro installApplicationFiles';
-  const guarded = replaceOnce(source, uninstall, 'Call DC_WithdrawProgram' + newline + uninstall);
+  const guarded = replaceOnce(source, uninstall, [
+    '!insertmacro DC_PrepareEmbeddedProgram', 'Call DC_WithdrawProgram', uninstall,
+  ].join(newline));
   const published = replaceOnce(guarded, install, install + newline + 'Call DC_PublishProgram');
   const shortcuts = [
     '!insertmacro addStartMenuLink $keepShortcuts',

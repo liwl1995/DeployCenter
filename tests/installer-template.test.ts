@@ -31,9 +31,12 @@ it('安装模板暂存主程序并关闭框架缓存，构建成功与失败均�
         const extract=await fs.readFile(extras[0].target,'utf8');
         const section=await fs.readFile(extras[1].target,'utf8');
         const uninstall=await fs.readFile(extras[2].target,'utf8');
-        if(!extract.includes('DC_StageProgramExecutable')||(extract.match(/^ *Nsis7z::Extract/gm)||[]).length!==1)
+        if(!extract.includes('SetOutPath "$PLUGINSDIR')||extract.includes('CopyFiles')||(extract.match(/^ *Nsis7z::Extract/gm)||[]).length!==1)
           throw new Error('解压流程可提前写入主程序');
-        if(section.indexOf('Call DC_WithdrawProgram')>=section.indexOf('!insertmacro uninstallOldVersion SHELL_CONTEXT')||
+        if(!updated.includes('Call DC_VerifyPreparedProgram')||!updated.includes('Call DC_CopyPreparedProgram')||
+          section.indexOf('!insertmacro DC_PrepareEmbeddedProgram')<0||
+          section.indexOf('!insertmacro DC_PrepareEmbeddedProgram')>=section.indexOf('Call DC_WithdrawProgram')||
+          section.indexOf('Call DC_WithdrawProgram')>=section.indexOf('!insertmacro uninstallOldVersion SHELL_CONTEXT')||
           section.indexOf('Call DC_PublishProgram')<=section.indexOf('!insertmacro installApplicationFiles'))
           throw new Error('主程序的关闭或恢复位置有误');
         if(section.includes('!insertmacro addStartMenuLink') || section.includes('!insertmacro addDesktopLink'))

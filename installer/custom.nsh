@@ -59,17 +59,21 @@ Var DC_OldName
 Var DC_OldPublisher
 Var DC_OldShortcut
 Var DC_ProgramWithdrawn
+Var DC_ProgramPublished
 Var DC_InstallError
 !define DC_PENDING_EXE ".deploy-center-installing.exe"
 !endif
 
-!macro DC_StageProgramExecutable
-  ; 所有文件准备好之前，解包结果中的 EXE 只使用暂存文件名。
+!macro DC_CopyProgramTree SOURCE DEST EXCLUDE
+  nsExec::ExecToStack /TIMEOUT=120000 '"$SYSDIR\robocopy.exe" "${SOURCE}" "${DEST}" /E /XJ /SL /COPY:DAT /DCOPY:DAT /IS /IT /R:2 /W:1 /NFL /NDL /NJH /NJS /NP ${EXCLUDE}'
+  Pop $0
+  Pop $1
   ClearErrors
-  Rename "$OUTDIR\${APP_EXECUTABLE_FILENAME}" "$OUTDIR\${DC_PENDING_EXE}"
-  ${If} ${Errors}
-    Push "无法暂存主程序"
-    Call DC_AbortProgramInstall
+  ; Robocopy 的 0 至 7 均表示未遇到复制失败。插件也可能返回字符串。
+  ${If} $0 == "error"
+  ${OrIf} $0 == "timeout"
+  ${OrIf} $0 >= 8
+    SetErrors
   ${EndIf}
 !macroend
 
@@ -453,14 +457,19 @@ Function DC_OptionsLeave
 FunctionEnd
 
 Function .onInstFailed
+  ${If} $DC_ProgramPublished == "1"
+    Delete "$appExe"
+  ${EndIf}
   ${If} $DC_ProgramWithdrawn == "1"
     CreateDirectory "$DC_BackupSource"
-    ClearErrors
-    ; 恢复旧版时同样先恢复依赖，最后恢复原有快捷方式对应的 EXE。
-    Rename "$DC_Rollback\$DC_OldExecutable" "$DC_Rollback\${DC_PENDING_EXE}"
+    ; 不改动备份内的文件名。先补齐依赖，再恢复快捷方式指向的 EXE。
+    !insertmacro DC_CopyProgramTree "$DC_Rollback" "$DC_BackupSource" '/XF "$DC_OldExecutable" "${DC_PENDING_EXE}"'
     ${IfNot} ${Errors}
-      CopyFiles /SILENT "$DC_Rollback\*.*" "$DC_BackupSource"
-      ${IfNot} ${Errors}
+      System::Call 'kernel32::CopyFileW(w "$DC_Rollback\$DC_OldExecutable", w "$DC_BackupSource\${DC_PENDING_EXE}", i 0)i.r0'
+      ${If} $0 == 0
+        SetErrors
+      ${Else}
+        ClearErrors
         Rename "$DC_BackupSource\${DC_PENDING_EXE}" "$DC_BackupSource\$DC_OldExecutable"
       ${EndIf}
     ${EndIf}
@@ -471,19 +480,28 @@ Function .onInstFailed
       WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" Publisher "$DC_OldPublisher"
       WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" InstallLocation "$DC_BackupSource"
       WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" UninstallString '$\"$DC_BackupSource\$DC_OldUninstaller$\"'
+      WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" QuietUninstallString '$\"$DC_BackupSource\$DC_OldUninstaller$\" /S'
       WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" DisplayIcon "$DC_BackupSource\$DC_OldExecutable,0"
       WriteRegDWORD HKCU "${UNINSTALL_REGISTRY_KEY}" NoModify 1
       WriteRegDWORD HKCU "${UNINSTALL_REGISTRY_KEY}" NoRepair 1
-      CreateShortCut "$SMPROGRAMS\$DC_OldShortcut.lnk" "$DC_BackupSource\$DC_OldExecutable"
+      StrCpy $2 "$DC_BackupSource\deploy-center.ico"
+      IfFileExists "$2" +2 0
+      StrCpy $2 "$DC_BackupSource\$DC_OldExecutable"
+      CreateShortCut "$SMPROGRAMS\$DC_OldShortcut.lnk" "$DC_BackupSource\$DC_OldExecutable" "" "$2" 0
+      WinShell::SetLnkAUMI "$SMPROGRAMS\$DC_OldShortcut.lnk" "${APP_ID}"
       ${If} $DC_OldDesktop == 1
-        CreateShortCut "$DESKTOP\$DC_OldShortcut.lnk" "$DC_BackupSource\$DC_OldExecutable"
+        CreateShortCut "$DESKTOP\$DC_OldShortcut.lnk" "$DC_BackupSource\$DC_OldExecutable" "" "$2" 0
+        WinShell::SetLnkAUMI "$DESKTOP\$DC_OldShortcut.lnk" "${APP_ID}"
       ${EndIf}
+    ${Else}
+      StrCpy $DC_InstallError "$DC_InstallError$\r$\n旧版未能自动恢复，完整备份保留在：$DC_Rollback"
     ${EndIf}
   ${EndIf}
   CreateDirectory "$DC_InstallerLogs"
   FileOpen $DC_Log "$DC_InstallerLogs\last-install.log" a
   FileSeek $DC_Log 0 END
   FileWrite $DC_Log "安装未完成，目录：$INSTDIR。请查看向导详细信息并确认目录权限、空间和应用运行状态。$\r$\n"
+  FileWrite $DC_Log "$DC_InstallError$\r$\n"
   FileClose $DC_Log
   ${If} $DC_InstallError == ""
     StrCpy $DC_InstallError "请检查安装目录权限、磁盘空间，以及应用是否已退出。"
@@ -521,8 +539,7 @@ Function DC_BackupOldProgram
   StrCpy $DC_BackupId $0
   StrCpy $DC_Rollback "$DC_InstallerBackups\$DC_BackupId"
   CreateDirectory "$DC_Rollback"
-  ClearErrors
-  CopyFiles /SILENT "$DC_BackupSource\*.*" "$DC_Rollback"
+  !insertmacro DC_CopyProgramTree "$DC_BackupSource" "$DC_Rollback" '/XF "${DC_PENDING_EXE}"'
   ${If} ${Errors}
     MessageBox MB_OK|MB_ICONSTOP "无法备份旧版程序，已停止升级。请检查磁盘空间与目录权限。旧版尚未被卸载。" /SD IDOK
     StrCpy $DC_Rollback ""
@@ -553,7 +570,6 @@ Function DC_WithdrawProgram
       System::Call 'kernel32::CloseHandle(p r1)'
     ${EndIf}
   ${EndIf}
-  !insertmacro DC_InstallStage 1 "正在准备安装；覆盖升级时备份旧版程序"
   Call DC_BackupOldProgram
   ${If} $DC_Rollback == ""
     Return
@@ -581,30 +597,25 @@ Function DC_AbortProgramInstall
   Abort
 FunctionEnd
 
-Function DC_PublishProgram
-  ; EXE 的版本号不能证明应用归档和依赖已经可读。静默安装返回前实际加载启动依赖，
-  ; 让已有更新助手也只在完整程序可用后重启。Node 模式不会打开窗口或读取用户数据。
+Function DC_VerifyPreparedProgram
+  ; 从暂存目录加载启动依赖，校验失败时旧程序仍在原位。
   File /oname=$PLUGINSDIR\dc-verify.cjs "${PROJECT_DIR}\installer\verify-installed.cjs"
   ReadEnvStr $2 "ELECTRON_RUN_AS_NODE"
   System::Call 'kernel32::SetEnvironmentVariableW(w "ELECTRON_RUN_AS_NODE", w "1")'
-  StrCpy $3 0
-  ${Do}
-    nsExec::ExecToStack /TIMEOUT=15000 '"$INSTDIR\${DC_PENDING_EXE}" "$PLUGINSDIR\dc-verify.cjs" "${VERSION}"'
-    Pop $0
-    Pop $1
-    ${If} $0 == "0"
-    ${AndIf} $1 == "YOTOO_PROGRAM_READY"
-      ${ExitDo}
-    ${EndIf}
-    ; 新写入的文件可能暂时被系统扫描。每次重试期间仍关闭对外入口。
-    IntOp $3 $3 + 1
-    ${If} $3 < 3
-    ${AndIf} $0 != "timeout"
-      Sleep 500
+  !ifdef YOTOO_QA_INJECT_INSTALL_FAILURE
+    ${GetParameters} $3
+    ClearErrors
+    ${GetOptions} $3 "/YOTOOQAFAILVERIFY" $4
+    ${IfNot} ${Errors}
+      nsExec::ExecToStack /TIMEOUT=1 '"$PLUGINSDIR\7z-out\${APP_EXECUTABLE_FILENAME}" "$PLUGINSDIR\dc-verify.cjs" "${VERSION}"'
     ${Else}
-      ${ExitDo}
+  !endif
+  nsExec::ExecToStack /TIMEOUT=60000 '"$PLUGINSDIR\7z-out\${APP_EXECUTABLE_FILENAME}" "$PLUGINSDIR\dc-verify.cjs" "${VERSION}"'
+  !ifdef YOTOO_QA_INJECT_INSTALL_FAILURE
     ${EndIf}
-  ${Loop}
+  !endif
+  Pop $0
+  Pop $1
   ${If} $2 == ""
     System::Call 'kernel32::SetEnvironmentVariableW(w "ELECTRON_RUN_AS_NODE", p0)'
   ${Else}
@@ -615,11 +626,38 @@ Function DC_PublishProgram
     Push "程序依赖检查失败：$0 $1"
     Call DC_AbortProgramInstall
   ${EndIf}
+FunctionEnd
+
+Function DC_CopyPreparedProgram
+  ; 安装期间只写程序依赖，最后再开放旧快捷方式指向的入口。
+  !insertmacro DC_CopyProgramTree "$PLUGINSDIR\7z-out" "$INSTDIR" '/XF "${APP_EXECUTABLE_FILENAME}"'
+  ${If} ${Errors}
+    Push "无法写入新版程序文件：$0 $1"
+    Call DC_AbortProgramInstall
+  ${EndIf}
+  System::Call 'kernel32::CopyFileW(w "$PLUGINSDIR\7z-out\${APP_EXECUTABLE_FILENAME}", w "$INSTDIR\${DC_PENDING_EXE}", i 0)i.r0'
+  ${If} $0 == 0
+    Push "无法暂存新版主程序"
+    Call DC_AbortProgramInstall
+  ${EndIf}
+FunctionEnd
+
+Function DC_PublishProgram
+  !ifdef YOTOO_QA_INJECT_INSTALL_FAILURE
+    ${GetParameters} $0
+    ClearErrors
+    ${GetOptions} $0 "/YOTOOQAFAILPUBLISH" $1
+    ${IfNot} ${Errors}
+      Push "隔离验收：模拟安装写入后失败"
+      Call DC_AbortProgramInstall
+    ${EndIf}
+  !endif
   StrCpy $3 0
   ${Do}
     ClearErrors
     Rename "$INSTDIR\${DC_PENDING_EXE}" "$appExe"
     ${IfNot} ${Errors}
+      StrCpy $DC_ProgramPublished "1"
       Return
     ${EndIf}
     IntOp $3 $3 + 1

@@ -249,7 +249,7 @@ try{
   $legacy=Join-Path $qaRoot '空的旧设置'
   New-Item -ItemType Directory -Path $qaRoot,$roaming,$build -Force | Out-Null
   $wrapper=Join-Path $qaRoot 'custom.nsh'
-  Set-Content -LiteralPath $wrapper -Value "!define YOTOO_LOCATION_KEY `"$locationKey`"`r`n!define YOTOO_ROAMING_DATA `"$roaming`"`r`n!define YOTOO_LEGACY_SETTINGS `"$legacy`"`r`n!include `"$repoRoot\installer\custom.nsh`"" -Encoding utf8
+  Set-Content -LiteralPath $wrapper -Value "!define YOTOO_QA_INJECT_INSTALL_FAILURE`r`n!define YOTOO_LOCATION_KEY `"$locationKey`"`r`n!define YOTOO_ROAMING_DATA `"$roaming`"`r`n!define YOTOO_LEGACY_SETTINGS `"$legacy`"`r`n!include `"$repoRoot\installer\custom.nsh`"" -Encoding utf8
   $builderArgs=@("--config.extraMetadata.name=$qaPackage",'--win','nsis','--x64',"--config.appId=$appId","--config.productName=$product","--config.nsis.guid=$id","--config.nsis.shortcutName=$product","--config.nsis.include=$wrapper","--config.directories.output=$build",'--config.win.artifactName=QA-Setup.exe','--publish','never')
   if($source){
     $clone=Join-Path $qaRoot 'packaged'
@@ -290,6 +290,21 @@ try{
       (Test-Path -LiteralPath $exe) -and (Get-FileHash -LiteralPath $archive).Hash -eq $packageSha256)
     Check '升级失败保留原教学标记' ((Get-Content -LiteralPath $tutorialMarker -Raw) -eq $firstTutorial)
   } finally { $lock.Dispose() }
+  $originalExeHash=(Get-FileHash -LiteralPath $exe).Hash
+  $rollbackFixture=Join-Path $program 'resources/qa-rollback/nested/old-version.txt'
+  New-Item -ItemType Directory -Path (Split-Path -Parent $rollbackFixture) -Force | Out-Null
+  Set-Content -LiteralPath $rollbackFixture -Value $id -Encoding utf8
+  Check '新版校验超时不改动旧版入口和依赖' ((Run $installer "/S /YOTOOUPDATE /YOTOOQAFAILVERIFY /D=$program") -eq 1603 -and
+    (Get-FileHash -LiteralPath $exe).Hash -eq $originalExeHash -and (Get-FileHash -LiteralPath $archive).Hash -eq $packageSha256 -and
+    (Test-Path -LiteralPath $rollbackFixture) -and (Test-QaShortcut $shortcuts[0] $exe))
+  $installerLog=Join-Path $data 'logs/installer/last-install.log'
+  Check '校验失败记录实际超时' ((Get-Content -LiteralPath $installerLog -Raw) -match 'timeout')
+  Check '写入新版后失败仍恢复旧版全套文件和入口' ((Run $installer "/S /YOTOOUPDATE /YOTOOQAFAILPUBLISH /D=$program") -eq 1603 -and
+    (Get-FileHash -LiteralPath $exe).Hash -eq $originalExeHash -and (Get-FileHash -LiteralPath $archive).Hash -eq $packageSha256 -and
+    (Get-Content -LiteralPath $rollbackFixture -Raw).Trim() -eq $id -and (Test-QaShortcut $shortcuts[0] $exe) -and (Test-QaShortcut $shortcuts[1] $exe))
+  Check '回退后旧程序实际可启动，教学标记和数据保留' ((Run $exe '--smoke') -eq 0 -and
+    (Get-Content -LiteralPath $tutorialMarker -Raw) -eq $firstTutorial -and
+    (Get-Content (Join-Path $data 'keep-user-data.txt') -Raw).Trim() -eq $id)
   $shell = New-Object -ComObject WScript.Shell
   $broken = $shell.CreateShortcut($shortcuts[0])
   $broken.TargetPath = Join-Path $qaRoot '1'
