@@ -267,13 +267,15 @@ let observeAfter:
   | ((task: import('../src/model').Task, credentials: Record<string, string>) => void)
   | undefined;
 let onSchedulesChanged: (() => void) | undefined;
+const mainWindowTitle = (title = 'YOTOO 部署中心') =>
+  app.isPackaged ? title : '开发版 · ' + title;
 const emit = (event: DesktopEvent) => {
   if (event.kind === 'schedules') {
     try { onSchedulesChanged?.(); } catch { /* 系统通知失败不能改变已保存的计划或部署结果。 */ }
   }
   if (win && !win.isDestroyed()) {
     if (event.kind === 'task') {
-      win.setTitle(taskWindowTitle(event.task));
+      win.setTitle(mainWindowTitle(taskWindowTitle(event.task)));
       win.setProgressBar(taskProgress(event.task), {
         mode: event.task.status === 'cancelling' ? 'paused' : 'normal',
       });
@@ -573,7 +575,7 @@ async function boot() {
       minHeight: 600,
       show: false,
       backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff',
-      title: 'YOTOO 部署中心',
+      title: mainWindowTitle(),
       ...(windowsChrome ? {
         opacity: smoke ? 1 : 0,
         titleBarStyle: 'hidden',
@@ -591,6 +593,8 @@ async function boot() {
         devTools: !app.isPackaged,
       },
     });
+    // 开发版窗口标题由主进程维护，避免页面加载时用静态标题覆盖标记。
+    if (!app.isPackaged) win.on('page-title-updated', (event) => event.preventDefault());
     if (process.platform === 'win32' && app.isPackaged) {
       const executable = app.getPath('exe');
       const installedIcon = path.join(path.dirname(executable), 'deploy-center.ico');
@@ -882,6 +886,7 @@ async function boot() {
     handle('load', async () => ({
       database: storage.database(),
       version: app.getVersion(),
+      development: !app.isPackaged,
       tutorialInstallId: showOnStartup || win?.isVisible() ? pendingTutorial() : undefined,
       recovery: storage.recovery,
       task: storage.latestTask(),

@@ -78,6 +78,7 @@ export type TaskSummary = {
 };
 export type Startup = {
   version?: string;
+  development?: boolean;
   tutorialInstallId?: string;
   darkTheme?: boolean;
   preferences?: import('./desktop-preferences').DesktopPreferences;

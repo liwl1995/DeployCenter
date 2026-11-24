@@ -29,6 +29,7 @@ export function ServiceSidebar({
   task,
   settingsNavigation,
   updateAvailable,
+  development,
 }: {
   services: { id: string; name: string; tone: number }[];
   onReorder: (ids: string[]) => Promise<void>;
@@ -43,6 +44,7 @@ export function ServiceSidebar({
   task: ReactNode;
   settingsNavigation: ReactNode;
   updateAvailable: boolean;
+  development?: boolean;
 }) {
   const ref = useRef<HTMLElement>(null);
   const draggedService = useRef<string | undefined>(undefined);
@@ -89,6 +91,7 @@ export function ServiceSidebar({
           </Button>
         </HoverTip>
       </div>
+      {development && <span className="sidebar-development">开发版</span>}
       <nav aria-label="主导航" className="sidebar-directory">
         {page === 'settings' ? (
           <>

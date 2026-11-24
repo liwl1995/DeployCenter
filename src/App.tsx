@@ -1362,6 +1362,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       }}
     >
       <ServiceSidebar
+        development={boot?.development}
         updateAvailable={updateAvailable}
         services={sidebarEntries}
         onReorder={saveSidebarOrder}

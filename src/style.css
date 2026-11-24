@@ -311,6 +311,21 @@ hr {
   text-overflow: ellipsis;
   font-weight: 600;
 }
+.sidebar-development {
+  flex: none;
+  align-self: flex-start;
+  margin: 0 var(--space-3) var(--space-1);
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-control);
+  background: var(--warning-soft);
+  color: var(--warning-text);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+}
+.service-sidebar[data-collapsed='true'] .sidebar-development {
+  align-self: center;
+  margin-inline: 0;
+}
 .update-notification-dot {
   display: inline-block;
   flex: none;
