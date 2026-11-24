@@ -966,7 +966,7 @@ test('设置外观支持两种主题、跟随系统和重新启动后的偏好�
 test('正式包包含独立更新助手，无效参数在就绪前被拒绝且不启动安装', async () => {
   test.skip(!process.env.DEPLOY_CENTER_TEST_EXE, '独立助手资源位置只在正式包验收');
   const resourceDir = await app.evaluate(() => process.resourcesPath);
-  const helper = path.join(resourceDir, 'update-helper.exe');
+  const helper = path.join(resourceDir, 'update-handoff.exe');
   expect(await fs.readFile(helper)).toEqual(await fs.readFile('dist-electron/update-helper.exe'));
   const { spawn } = await import('node:child_process');
   const result = await new Promise<{ code: number | null; output: string }>((resolve, reject) => {

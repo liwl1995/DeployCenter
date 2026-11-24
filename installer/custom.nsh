@@ -463,7 +463,19 @@ Function .onInstFailed
   ${If} $DC_ProgramWithdrawn == "1"
     CreateDirectory "$DC_BackupSource"
     ; 不改动备份内的文件名。先补齐依赖，再恢复快捷方式指向的 EXE。
-    !insertmacro DC_CopyProgramTree "$DC_Rollback" "$DC_BackupSource" '/XF "$DC_OldExecutable" "${DC_PENDING_EXE}"'
+    StrCpy $4 "$PLUGINSDIR\no-helper-exclusion"
+    ${If} ${FileExists} "$DC_BackupSource\resources\update-helper.exe"
+    ${AndIf} ${FileExists} "$DC_Rollback\resources\update-helper.exe"
+      ${StdUtils.HashFile} $0 "SHA2-256" "$DC_BackupSource\resources\update-helper.exe"
+      ${StdUtils.HashFile} $1 "SHA2-256" "$DC_Rollback\resources\update-helper.exe"
+      StrLen $2 $0
+      ${If} $2 == 64
+      ${AndIf} $0 == $1
+        ; 兼容从资源目录启动更新助手的旧版。校验原件与备份一致后跳过占用文件。
+        StrCpy $4 "$DC_Rollback\resources\update-helper.exe"
+      ${EndIf}
+    ${EndIf}
+    !insertmacro DC_CopyProgramTree "$DC_Rollback" "$DC_BackupSource" '/XF "$DC_OldExecutable" "${DC_PENDING_EXE}" "$4"'
     ${IfNot} ${Errors}
       System::Call 'kernel32::CopyFileW(w "$DC_Rollback\$DC_OldExecutable", w "$DC_BackupSource\${DC_PENDING_EXE}", i 0)i.r0'
       ${If} $0 == 0

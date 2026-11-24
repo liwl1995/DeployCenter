@@ -81,7 +81,7 @@
     "extraResources": [
       {
         "from": "dist-electron/update-helper.exe",
-        "to": "update-helper.exe"
+        "to": "update-handoff.exe"
       },
       {
         "from": "README.md",

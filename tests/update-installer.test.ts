@@ -29,19 +29,25 @@ async function fixture() {
   });
   const spawned = vi.mocked(spawn);
   spawned.mockReturnValue(child as never);
+  const helper = path.join(dir, 'update-helper.exe');
+  await fs.writeFile(helper, 'trusted fixture helper');
   const ready = launchInstallerAfterExit(
     'fixture.exe',
     '0'.repeat(64),
     dir,
     dir,
-    path.join(dir, 'update-helper.exe'),
+    helper,
+    path.join(dir, 'Runtime'),
   );
   await vi.waitFor(() => expect(spawned).toHaveBeenCalledTimes(1));
   return { dir, child, ready, spawned };
 }
 it('独立 Windows 助手隐藏窗口并脱离父进程，收到完整就绪信号才释放管道', async () => {
   const f = await fixture();
-  expect(f.spawned.mock.calls[0][0]).toBe(path.join(f.dir, 'update-helper.exe'));
+  const helper = String(f.spawned.mock.calls[0][0]);
+  expect(path.dirname(helper)).toBe(path.join(f.dir, 'Runtime'));
+  expect(path.basename(helper)).toMatch(/^update-handoff-[a-f0-9]{64}\.exe$/);
+  expect(await fs.readFile(helper, 'utf8')).toBe('trusted fixture helper');
   expect(f.spawned.mock.calls[0][2]).toEqual({
     detached: true,
     windowsHide: true,

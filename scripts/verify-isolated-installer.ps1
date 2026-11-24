@@ -1,5 +1,5 @@
 # 仅安装独立 QA 身份；注册表、快捷方式、程序目录和用户数据均与正式版本隔离。
-param([string]$Prepackaged, [string]$ScratchDirectory)
+param([string]$Prepackaged, [string]$ScratchDirectory, [string]$HandoffTempRoot)
 $ErrorActionPreference='Stop'
 $repoRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $version=(Get-Content (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json).version
@@ -233,6 +233,7 @@ $before=Formal-Snapshot
 $owned=$false
 $child=$null
 $timedOutProcess=$null
+$externalTemp=$null
 $previousEnvironment=@{
   DEPLOY_CENTER_DATA_DIR=$env:DEPLOY_CENTER_DATA_DIR
   DEPLOY_CENTER_SETTINGS_DIR=$env:DEPLOY_CENTER_SETTINGS_DIR
@@ -336,7 +337,9 @@ try{
   Check '静默更新拒绝更换已注册目录' ((Run $installer "/S /YOTOOUPDATE /D=$different") -eq 1603 -and -not(Test-Path -LiteralPath (Join-Path $different "$product.exe")))
   Check '静默更新保留已有桌面快捷方式' ((Run $installer "/S /YOTOOUPDATE /D=$program") -eq 0 -and (Test-Path -LiteralPath $desktopLink))
   Remove-Item -LiteralPath $desktopLink
+  # 模拟旧版从程序资源目录运行助手，新版安装器须绕开仍在运行的旧文件。
   $helper=Join-Path $program 'resources/update-helper.exe'
+  Copy-Item -LiteralPath (Join-Path $program 'resources/update-handoff.exe') -Destination $helper
   $log=Join-Path $data 'logs/update/update-install.log'
   New-Item -ItemType Directory -Path (Split-Path -Parent $log) -Force | Out-Null
   function Encode([string]$Value){[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Value))}
@@ -358,6 +361,19 @@ try{
   $start.CreateNoWindow=$true
   $start.RedirectStandardOutput=$true
   $testTemp=Join-Path $data 'tmp/system'
+  if ($HandoffTempRoot) {
+    $tempRootItem=Get-Item -LiteralPath $HandoffTempRoot -Force
+    if (-not $tempRootItem.PSIsContainer -or ($tempRootItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+      throw '更新验收临时根目录无效'
+    }
+    $tempRootPath=$tempRootItem.FullName
+    $testTemp=Join-Path $tempRootPath "installer-handoff-$id"
+    if ([IO.Path]::GetPathRoot($tempRootPath) -eq [IO.Path]::GetPathRoot($program)) {
+      throw '跨盘验收必须使用不同的程序盘与更新临时盘'
+    }
+    New-Item -ItemType Directory -Path $testTemp | Out-Null
+    $externalTemp=$testTemp
+  }
   New-Item -ItemType Directory -Path $testTemp -Force | Out-Null
   $start.Environment['TEMP']=$testTemp
   $start.Environment['TMP']=$testTemp
@@ -372,6 +388,7 @@ try{
   Check '静默安装期间快捷方式没有可执行目标' (-not ($child.HasExited) -and -not (Test-Path -LiteralPath $exe))
   Check '静默覆盖期间保留开始菜单快捷方式' (Test-Path -LiteralPath $shortcuts[0] -PathType Leaf)
   Check '独立助手静默覆盖原目录' ($child.WaitForExit(180000) -and $child.ExitCode -eq 0)
+  Check '安装完成后新助手可用' (Test-Path -LiteralPath (Join-Path $program 'resources/update-handoff.exe') -PathType Leaf)
   $deadline=[DateTime]::UtcNow.AddSeconds(30)
   do {
     $restarted=Get-Process -Name $product -ErrorAction SilentlyContinue | Where-Object {
@@ -475,6 +492,20 @@ try{
         Check '本轮 QA 临时目录已清除' (-not(Test-Path -LiteralPath $qaRoot))
       }
     }catch{
+      $result.cleanupError=(@($result.cleanupError,$_.Exception.Message) | Where-Object { $_ }) -join '；'
+    }
+  }
+  if ($externalTemp) {
+    try {
+      $item=Get-Item -LiteralPath $externalTemp -Force
+      if ($item.Parent.FullName -ne $tempRootPath -or $item.Name -cne "installer-handoff-$id" -or
+        (($item.Attributes -bor $item.Parent.Attributes) -band [IO.FileAttributes]::ReparsePoint) -or
+        (Get-ChildItem -LiteralPath $externalTemp -Force -Recurse -Attributes ReparsePoint | Select-Object -First 1)) {
+        throw '更新验收临时目录越界或包含链接，已保留现场'
+      }
+      Remove-Item -LiteralPath $externalTemp -Recurse -Force
+      Check '跨盘更新临时目录已清除' (-not(Test-Path -LiteralPath $externalTemp))
+    } catch {
       $result.cleanupError=(@($result.cleanupError,$_.Exception.Message) | Where-Object { $_ }) -join '；'
     }
   }

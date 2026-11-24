@@ -89,7 +89,7 @@ const legacySettingsDir = process.env.DEPLOY_CENTER_DATA_DIR
     );
 const nativeHelper = path.join(
   app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'dist-electron'),
-  'update-helper.exe',
+  app.isPackaged ? 'update-handoff.exe' : 'update-helper.exe',
 );
 const isolated = process.env.DEPLOY_CENTER_TESTING === '1' || process.platform !== 'win32';
 const locator = isolated
@@ -847,6 +847,7 @@ async function boot() {
             path.dirname(app.getPath('exe')),
             dataPaths(dataDir).updateLogs,
             nativeHelper,
+            runtimePaths.runtime,
             { version, executable },
           );
         } catch (error) {

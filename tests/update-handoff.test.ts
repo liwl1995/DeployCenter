@@ -51,7 +51,7 @@ import { launchInstallerAfterExit } from ${JSON.stringify(path.resolve('electron
 ${runtime === 'electron' ? `import { app } from 'electron'; app.setPath('userData', ${JSON.stringify(path.join(dir, 'electron-data'))});` : ''}
 (async () => {
 ${runtime === 'electron' ? 'await app.whenReady();' : ''}
-await launchInstallerAfterExit(${JSON.stringify(file)}, ${JSON.stringify(createHash('sha256').update(payload).digest('hex'))}, ${JSON.stringify(path.join(dir, "中文 空格 ' $目录"))}, ${JSON.stringify(dir)}, ${JSON.stringify(helper)});
+await launchInstallerAfterExit(${JSON.stringify(file)}, ${JSON.stringify(createHash('sha256').update(payload).digest('hex'))}, ${JSON.stringify(path.join(dir, "中文 空格 ' $目录"))}, ${JSON.stringify(dir)}, ${JSON.stringify(helper)}, ${JSON.stringify(path.join(dir, 'Runtime'))});
 console.log('PARENT_READY');
 setInterval(() => { if (existsSync(${JSON.stringify(path.join(dir, 'exit-parent'))})) ${runtime === 'electron' ? 'app.quit()' : 'process.exit(0)'}; }, 50);
 })().catch(error => { console.error(error); process.exit(1); });`,
