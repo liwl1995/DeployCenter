@@ -3,6 +3,16 @@ import type { Health } from '../src/model';
 import { healthTiming } from '../src/health-timing';
 import type { Clock } from './capabilities';
 
+export async function httpHealthStatus(url: string, timeoutMs: number, signal: AbortSignal) {
+  const response = await fetch(url, {
+    method: 'GET',
+    signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
+    redirect: 'follow',
+  });
+  await response.body?.cancel();
+  return response.status;
+}
+
 export type HealthProbe = (
   health: Health,
   timeoutMs: number,
@@ -11,15 +21,9 @@ export type HealthProbe = (
 ) => Promise<boolean>;
 const probeHealth: HealthProbe = async (health, timeoutMs, signal, log) => {
   if (health.type === 'http') {
-    const response = await fetch(health.value, {
-      method: 'GET',
-      signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
-      redirect: 'follow',
-    });
-    log('HTTP GET 返回 ' + response.status + '（仅 2xx 通过）\n');
-    const ok = response.status >= 200 && response.status < 300;
-    await response.body?.cancel();
-    return ok;
+    const status = await httpHealthStatus(health.value, timeoutMs, signal);
+    log('HTTP GET 返回 ' + status + '（仅 2xx 通过）\n');
+    return status >= 200 && status < 300;
   }
   if (health.type !== 'tcp') return false;
   const m = health.value.match(/^(?:\[([^\]]+)\]|([^:]+)):(\d+)$/);

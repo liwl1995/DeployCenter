@@ -1,14 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
-import type { Server, Target } from '../src/model';
+import type { Health, Server, Target } from '../src/model';
 import { shellQuote as q } from '../src/model';
-import type { OperationPlan, OperationRecord, OperationStatus, ServiceOperation } from '../src/operations';
+import { operationHealthSkipReason, type OperationHealth, type OperationPlan, type OperationRecord, type OperationStatus, type ServiceOperation } from '../src/operations';
 import { pendingSchedule } from '../src/schedules';
 import { workbenchHeader, workbenchScope } from './workbench';
 import type { Storage } from './storage';
 import type { Transport } from './ssh';
 import { LineRedactor } from './log-redactor';
 import { MemoryCredentials } from './native-capabilities';
+import { httpHealthStatus } from './health';
 import script from './service-operations.sh';
 
 export function operationCommands(target: Target, action: ServiceOperation) {
@@ -42,6 +43,40 @@ export function operationScript(target: Target, owner: string, action: ServiceOp
 type Prepared = { plan: OperationPlan; signature: string; until: number };
 const uncertain = (record: OperationRecord) =>
   !record.settled && (record.result === 'unknown' || record.result === 'running');
+
+async function probeOperationHealth(health: Health, transport: Transport, signal: AbortSignal): Promise<OperationHealth> {
+  const skipped = operationHealthSkipReason(health);
+  if (skipped) return { state: 'skipped', message: skipped };
+  const url = health.value.trim();
+  if (!URL.canParse(url) || !/^https?:\/\//i.test(url)) {
+    return { state: 'skipped', message: 'HTTP 地址无效' };
+  }
+  const local = health.location === 'local';
+  // 刷新状态只做一次探测，避免部署的等待窗口占住运维状态查询。
+  const timeout = Math.min(health.timeout, 10);
+  let code: number;
+  try {
+    if (local) {
+      code = await httpHealthStatus(url, timeout * 1000, signal);
+    } else {
+      signal.throwIfAborted();
+      const result = await transport.exec('bash -s', {
+        input: "curl -q --globoff --request GET --silent --show-error --proto '=http,https' --max-time " +
+          q(String(timeout)) + " -o /dev/null -w '%{http_code}' -- " + q(url) + '\n',
+        timeout: timeout * 1000 + 2000, maxOutput: 4096,
+      });
+      if (result.code === 127) return { state: 'failed', message: '服务器缺少 curl' };
+      if (result.code === 28) return { state: 'failed', message: '服务器 HTTP 请求超时' };
+      if (result.code !== 0 || !/^[1-5]\d\d$/.test(result.stdout.trim())) throw new Error();
+      code = Number(result.stdout.trim());
+    }
+  } catch (error) {
+    const timedOut = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
+    const from = local ? '本机' : '服务器';
+    return { state: 'failed', message: from + (timedOut ? '请求超时' : '无法访问接口') };
+  }
+  return { state: code >= 200 && code < 300 ? 'passed' : 'failed', message: 'HTTP ' + code };
+}
 
 export class ServiceOperations {
   private readonly prepared = new Map<string, Prepared>();
@@ -98,7 +133,7 @@ export class ServiceOperations {
     const reason = this.blocked() || this.reason(scope);
     if (reason) throw new Error(reason);
   }
-  async status(id: string, supplied: string): Promise<OperationStatus> {
+  async status(id: string, supplied: string, checkHealth = true): Promise<OperationStatus> {
     const { target, server } = this.context(id);
     if (this.checking) throw new Error('正在检查另一个目标，请稍后再刷新');
     this.checking = true;
@@ -116,7 +151,7 @@ export class ServiceOperations {
         input: environment(target, 'DC-OPS-STATUS') + 'status_result\n',
         timeout: 12000, maxOutput: 16384,
       });
-      const [raw, locked, pid, age, restarts, health, started] = result.stdout.trimEnd().split('\t');
+      const [raw, locked, pid, age, restarts, , started] = result.stdout.trimEnd().split('\t');
       const states = ['running', 'stopped', 'matched', 'not-found', 'unknown'] as const;
       const state = states.find((value) => value === raw);
       if (result.code || !state || !['0', '1'].includes(locked)) throw new Error('服务器未返回有效的运行状态');
@@ -128,7 +163,7 @@ export class ServiceOperations {
         state, locked: locked === '1', checkedAt: new Date().toISOString(),
         pid: /^\d+$/.test(pid || '') ? pid : undefined,
         restarts: /^\d+$/.test(restarts || '') ? Number(restarts) : undefined,
-        health: ['none', 'starting', 'healthy', 'unhealthy'].includes(health) ? health : undefined,
+        health: checkHealth ? await probeOperationHealth(target.health, transport, controller.signal) : undefined,
         uptime: seconds === undefined ? undefined : seconds >= 86400
           ? Math.floor(seconds / 86400) + ' 天 ' + Math.floor(seconds % 86400 / 3600) + ' 小时'
           : seconds >= 3600 ? Math.floor(seconds / 3600) + ' 小时 ' + Math.floor(seconds % 3600 / 60) + ' 分钟'
@@ -155,7 +190,7 @@ export class ServiceOperations {
     const record = this.storage.operations(context.scope).find((entry) => entry.id === recordId);
     if (!record || !uncertain(record) || record.id === this.active) throw new Error('没有需要核实的运维记录');
     if (confirmation !== context.target.name) throw new Error('请输入目标名称确认已人工核实');
-    const status = await this.status(id, supplied);
+    const status = await this.status(id, supplied, false);
     if (status.locked || status.state === 'unknown') throw new Error('仍有目标锁或无法读取状态，请先核实服务器');
     if (this.context(id).scope !== context.scope) throw new Error('目标配置已变化，请重新核实');
     record.result = 'unknown';

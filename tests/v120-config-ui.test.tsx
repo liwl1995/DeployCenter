@@ -15,7 +15,7 @@ vi.mock('../src/platform', async (original) => ({
 }));
 import { ServerForm, TargetForm } from '../src/forms';
 import { MoreMenu, DeleteEntity } from '../src/EntityActions';
-import { BuildEnvironment } from '../src/BuildEnvironment';
+import { BuildEnvironment, useBuildEnvironmentChecks } from '../src/BuildEnvironment';
 import { seed } from '../src/model';
 beforeEach(() => {
   vi.clearAllMocks();
@@ -102,17 +102,21 @@ it('服务器表单显示别名候选且标签关联输入；草稿测试不保�
 });
 it('JDK自动检测展示版本和服务引用；Maven显示实际工具与版本，不只显示PATH', async () => {
   const db = seed();
-  render(
-    <BuildEnvironment
-      api={bridge as unknown as DesktopAPI}
+  const api = bridge as unknown as DesktopAPI;
+  function BuildEnvironmentFixture() {
+    const checks = useBuildEnvironmentChecks(api, db, true);
+    return <BuildEnvironment
+      api={api}
       db={db}
+      checks={checks}
       onEdit={() => {}}
       onAdd={() => {}}
       onScan={() => {}}
       onDelete={() => {}}
       deletionReason={(name) => (db.services.some((s) => s.jdk === name) ? '服务仍在使用' : '')}
-    />,
-  );
+    />;
+  }
+  render(<BuildEnvironmentFixture />);
   await waitFor(() => expect(bridge.checkTool).toHaveBeenCalledTimes(db.jdks.length));
   await waitFor(() => expect(bridge.toolInfo).toHaveBeenCalledTimes(db.services.length));
   expect(screen.queryByText('Java 21 测试版本')).toBeNull();

@@ -34,6 +34,9 @@ test('运维状态、生产重启确认、流式输出与固定目标日志', as
             stream.write('running\t0\t\t\t0\thealthy\t2026-01-01T00:00:00Z\n');
             stream.exit(0); stream.end(); return;
           }
+          if (input.includes("--request GET") && input.includes("'http://localhost:8080/health'")) {
+            stream.write('204'); stream.exit(0); stream.end(); return;
+          }
           const owner = input.match(/MARKER='([^']+)'/)?.[1];
           if (!owner || !input.includes("ACTION='restart'")) { stream.exit(1); stream.end(); return; }
           stream.write('回环运维输出 ' + password + '\n');
@@ -53,6 +56,7 @@ test('运维状态、生产重启确认、流式输出与固定目标日志', as
       const service = { ...newService(), id: 'ops-service', name: '验收服务', code: 'ops-service', root: data };
       const target = { ...newTargetTemplate(service.id, 'ops-server'), id: 'ops-target', name: '正式运维目标', production: true,
         directory: '/opt/isolated', mode: 'docker' as const, container: 'fixture' };
+      target.health = { ...target.health, type: 'http', value: 'http://localhost:8080/health', location: 'remote' };
       store.saveConfig({
         ...emptyDatabase(), services: [service], targets: [target, { ...target, id: 'other', name: '第二目标', directory: '/opt/other' }],
         lastService: service.id,
@@ -75,6 +79,7 @@ test('运维状态、生产重启确认、流式输出与固定目标日志', as
     await button('连接').click();
     await button('信任并继续').click();
     await expect(page.getByText('运行中', { exact: true })).toBeVisible();
+    await expect(page.getByText('通过 · HTTP 204', { exact: true })).toBeVisible();
     await expect(button('启动')).toBeDisabled();
     await button('重启').click();
     await expect(page.getByRole('dialog')).toContainText('docker stop --time 30');

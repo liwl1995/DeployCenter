@@ -87,7 +87,7 @@ import { preparePreset, type WorkspacePage } from './workspace-model';
 import { TaskHistory, type HistoryViewState } from './TaskHistory';
 import { useWorkspaceNavigation } from './workspace-navigation';
 import { MoreMenu, DeleteEntity } from './EntityActions';
-import { BuildEnvironment } from './BuildEnvironment';
+import { BuildEnvironment, useBuildEnvironmentChecks } from './BuildEnvironment';
 import { ServersWorkspace, serverIdentity } from './ServersWorkspace';
 import { TargetsWorkspace } from './TargetsWorkspace';
 import { ServicesWorkspace } from './ServicesWorkspace';
@@ -244,6 +244,11 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     Database['settings']['failurePolicy'] | null
   >(null);
   const { page, returnPage: taskReturnPage, navigate: setPage, openTask, returnFromTask, mainRef, serviceScrollRef } = useWorkspaceNavigation(initialPage);
+  const [buildEnvironmentOpened, setBuildEnvironmentOpened] = useState(page === 'tools');
+  useEffect(() => {
+    if (page === 'tools') setBuildEnvironmentOpened(true);
+  }, [page]);
+  const buildEnvironmentChecks = useBuildEnvironmentChecks(desktop, db, page === 'tools' || buildEnvironmentOpened);
   const historyViews = useRef(new Map<string, HistoryViewState>());
   const [serviceTab, setServiceTab] = useState('deploy');
   const [logTarget, setLogTarget] = useState('');
@@ -1935,6 +1940,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 <BuildEnvironment
                   api={desktop}
                   db={db}
+                  checks={buildEnvironmentChecks}
                   onEdit={(value) => setDialog({ kind: 'service', value })}
                   onAdd={() => setDialog({ kind: 'jdk' })}
                   onDelete={(name) => setDialog({ kind: 'delete', entity: 'jdk', id: name })}

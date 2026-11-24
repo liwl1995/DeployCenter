@@ -10,40 +10,17 @@ import { MoreMenu } from './EntityActions';
 import { ChevronDown } from 'lucide-react';
 import { CompactStatus, compactVersion, shortReason } from './compact-list';
 import { WorkspaceTabs } from './WorkspaceLayout';
-export function BuildEnvironment({
-  api,
-  db,
-  onEdit,
-  onAdd,
-  onScan,
-  onDelete,
-  deletionReason,
-}: {
-  api?: DesktopAPI;
-  db: Database;
-  onEdit: (service: Service) => void;
-  onAdd: () => void;
-  onScan?: () => void;
-  onDelete: (name: string) => void;
-  deletionReason: (name: string) => string;
-}) {
+export function useBuildEnvironmentChecks(api: DesktopAPI | undefined, db: Database, enabled: boolean) {
   const [jdks, setJdks] = useState<Record<string, { ok: boolean; text: string; time: string }>>({}),
     [tools, setTools] = useState<Record<string, ToolResult>>({}),
     [refresh, setRefresh] = useState(0),
     [running, setRunning] = useState(false),
     [error, setError] = useState('');
-  const [expanded, setExpanded] = useState(new Set<string>());
   const [checking, setChecking] = useState('');
-  const toggle = (key: string) =>
-    setExpanded((old) => {
-      const next = new Set(old);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  const key = JSON.stringify([db.jdks, db.services]);
+  const key = JSON.stringify([db.jdks, db.services.map(({ id, root, workDir, tool, mavenPath, jdk, args, profiles }) =>
+    [id, root, workDir, tool, mavenPath, jdk, args, profiles])]);
   useEffect(() => {
-    if (!api) return;
+    if (!api || !enabled) return;
     let alive = true;
     setJdks({});
     setTools({});
@@ -102,12 +79,43 @@ export function BuildEnvironment({
     return () => {
       alive = false;
     };
-  }, [api, key, refresh]);
+  }, [api, enabled, key, refresh]);
+  return { jdks, tools, checking, error, running, refresh: () => setRefresh((r) => r + 1) };
+}
+
+export function BuildEnvironment({
+  api,
+  db,
+  checks,
+  onEdit,
+  onAdd,
+  onScan,
+  onDelete,
+  deletionReason,
+}: {
+  api?: DesktopAPI;
+  db: Database;
+  checks: ReturnType<typeof useBuildEnvironmentChecks>;
+  onEdit: (service: Service) => void;
+  onAdd: () => void;
+  onScan?: () => void;
+  onDelete: (name: string) => void;
+  deletionReason: (name: string) => string;
+}) {
+  const { jdks, tools, checking, error, running, refresh } = checks;
+  const [expanded, setExpanded] = useState(new Set<string>());
+  const toggle = (key: string) =>
+    setExpanded((old) => {
+      const next = new Set(old);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   const refreshAction = {
     label: '重新检测',
     disabled: running,
     reason: running ? '正在检测，请稍候' : undefined,
-    onClick: () => setRefresh((r) => r + 1),
+    onClick: refresh,
   };
   return (
     <>

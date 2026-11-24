@@ -1,3 +1,16 @@
+import type { Health } from './model';
+
+export type OperationHealth = {
+  state: 'passed' | 'failed' | 'skipped';
+  message: string;
+};
+
+export function operationHealthSkipReason(health: Health) {
+  if (health.type === 'none') return '未启用健康检查';
+  if (health.type !== 'http') return '未启用 HTTP 检查';
+  if (!health.value.trim()) return '未配置 HTTP 地址';
+}
+
 export const operationLabels = { start: '启动', stop: '停止', restart: '重启' } as const;
 export type ServiceOperation = keyof typeof operationLabels;
 export type OperationStatus = {
@@ -7,7 +20,7 @@ export type OperationStatus = {
   uptime?: string;
   pid?: string;
   restarts?: number;
-  health?: string;
+  health?: OperationHealth;
   message?: string;
 };
 export const operationStateLabels: Record<OperationStatus['state'], string> = {

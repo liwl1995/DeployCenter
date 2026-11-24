@@ -131,7 +131,7 @@ const bash = process.env.DEPLOY_CENTER_TEST_BASH || (process.platform === 'win32
   ? (spawnSync('where.exe', ['git.exe'], { encoding: 'utf8' }).stdout || '').split(/\r?\n/)
     .filter(Boolean).map((file) => path.resolve(path.dirname(file.trim()), '../bin/bash.exe')).find(existsSync)
   : '/bin/bash');
-it('Docker 无健康检查仍显示运行，探测失败时保留脱敏后的原因', async () => {
+it('未启用 HTTP 检查时仍显示 Docker 运行状态，读取失败时保留脱敏后的原因', async () => {
   const { target, store } = await fixture();
   const db = store.database();
   db.targets[0] = { ...target, mode: 'docker', container: 'crm' };
@@ -143,11 +143,62 @@ it('Docker 无健康检查仍显示运行，探测失败时保留脱敏后的原
     secret: 'secret-value',
     transport: { connect: async () => {}, close: () => {}, exec } as unknown as Transport,
   }), () => undefined, () => {});
-  await expect(operations.status(target.id, '')).resolves.toMatchObject({ state: 'running', health: 'none', restarts: 0 });
+  await expect(operations.status(target.id, '')).resolves.toMatchObject({
+    state: 'running', health: { state: 'skipped', message: '未启用健康检查' }, restarts: 0,
+  });
+  expect(exec).toHaveBeenCalledTimes(1);
   expect(exec.mock.calls[0][1].input).toContain('with index .State "Health"');
   const failure = await operations.status(target.id, '');
   expect(failure.message).toContain('permission denied');
   expect(failure.message).not.toContain('secret-value');
+});
+
+it.each([
+  ['http', '', { state: 'skipped', message: '未配置 HTTP 地址' }],
+  ['tcp', 'localhost:8080', { state: 'skipped', message: '未启用 HTTP 检查' }],
+  ['command', 'unused', { state: 'skipped', message: '未启用 HTTP 检查' }],
+  ['http', "http://localhost:8080/health?q='x'", { state: 'failed', message: 'HTTP 405' }],
+] as const)('运维读取 %s %s 时只探测已配置的 HTTP 接口', async (type, value, health) => {
+  const { target, store } = await fixture();
+  const db = store.database();
+  db.targets[0].health = { ...target.health, type, value };
+  store.saveConfig(db);
+  const exec = vi.fn()
+    .mockResolvedValueOnce({ code: 0, stdout: 'matched\t0\t123\t90\t\t\t\n', stderr: '' })
+    .mockResolvedValueOnce({ code: 0, stdout: '405', stderr: '' });
+  const operations = new ServiceOperations(store, async () => ({
+    secret: '', transport: { connect: async () => {}, close: () => {}, exec } as unknown as Transport,
+  }), () => undefined, () => {});
+  await expect(operations.status(target.id, '')).resolves.toMatchObject({ state: 'matched', health });
+  expect(exec).toHaveBeenCalledTimes(health.state === 'skipped' ? 1 : 2);
+  if (health.state === 'failed') {
+    const input = exec.mock.calls[1][1].input;
+    expect(input).toContain('--request GET');
+    expect(input).toContain(" -- 'http://localhost:8080/health?q='\\''x'\\'''");
+  }
+});
+
+it('配置为从本机检查时，运维通过本机发送一次 HTTP GET', async () => {
+  const { target, store } = await fixture();
+  const url = 'http://localhost:8080/health';
+  const db = store.database();
+  db.targets[0].health = { ...target.health, type: 'http', value: url, location: 'local', startDelay: 300 };
+  store.saveConfig(db);
+  const exec = vi.fn().mockResolvedValue({ code: 0, stdout: 'matched\t0\t123\t90\t\t\t\n', stderr: '' });
+  const probe = vi.fn(async () => new Response(null, { status: 204 }));
+  vi.stubGlobal('fetch', probe);
+  try {
+    const operations = new ServiceOperations(store, async () => ({
+      secret: '', transport: { connect: async () => {}, close: () => {}, exec } as unknown as Transport,
+    }), () => undefined, () => {});
+    await expect(operations.status(target.id, '')).resolves.toMatchObject({
+      health: { state: 'passed', message: 'HTTP 204' },
+    });
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(probe).toHaveBeenCalledExactlyOnceWith(url, expect.objectContaining({ method: 'GET' }));
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
 it.skipIf(!bash)(
   '用真实 Bash 和模拟 Docker 执行运维脚本并核对远端锁',

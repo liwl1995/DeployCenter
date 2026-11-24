@@ -5,10 +5,9 @@ import { Badge, Field, Modal } from './ui';
 import { CredentialPrompt } from './DesktopViews';
 import { VirtualLogs } from './LogViewer';
 import type { Server, Target } from './model';
-import { operationLabels, operationResultLabels, operationStateLabels, type OperationPlan, type OperationRecord, type OperationStatus, type ServiceOperation } from './operations';
+import { operationHealthSkipReason, operationLabels, operationResultLabels, operationStateLabels, type OperationPlan, type OperationRecord, type OperationStatus, type ServiceOperation } from './operations';
 import type { DesktopAPI } from './platform';
 
-const health = { none: '未配置容器健康检查', healthy: '容器健康检查通过', starting: '健康检查进行中', unhealthy: '容器健康检查未通过' };
 const icons = { start: Play, stop: Square, restart: RotateCw };
 const actions = Object.keys(operationLabels) as ServiceOperation[];
 const details = {
@@ -126,6 +125,11 @@ export function OperationsWorkspace({ api, targets, servers, target, saved, onTa
     else void refresh(selected);
   };
   if (!target || !server) return <div className="empty"><p>添加部署目标后即可查看运行状态和日志。</p></div>;
+  const healthSkip = operationHealthSkipReason(target.health);
+  const health = status?.health;
+  const healthText = healthSkip || (reading ? '检查中…' : !health ? '未检查' :
+    health.state === 'passed' ? '通过 · ' + health.message :
+      health.state === 'failed' ? '未通过 · ' + health.message : health.message);
   const needsWord = !!dialog && (!!dialog.record || !!dialog.plan?.production);
   const needsStopped = dialog?.plan?.action === 'start' && status?.state === 'not-found';
   const credentialRequired = server.auth === 'password' && !hasSaved;
@@ -164,7 +168,7 @@ export function OperationsWorkspace({ api, targets, servers, target, saved, onTa
           <dl className="operation-facts">
             <div><dt>连续运行</dt><dd>{status?.uptime || '—'}</dd></div>
             <div><dt>{target.mode === 'docker' ? '容器重启次数' : '匹配进程 PID'}</dt><dd>{target.mode === 'docker' ? status?.restarts ?? '—' : status?.pid || '—'}</dd></div>
-            <div><dt>健康状态</dt><dd>{status?.health ? health[status.health as keyof typeof health] : '应用健康未验证'}</dd></div>
+            <div><dt>健康状态</dt><dd>{healthText}</dd></div>
           </dl>
           <p className="note">{status ? '最近检查 ' + new Date(status.checkedAt).toLocaleTimeString('zh-CN') + ' · ' : ''}
             {target.mode === 'docker' ? 'Docker 容器状态' : '按 JAR 文件名匹配，不代表应用可用'}</p>

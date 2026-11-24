@@ -2,7 +2,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, act, render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TaskHistory } from '../src/TaskHistory';
-import { BuildEnvironment } from '../src/BuildEnvironment';
+import { BuildEnvironment, useBuildEnvironmentChecks } from '../src/BuildEnvironment';
+import type { ComponentProps } from 'react';
 import { compactVersion, historyDay, historyState, shortReason } from '../src/compact-list';
 import { seed } from '../src/model';
 import { importedSummaries } from '../src/history-model';
@@ -152,7 +153,12 @@ it('导入历史仍打开历史快照，忙碌或损坏记录不能打开任务'
   fireEvent.click(document.querySelector('.history-task')!);
   expect(open).not.toHaveBeenCalled();
 });
-it('构建摘要版本、路径和关联数可见，详情按需展开；切换标签不重复检测，编辑不展开行', async () => {
+function BuildEnvironmentFixture({ visible = true, ...props }: Omit<ComponentProps<typeof BuildEnvironment>, 'checks'> & { visible?: boolean }) {
+  const checks = useBuildEnvironmentChecks(props.api, props.db, true);
+  return visible ? <BuildEnvironment {...props} checks={checks} /> : null;
+}
+
+it('构建摘要版本、路径和关联数可见，详情按需展开；切换标签或页面不重复检测，编辑不展开行', async () => {
   const db = seed(),
     user = userEvent.setup(),
     edit = vi.fn();
@@ -171,8 +177,9 @@ it('构建摘要版本、路径和关联数可见，详情按需展开；切换�
       }),
     ),
   };
-  render(
-    <BuildEnvironment
+  const view = (visible: boolean) =>
+    <BuildEnvironmentFixture
+      visible={visible}
       api={client as unknown as DesktopAPI}
       db={db}
       onAdd={() => {}}
@@ -180,8 +187,8 @@ it('构建摘要版本、路径和关联数可见，详情按需展开；切换�
       onEdit={edit}
       onDelete={() => {}}
       deletionReason={() => '仍被服务使用'}
-    />,
-  );
+    />;
+  const { rerender } = render(view(true));
   await waitFor(() => expect(client.toolInfo).toHaveBeenCalledTimes(db.services.length));
   expect(document.querySelectorAll('.compact-detail-row')).toHaveLength(0);
   const jdk = screen.getByRole('row', { name: 'JDK ' + db.jdks[0].name });
@@ -204,6 +211,14 @@ it('构建摘要版本、路径和关联数可见，详情按需展开；切换�
   expect(screen.getByRole('menuitem', { name: '删除 JDK 配置' }).hasAttribute('disabled')).toBe(
     true,
   );
+  rerender(view(false));
+  expect(screen.queryByRole('table', { name: '本机 JDK 列表' })).toBeNull();
+  rerender(view(true));
+  expect(screen.getAllByText('Java 21.0.8')).toHaveLength(db.jdks.length);
+  await user.click(screen.getByRole('tab', { name: '服务构建工具' }));
+  expect(screen.getAllByText('Maven 3.9.9')).toHaveLength(db.services.length);
+  expect(client.checkTool).toHaveBeenCalledTimes(db.jdks.length);
+  expect(client.toolInfo).toHaveBeenCalledTimes(db.services.length);
 });
 it('检测失败摘要给出原因，完整错误默认收起，尚未轮到的条目显示等待检测', async () => {
   const db = seed();
@@ -229,7 +244,7 @@ it('检测失败摘要给出原因，完整错误默认收起，尚未轮到的�
     }),
   };
   render(
-    <BuildEnvironment
+    <BuildEnvironmentFixture
       api={client as unknown as DesktopAPI}
       db={db}
       onAdd={() => {}}
