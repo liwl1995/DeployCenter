@@ -1,6 +1,15 @@
 import { FileArchive, FolderOpen } from 'lucide-react';
 import { Button } from './design/ui/button';
 import { SegmentedControl } from './design/ui/segmented-control';
+import type { Task } from './model';
+
+export function BuildModeChoice({ mode, onMode }: {
+  mode: Task['build'];
+  onMode: (mode: Task['build']) => void;
+}) {
+  return <SegmentedControl aria-label="构建方式" size="sm" value={mode} onValueChange={onMode}
+    items={[{ value: 'rebuild', label: '重新构建' }, { value: 'existing', label: '使用现有 JAR' }]} />;
+}
 
 export function BuildArtifactChoice({
   name,
@@ -30,16 +39,7 @@ export function BuildArtifactChoice({
           选择本地 JAR
         </Button>
       )}
-      <SegmentedControl
-        aria-label="构建方式"
-        size="sm"
-        value={mode}
-        onValueChange={onMode}
-        items={[
-          { value: 'rebuild', label: '重新构建' },
-          { value: 'existing', label: '使用现有 JAR' },
-        ]}
-      />
+      <BuildModeChoice mode={mode} onMode={onMode} />
     </div>
   );
 }

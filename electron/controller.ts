@@ -572,7 +572,7 @@ export class Controller {
       } finally {
         this.activeCredentials = {};
       }
-      this.emit({ kind: 'task', task });
+      this.emit({ kind: 'task', task, committed: true });
       this.emit({ kind: 'database', database: this.storage.database() });
       worker?.close();
     };

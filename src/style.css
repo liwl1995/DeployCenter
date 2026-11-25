@@ -630,6 +630,122 @@ hr {
   border-top: 1px solid var(--line);
   background: var(--bg-app);
 }
+.release-manifest {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.release-steps {
+  display: flex;
+  flex-wrap: wrap;
+  flex: none;
+  gap: var(--space-4);
+  margin: 0 var(--space-6);
+  padding: var(--space-3) 0;
+  list-style: none;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-2);
+}
+.release-steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.release-steps li > span {
+  display: grid;
+  place-items: center;
+  width: var(--space-5);
+  height: var(--space-5);
+  border-radius: var(--radius-circle);
+  background: var(--bg-subtle);
+  font-size: var(--fs-caption);
+}
+.release-steps li[aria-current] {
+  color: var(--text-1);
+  font-weight: 600;
+}
+.release-steps li[aria-current] > span {
+  background: var(--action-bg);
+  color: var(--action-fg);
+}
+.release-board {
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-3) var(--space-6);
+}
+.release-heading,
+.release-run-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.release-heading {
+  flex-wrap: wrap;
+}
+.release-service,
+.release-review {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  padding: var(--space-3);
+  background: var(--bg-subtle);
+  display: grid;
+  gap: var(--space-2);
+}
+.release-grip {
+  cursor: grab;
+}
+.release-drop {
+  outline: 1px solid var(--action-text);
+  outline-offset: -1px;
+}
+.release-targets {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  min-width: 0;
+}
+.release-note,
+.release-review .workspace-disclosure {
+  margin: 0;
+}
+.release-jar,
+.release-sequence,
+.release-run-row > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.release-add,
+.release-run-list {
+  display: grid;
+  gap: var(--space-2);
+}
+.release-run-row {
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  text-align: left;
+}
+button.release-run-row:hover { border-color: var(--border-strong); }
+.release-log-link { color: var(--action-text); }
+.release-running,
+.release-starting {
+  background: var(--bg-selected);
+}
+.release-result progress {
+  display: block;
+  width: 100%;
+  accent-color: var(--action-bg);
+}
+@media (max-width: 950px) {
+  .release-board { padding-inline: var(--space-4); }
+  .release-steps { margin-inline: var(--space-4); }
+}
 .deployment-block {
   padding: 6px 24px;
   color: var(--warning-text);

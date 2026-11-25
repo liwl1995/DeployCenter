@@ -86,6 +86,7 @@ export type Startup = {
   database: Database;
   recovery?: Recovery;
   task?: Task;
+  deploymentActive?: boolean;
   unfinished: Task[];
   dataDir: string;
   savedCredentials: string[];
@@ -116,7 +117,7 @@ export type DesktopEvent =
       offset?: number;
       context?: import('./features').LogContext;
     }
-  | { kind: 'task'; task: Task }
+  | { kind: 'task'; task: Task; committed?: boolean }
   | { kind: 'database'; database: Database }
   | { kind: 'trust'; request: TrustRequest }
   | { kind: 'trust-closed'; id: string }

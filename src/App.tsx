@@ -1,15 +1,21 @@
+import { TargetObservationOverride } from './TargetObservationOverride';
+import { DeploymentTargetRow } from './DeploymentTargetRow';
+import { DeployFailurePolicy } from './DeployFailurePolicy';
 import { ArtifactInfo, niceSize } from './ArtifactInfo';
 import { Confirm } from './Confirm';
 import { HistoryDetail } from './HistoryDetail';
 import { ServicePicker } from './ServicePicker';
 import { ReleaseSchedules } from './ReleaseSchedules';
+import { ReleaseManifest, type ReleaseDraft } from './ReleaseManifest';
+import { SerialRelease } from './serial-release';
 import type { ReleaseSchedule } from './schedules';
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import {
   Rocket,
   Activity,
   Box,
   CalendarClock,
+  ListOrdered,
   ChevronDown,
   Settings as SettingsIcon,
   Server as ServerIcon,
@@ -33,8 +39,6 @@ import {
   safeConfigJson,
   artifactFor,
   localJar,
-  remoteJar,
-  modeLabel,
   serverAddress,
   statusLabel,
   fmtTime,
@@ -55,8 +59,8 @@ import { copyText } from './clipboard';
 import { createTask, startTask, tick, cancelTask, requestFailure } from './engine';
 import { recordTask, pruneHistory, canRollback as rollbackAllowed, historyLogs } from './records';
 import { CredentialSession } from './credentials';
-import { Badge, Card, Field, FieldHelp, Switch, Modal, Demo, download, hasOpenModal } from './ui';
-import { ServiceForm, ServerForm, TargetForm, BackupFields } from './forms';
+import { Badge, Card, Field, Modal, Demo, download, hasOpenModal } from './ui';
+import { ServiceForm, ServerForm, TargetForm } from './forms';
 import './style.css';
 import { LegacyArtifactReview } from './DataSettings';
 import { SettingsWorkspace, settingsLabels, type SettingsSection } from './SettingsWorkspace';
@@ -97,11 +101,9 @@ import { AppPageHeader } from './design/shell/AppPageHeader';
 import { ServiceSidebar } from './design/shell/ServiceSidebar';
 import { sidebarServices } from './sidebar-services';
 import { Button } from './design/ui/button';
-import { Checkbox } from './design/ui/checkbox';
 import { PageTabs } from './design/ui/page-tabs';
 import { BuildArtifactChoice } from './BuildArtifactChoice';
 import { SegmentedControl } from './design/ui/segmented-control';
-import { CompactStatus } from './compact-list';
 import { workspacePages } from './workspace-model';
 import { newService, newTargetTemplate, emptyDatabase, prototype } from './defaults';
 import {
@@ -146,6 +148,8 @@ const ImageWorkspace = lazy(() => import('./ImageWorkspace').then((module) => ({
 const uid = () => Math.random().toString(36).slice(2, 10);
 const isActive = (t: Task | null) => !!t && ['running', 'cancelling'].includes(t.status);
 const failedStatuses = ['failed', 'rolledback'];
+const emptyRelease = () => null;
+const subscribeEmptyRelease = () => () => {};
 function upsert<T extends { id: string }>(list: T[], v: T) {
   return list.some((x) => x.id === v.id) ? list.map((x) => (x.id === v.id ? v : x)) : [...list, v];
 }
@@ -236,7 +240,16 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   const [schedules, setSchedules] = useState<ReleaseSchedule[]>([]);
   const [deployNote, setDeployNote] = useState<string>();
   const [dialog, setDialog] = useState<Dialog>(null);
-  const [task, setTask] = useState<Task | null>(boot?.task || null);
+  const [currentTask, setTask] = useState<Task | null>(boot?.task || null);
+  const [releaseTask, setReleaseTask] = useState<Task | null>(null);
+  const task = page === 'task' && taskReturnPage === 'release-manifest' ? releaseTask ?? currentTask : currentTask;
+  const [serialRelease] = useState(() => desktop && new SerialRelease(
+    desktop, localStorage, 'deploy-center-release-v1',
+  ));
+  const releaseRun = useSyncExternalStore(serialRelease?.subscribe ?? subscribeEmptyRelease, serialRelease?.get ?? emptyRelease);
+  const [releaseDraft, setReleaseDraft] = useState<ReleaseDraft>([]);
+  const [releasePolicy, setReleasePolicy] = useState<Database['settings']['failurePolicy'] | null>(null);
+  const releasing = releaseRun?.state === 'running' || releaseRun?.state === 'cancelling';
   const [busy, setBusy] = useState(false);
   const [trust, setTrust] = useState<TrustRequest | undefined>(boot?.pendingTrust);
   const [saved, setSaved] = useState(boot?.savedCredentials || []);
@@ -387,6 +400,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       if (event.kind === 'open-service') traySelectService.current(event.serviceId);
       if (event.kind === 'maintenance') refresh();
       if (event.kind === 'task') {
+        if (event.committed) serialRelease?.observe(event.task);
+        setReleaseTask((old) => old?.id === event.task.id ? event.task : old);
         setTask(event.task);
         if (!['running', 'cancelling'].includes(event.task.status)) {
           refresh();
@@ -602,6 +617,11 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     }));
   }
   async function launch(targetList = chosen, rollback?: History, dryRun = false, schedule = false) {
+    if (releasing && !isActive(task)) {
+      setPage('release-manifest');
+      notify('发布清单正在执行，请等待清单结束。');
+      return;
+    }
     if (isActive(task)) {
       openTask();
       notify('请先结束当前任务');
@@ -677,7 +697,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     }
   }
   async function repeatTask(dryRun: boolean) {
-    if (!task || !desktop || isActive(task)) return;
+    if (!task || !desktop || isActive(task) || releasing) return;
     setBusy(true);
     try {
       await desktop.save(db);
@@ -711,7 +731,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     }
   }
   async function retry(onlyFailed: boolean) {
-    if (!task) return;
+    if (!task || releasing) return;
     let snapshotPath = task.artifact.path;
     if (desktop) {
       const availability: SnapshotAvailability = await desktop
@@ -1304,6 +1324,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         task={isActive(task) && <button className="sidebar-link sidebar-task" aria-current={page === 'task' ? 'page' : undefined}
           onClick={() => {
             setInspected(-1);
+            if (page === 'release-manifest') setReleaseTask(currentTask);
             openTask();
           }} aria-label="当前任务">
           <Activity size={16} aria-hidden="true" /><span>当前任务</span><small>{taskProgress(task!)}%</small>
@@ -1311,6 +1332,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         global={[
           ...nav.filter((n) => n.page !== 'deploy').map((n) => ({ ...n })),
           ...(desktop ? [{ page: 'schedules' as const, name: '发布计划', icon: CalendarClock }] : []),
+          ...(desktop ? [{ page: 'release-manifest' as const, name: '发布清单', icon: ListOrdered }] : []),
           ...(desktop ? [{ page: 'images' as const, name: '镜像工具', icon: Container }] : []),
         ].map(({ page: id, name, icon: Icon }) => (
           <button className="sidebar-link" key={id} aria-label={name} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)} title={name}>
@@ -1338,7 +1360,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
             </> : page === 'schedules' ? <Button size="compact" onClick={() => { setServiceTab('deploy'); setPage('deploy'); }}>选择发布目标</Button> : undefined}
           />
         )}
-        <main ref={mainRef} className={page === 'task' || page === 'images' ? 'main-task' : page === 'deploy' ? 'main-service' : 'main-page'}>
+        <main ref={mainRef} className={page === 'task' || page === 'images' ? 'main-task' : page === 'deploy' || page === 'release-manifest' ? 'main-service' : 'main-page'}>
           {!!taskIssues.length && (
             <div className="warning" role="alert">
               <strong>有任务元数据无法读取，原始数据与相关文件已保留</strong>
@@ -1613,116 +1635,21 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                         const s = db.servers.find((server) => server.id === t.serverId);
                         const b = effective(t);
                         const open = expanded.includes(t.id);
-                        return <article key={t.id} className={'deployment-target' + (selected.includes(t.id) ? ' checked' : '')}>
-                          <div className="target-compact deployment-target-main">
-                            <Checkbox aria-label={'选择' + t.name} checked={selected.includes(t.id)} onCheckedChange={() => toggleTarget(t)} />
-                            <span className="record-icon"><Box size={18} strokeWidth={1.5} /></span>
-                            <button className="target-identity" aria-expanded={open} aria-label={(open ? '收起' : '展开') + t.name + '详情'} onClick={() => setExpanded((old) => open ? old.filter((id) => id !== t.id) : [...old, t.id])}>
-                              <strong>{t.name} {t.production && <Badge kind="warn">正式</Badge>}</strong>
-                              <small>{s ? serverAddress(s) + ' · ' + s.name : '未关联服务器'}</small>
-                            </button>
-                            <div className="target-artifact">
-                              <Badge>{modeLabel(t.mode)}</Badge>
-                              <HashValue label="Git 提交" value={t.currentCommit || knownCommit(t.version, t.currentHash)} onCopy={(value) => void copy(value)} />
-                            </div>
-                            <div className="target-health">
-                              <CompactStatus label={t.healthState} tone={/失败/.test(t.healthState) ? 'bad' : /通过/.test(t.healthState) ? 'good' : t.health.type === 'none' ? 'neutral' : 'warn'} />
-                              <time>{cardTime(t.lastDeploy)}</time>
-                            </div>
-                            <div className="target-backup" title={overrides[t.id] ? '本次覆盖' : '目标默认'}>
-                              <Switch label={t.name + '备份'} checked={b.enabled} onChange={(enabled) => changeBackup(t.id, { ...b, enabled })} />
-                            </div>
-                            <div className="deployment-target-actions">
-                              {desktop && <Button variant="ghost" size="icon-compact" aria-label={'查看线上日志 · ' + t.name} title="查看线上日志"
-                                onClick={() => openOperations(t, true)}><ScrollText size={15} /></Button>}
-                              <Button variant="ghost" size="icon-compact" aria-label={'编辑' + t.name} onClick={() => setDialog({ kind: 'target', value: t })}><Pencil size={15} /></Button>
-                              <Button variant="ghost" size="icon-compact" aria-label={'本次策略 · ' + t.name} aria-expanded={open}
-                                onClick={() => setExpanded((old) => open ? old.filter((id) => id !== t.id) : [...old, t.id])}><ChevronDown size={15} /></Button>
-                            </div>
-                          </div>
-                          {open && <div className="target-override">
-                            <p className="path">{remoteJar(t)}</p>
-                            <HashValue label="JAR 指纹" value={t.currentHash} onCopy={(value) => void copy(value)} />
-                              <BackupFields value={b} onChange={(x) => changeBackup(t.id, x)} />
-                              {desktop && (
-                                <>
-                                  <Switch
-                                    label="本次成功后观察日志"
-                                    disabled={t.mode === 'jar' && !t.appLogPath}
-                                    checked={
-                                      (observationOverrides[t.id] || t.observation)?.enabled ||
-                                      false
-                                    }
-                                    onChange={(enabled) =>
-                                      setObservationOverrides((old) => ({
-                                        ...old,
-                                        [t.id]: {
-                                          duration: (old[t.id] || t.observation)?.duration || 60,
-                                          enabled,
-                                        },
-                                      }))
-                                    }
-                                    description={
-                                      t.mode === 'jar' && !t.appLogPath
-                                        ? '启用前需在目标配置中填写应用日志路径。'
-                                        : '健康未验证且部署完成时，自动打开只读日志观察。'
-                                    }
-                                  />
-                                  <Field label="本次观察时间（秒）">
-                                    <input
-                                      type="number"
-                                      min="10"
-                                      max="3600"
-                                      value={
-                                        (observationOverrides[t.id] || t.observation)?.duration ??
-                                        60
-                                      }
-                                      onChange={(e) =>
-                                        setObservationOverrides((old) => ({
-                                          ...old,
-                                          [t.id]: {
-                                            enabled: (old[t.id] || t.observation)?.enabled || false,
-                                            duration: Number(e.target.value),
-                                          },
-                                        }))
-                                      }
-                                    />
-                                  </Field>
-                                  {observationOverrides[t.id] && (
-                                    <Button
-                                      variant="link" size="compact"
-                                      onClick={() =>
-                                        setObservationOverrides((old) => {
-                                          const next = { ...old };
-                                          delete next[t.id];
-                                          return next;
-                                        })
-                                      }
-                                    >
-                                      恢复目标默认观察设置
-                                    </Button>
-                                  )}
-                                </>
-                              )}
-
-                              {!b.enabled && (
-                                <p className="warning">未启用备份，失败时不能依赖本次备份恢复。</p>
-                              )}
-                              <Button
-                                variant="link" size="compact"
-                                onClick={() =>
-                                  setOverrides((old) => {
-                                    const next = { ...old };
-                                    delete next[t.id];
-                                    return next;
-                                  })
-                                }
-                              >
-                                恢复该目标默认策略
-                              </Button>
-
-                          </div>}
-                        </article>;
+                        const toggleDetails = () => setExpanded((old) => open ? old.filter((id) => id !== t.id) : [...old, t.id]);
+                        return <DeploymentTargetRow key={t.id} target={t} server={s}
+                          checked={selected.includes(t.id)} onChecked={() => toggleTarget(t)} open={open} onOpen={toggleDetails}
+                          backup={b} onBackup={(value) => changeBackup(t.id, value)} overridden={!!overrides[t.id]}
+                          onRestore={() => setOverrides((old) => { const next = { ...old }; delete next[t.id]; return next; })}
+                          onCopy={(value) => void copy(value)} onEdit={() => setDialog({ kind: 'target', value: t })}
+                          onLogs={desktop ? () => openOperations(t, true) : undefined}>
+                          {desktop && <TargetObservationOverride target={t} override={observationOverrides[t.id]}
+                            onChange={(value) => setObservationOverrides((old) => {
+                              const next = { ...old };
+                              if (value) next[t.id] = value;
+                              else delete next[t.id];
+                              return next;
+                            })} />}
+                        </DeploymentTargetRow>;
                       })}
                       {!targets.length && <div className="empty service-empty"><Box size={25} strokeWidth={1.4} /><strong>还没有部署目标</strong><span>关联服务器后，配置这个服务的远程部署位置。</span>
                         <Button variant="neutral" onClick={() => db.servers.length ? setDialog({kind:'target',value:newTarget()}) : setPage('servers')}>{db.servers.length ? '添加部署目标' : '配置服务器'}</Button></div>}
@@ -1755,18 +1682,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                   {blockReason && <p className="deployment-block" role="status">{blockReason}</p>}
                   <div className="deployment-footer" aria-label="部署操作">
                     <div className="deployment-count grow"><strong>已选 {chosen.length} 个目标</strong><small>{build === 'rebuild' ? '构建一次' : '使用现有 JAR'} · {chosen.filter((t) => effective(t).enabled).length} 个开启备份</small></div>
-                    <div className="failure-policy">
-                      <Button variant="link" size="compact" className="failure-policy-reset"
-                        hidden={failureOverride === null}
-                        onClick={() => setFailureOverride(null)}>恢复默认</Button>
-                      <label className="sr-only" htmlFor="deployment-failure-policy">某个目标失败后</label>
-                      <select id="deployment-failure-policy" value={failureOverride ?? db.settings.failurePolicy}
-                        onChange={(event) => setFailureOverride(event.target.value as Database['settings']['failurePolicy'])}>
-                        <option value="stop">失败后停止后续目标</option>
-                        <option value="continue">失败后继续其他目标</option>
-                      </select>
-                      <FieldHelp label="某个目标失败后" text="此处的选择只作用于本次部署。可在「设置 → 部署与构建」修改默认策略。" />
-                    </div>
+                    <DeployFailurePolicy value={failureOverride} fallback={db.settings.failurePolicy} onChange={setFailureOverride} />
                     {desktop && <Button variant="neutral" disabled={busy || isActive(task) || !!blockReason || !chosen.length} onClick={() => void launch(chosen, undefined, true)}>试运行（远程只读）</Button>}
                     <Button disabled={busy || (!isActive(task) && (!!blockReason || !chosen.length || (!desktop && build === 'existing' && !artifact.exists)))} onClick={() => void launch()}>
                       <Rocket size={15} />{isActive(task) ? '查看当前任务' : '部署'}
@@ -1889,6 +1805,20 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
             </>
           )}
           {page === 'history' && renderHistory()}
+          {page === 'release-manifest' && desktop && serialRelease && (
+            <ReleaseManifest api={desktop} db={db} serial={serialRelease} run={releaseRun}
+              draft={releaseDraft} setDraft={setReleaseDraft} saved={saved} board={serviceScrollRef}
+              policy={releasePolicy} onPolicy={setReleasePolicy}
+              blocked={busy || isActive(currentTask) || !!recovery || unfinished.length > 0}
+              onCopy={(value) => void copy(value)}
+              onEditTarget={(value) => setDialog({ kind: 'target', value })}
+              onTask={(id) => void nativeAction(async () => {
+                const value = currentTask?.id === id ? currentTask : await desktop!.readTask(id);
+                setReleaseTask(value);
+                setInspected(-1);
+                openTask('release-manifest');
+              })} />
+          )}
           {page === 'images' && desktop && (
             <Suspense fallback={<p className="note workspace-panel" role="status">正在打开镜像工具…</p>}>
               <ImageWorkspace api={desktop} db={db} serviceId={serviceId} saved={saved}
@@ -1930,7 +1860,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                   initialFollow={desktopPreferences.followLogs}
                   inspected={viewedTarget}
                   setInspected={setInspected}
-                  backLabel={taskReturnPage === 'schedules' ? '返回发布计划' : taskReturnPage === 'history' ? '返回部署历史' : taskReturnPage === 'deploy' ? '返回部署' : '返回'}
+                  backLabel={taskReturnPage === 'release-manifest' ? '返回发布清单' : taskReturnPage === 'schedules' ? '返回发布计划' : taskReturnPage === 'history' ? '返回部署历史' : taskReturnPage === 'deploy' ? '返回部署' : '返回'}
                   onBack={returnFromTask}
                   onHealth={db.targets.some((target) => target.id === task.targets[viewedTarget]?.target.id) ? () => {
                     const target = db.targets.find((target) => target.id === task.targets[viewedTarget].target.id)!;
@@ -2463,7 +2393,9 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                     throw e;
                   }
                 } else {
-                  setTask(await desktop!.recover(nativeDialog.recover!.id, values));
+                  const recovered = await desktop!.recover(nativeDialog.recover!.id, values);
+                  setTask(recovered);
+                  if (releaseTask?.id === recovered.id) setReleaseTask(recovered);
                   setInspected(-1);
                   openTask();
                   setNativeDialog(null);

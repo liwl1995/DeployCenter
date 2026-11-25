@@ -71,6 +71,10 @@ test.beforeEach(async ({}, info) => {
     healthState: '未配置健康检查',
   }));
   db.lastTargets = [db.targets[0].id];
+  if (info.title.startsWith('串行发布清单')) {
+    db.targets[1].serviceId = db.services[1].id;
+    db.targets[1].production = true;
+  }
   if (info.title.startsWith('部署统计')) db.targets[1].serverId = db.servers[1].id;
   const store = new Storage(dir, {
     encrypt: async () => {
@@ -285,6 +289,125 @@ test('历史默认优先记录，筛选弹层支持应用取消与日期嵌套�
     await expect(page.locator('.history-task')).toHaveCount(12);
   }
 });
+test('串行发布清单复用部署控件，确认后串行执行并进入完整任务页', async () => {
+  test.setTimeout(120_000);
+  const page = await app.firstWindow();
+  const db = (await page.evaluate(() => window.deployCenter!.load())).database;
+  const tasks = [0, 1].map((index) => createTask(db, db.services[index], [db.targets[index]], {}, 'rebuild'));
+  await app.evaluate(({ ipcMain, BrowserWindow }, fixture) => {
+    const prepared = new Map();
+    const active = new Map();
+    let number = 0;
+    const mock = (name: string, handler: (...args: any[]) => unknown) => {
+      ipcMain.removeHandler('deploy:' + name);
+      ipcMain.handle('deploy:' + name, (_event, ...args) => handler(...args));
+    };
+    const emit = (task: any, committed = false) => BrowserWindow.getAllWindows()[0].webContents.send('deploy:event', { kind: 'task', task, committed });
+    mock('prepare', (request) => {
+      const task = structuredClone(fixture.find((item) => item.service.id === request.serviceId));
+      task.id = 'DC-release-smoke-' + number++;
+      task.build = request.build;
+      task.note = request.note;
+      for (const item of task.targets) item.backup = request.overrides[item.target.id] ?? item.backup;
+      prepared.set(task.id, task);
+      return { token: task.id, task };
+    });
+    mock('start', (token, _credentials, approval) => {
+      if ([...active.values()].some((item) => item.status === 'running')) throw new Error('已有任务正在执行');
+      const task = prepared.get(token);
+      for (const item of task.targets) {
+        if (item.target.production && approval.productionNames[item.target.id] !== item.target.name)
+          throw new Error('正式目标确认不完整');
+      }
+      active.set(task.id, task);
+      emit(task);
+      return task;
+    });
+    mock('read-task', (id) => {
+      const task = active.get(id);
+      if (!task) throw new Error('任务不存在');
+      return task;
+    });
+    Object.assign(globalThis, { finishReleaseFixture: (serviceId: string, committed: boolean) => {
+      const task = [...active.values()].find((item) => item.service.id === serviceId);
+      if (!task) throw new Error('服务没有任务');
+      task.status = 'success';
+      task.targets.forEach((item: any) => { item.status = 'success'; });
+      task.elapsed = 2;
+      emit(task, committed);
+    }});
+  }, tasks);
+  const nav = page.getByRole('navigation', { name: '主导航' });
+  await nav.getByRole('button', { name: '发布清单', exact: true }).click();
+  await size(900, 600);
+  const manifest = page.getByRole('region', { name: '发布清单', exact: true });
+  await manifest.getByRole('button', { name: '添加服务', exact: true }).click();
+  const add = page.getByRole('dialog', { name: '添加服务' });
+  await add.getByRole('checkbox', { name: db.services[0].name, exact: true }).check();
+  await add.getByRole('checkbox', { name: db.services[1].name, exact: true }).check();
+  await add.getByRole('button', { name: '加入清单' }).click();
+  const production = manifest.getByRole('checkbox', { name: '选择' + db.targets[1].name });
+  await expect(production).not.toBeChecked();
+  await manifest.getByRole('checkbox', { name: '选择' + db.targets[0].name }).check();
+  await production.check();
+  await expect(manifest.getByRole('button', { name: /查看线上日志|上移|下移/ })).toHaveCount(0);
+  await manifest.getByRole('button', { name: '展开' + db.targets[0].name + '详情' }).click();
+  await expect(manifest.getByRole('textbox', { name: '备份目录', exact: true })).toBeVisible();
+  await manifest.getByRole('button', { name: '收起' + db.targets[0].name + '详情' }).click();
+  const footer = manifest.getByLabel('发布清单操作');
+  await expect(footer.getByRole('combobox', { name: '某个服务失败后' })).toBeVisible();
+  await expect(footer.getByRole('button', { name: '下一步：确认' })).toBeInViewport({ ratio: 1 });
+  for (const theme of ['light', 'dark']) {
+    await page.getByRole('button', { name: '设置', exact: true }).click();
+    await page.getByRole('tab', { name: '通用', exact: true }).click();
+    await page.getByRole('group', { name: '界面主题' }).getByRole('button', { name: theme === 'light' ? '浅色' : '深色' }).click();
+    await page.getByRole('button', { name: '返回应用', exact: true }).click();
+    await nav.getByRole('button', { name: '发布清单', exact: true }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    for (const zoom of [1.25, 1.5]) {
+      await app.evaluate(({ BrowserWindow }, factor) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(factor), zoom);
+      await expect(footer.getByRole('button', { name: '下一步：确认' })).toBeInViewport({ ratio: 1 });
+      await boundaries();
+      await expect.poll(() => manifest.locator('.release-board').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+    }
+  }
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1));
+  await expect(production).toBeChecked();
+  await footer.getByRole('button', { name: '下一步：确认' }).click();
+  const start = footer.getByRole('button', { name: '确认并开始发布' });
+  await expect(start).toBeDisabled();
+  await expect(manifest.locator('.confirm-target').first()).toContainText('远程文件');
+  await expect(manifest.getByRole('checkbox', { name: /已核对/ })).toHaveCount(0);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1.5));
+  await expect(start).toBeInViewport({ ratio: 1 });
+  await expect.poll(() => manifest.locator('.release-board').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1));
+  await manifest.getByPlaceholder(db.targets[1].name, { exact: true }).fill(db.targets[1].name);
+  await expect(start).toBeEnabled();
+  await expect(start).toBeInViewport({ ratio: 1 });
+  await start.click();
+  const firstLog = manifest.getByRole('button', { name: '查看 ' + db.services[0].name + ' 执行日志' });
+  const secondLog = manifest.getByRole('button', { name: '查看 ' + db.services[1].name + ' 执行日志' });
+  await expect(firstLog).toBeVisible();
+  await expect(secondLog).toHaveCount(0);
+  await firstLog.click();
+  await expect(page.getByRole('heading', { name: '执行日志' })).toBeVisible();
+  const finish = (id: string, committed = true) => app.evaluate((_, args) =>
+    (globalThis as typeof globalThis & { finishReleaseFixture: (serviceId: string, committed: boolean) => void })
+      .finishReleaseFixture(args.id, args.committed), { id, committed });
+  await finish(db.services[0].id, false);
+  await expect(page.getByRole('heading', { name: new RegExp(db.services[0].name) })).toBeVisible();
+  await page.getByRole('button', { name: '返回发布清单' }).click();
+  await expect(secondLog).toHaveCount(0);
+  await finish(db.services[0].id);
+  await expect(secondLog).toBeVisible();
+  await finish(db.services[1].id);
+  await expect(manifest.getByRole('status').getByText('全部成功')).toBeVisible();
+  await boundaries();
+  await footer.getByRole('button', { name: '返回清单配置' }).click();
+  await expect(production).not.toBeChecked();
+});
+
 test('部署统计共享筛选，键盘可切换，在两种主题与高缩放下保持可用', async () => {
   test.setTimeout(120_000);
   const page = await app.firstWindow();

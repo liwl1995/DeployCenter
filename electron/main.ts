@@ -892,6 +892,7 @@ async function boot() {
       recovery: storage.recovery,
       task: storage.latestTask(),
       unfinished: storage.unfinished(),
+      deploymentActive: controller.active(),
       dataDir,
       savedCredentials: storage.credentialIds(),
       encryptionAvailable: await safeStorage.isAsyncEncryptionAvailable(),
