@@ -13,7 +13,7 @@ import { Checkbox } from './design/ui/checkbox';
 import { confirmProduction, productionNames } from './presentation';
 import { seconds, type Database, type Target, type Task } from './model';
 import type { DesktopAPI } from './platform';
-import type { ReleasePreview, ReleaseRequest, ReleaseRow, ReleaseRun, SerialRelease } from './serial-release';
+import type { ReleaseRequest, ReleaseReview, ReleaseRow, ReleaseRun } from './serial-release';
 import { Badge, Card, Field, Modal } from './ui';
 
 export type ReleaseDraft = Omit<ReleaseRequest, 'failurePolicy'>[];
@@ -22,11 +22,12 @@ const labels: Record<ReleaseRow['state'], string> = {
   failed: '失败', cancelled: '已取消', unknown: '待核实', skipped: '未执行',
 };
 
-export function ReleaseManifest({ api, db, serial, run, draft, setDraft, saved, blocked, onTask, onCopy, board, policy, onPolicy, onEditTarget }: {
+export function ReleaseManifest({ api, db, run, showRun, setShowRun, draft, setDraft, saved, blocked, onTask, onCopy, board, policy, onPolicy, onEditTarget }: {
   api: DesktopAPI;
   db: Database;
-  serial: SerialRelease;
   run: ReleaseRun | null;
+  showRun: boolean;
+  setShowRun: (value: boolean) => void;
   draft: ReleaseDraft;
   setDraft: (value: ReleaseDraft | ((old: ReleaseDraft) => ReleaseDraft)) => void;
   saved: string[];
@@ -38,8 +39,8 @@ export function ReleaseManifest({ api, db, serial, run, draft, setDraft, saved, 
   policy: Database['settings']['failurePolicy'] | null;
   onPolicy: (value: Database['settings']['failurePolicy'] | null) => void;
 }) {
-  const [review, setReview] = useState<ReleasePreview[]>([]);
-  const [showRun, setShowRun] = useState(!!run);
+  const [confirmation, setConfirmation] = useState<ReleaseReview>();
+  const review = confirmation?.previews ?? [];
   const [resume, setResume] = useState(false);
   const [expanded, setExpanded] = useState<string[]>([]);
   const [modal, setModal] = useState<'add' | 'cancel' | 'end'>();
@@ -93,10 +94,10 @@ export function ReleaseManifest({ api, db, serial, run, draft, setDraft, saved, 
       await api.save(db);
       const requests = restarting ? pending.map((item) => item.request) :
         draft.map((row) => ({ ...row, failurePolicy: defaults }));
-      const next = await serial.preview(requests);
+      const next = await api.previewRelease(requests);
       clearApproval();
       setResume(restarting);
-      setReview(next);
+      setConfirmation(next);
       board.current?.scrollTo(0, 0);
     });
   }
@@ -319,13 +320,14 @@ export function ReleaseManifest({ api, db, serial, run, draft, setDraft, saved, 
           <Button disabled={!valid || busy || blocked} onClick={() => prepare()}>下一步：确认</Button>
         </>}
         {step === 1 && <>
-          <Button variant="neutral" onClick={() => { setReview([]); clearApproval(); setError(''); board.current?.scrollTo(0, 0); }}>
+          <Button variant="neutral" onClick={() => { setConfirmation(undefined); clearApproval(); setError(''); board.current?.scrollTo(0, 0); }}>
             <ArrowLeft size={15} />{resume ? '返回清单' : '返回修改'}
           </Button>
           <Button disabled={!approved || busy || blocked} onClick={() => void action(async () => {
-            serial.begin(review, credentials, { productionWord: '', productionNames: names, allowWeak, protectCurrent: true }, confirmedPolicy, resume);
+            if (!confirmation) return;
+            await api.startRelease(confirmation.token, credentials, { productionWord: '', productionNames: names, allowWeak, protectCurrent: true }, confirmedPolicy, resume);
             clearApproval();
-            setReview([]);
+            setConfirmation(undefined);
             setShowRun(true);
             board.current?.scrollTo(0, 0);
           })}><Rocket size={15} />确认并开始发布</Button>
@@ -334,7 +336,7 @@ export function ReleaseManifest({ api, db, serial, run, draft, setDraft, saved, 
         {step === 2 && run?.state === 'cancelling' && <Button variant="neutral" disabled>正在取消</Button>}
         {step === 2 && run?.state === 'paused' && <>
           <Button variant="danger" disabled={busy} onClick={() => setModal('end')}>结束清单</Button>
-          {unresolved ? <Button disabled={busy} onClick={() => void action(() => serial.check())}>刷新核实结果</Button>
+          {unresolved ? <Button disabled={busy} onClick={() => void action(() => api.checkRelease())}>刷新核实结果</Button>
             : <Button disabled={!pending.length || busy || blocked} onClick={() => prepare(true)}>复核后续服务</Button>}
         </>}
         {step === 2 && run?.state === 'done' && <Button onClick={() => {
@@ -366,8 +368,7 @@ export function ReleaseManifest({ api, db, serial, run, draft, setDraft, saved, 
           <Button variant="neutral" onClick={() => setModal(undefined)}>返回</Button>
           <Button variant="danger" onClick={() => {
             setModal(undefined);
-            if (modal === 'cancel') void action(() => serial.cancel());
-            else serial.end();
+            void action(() => modal === 'cancel' ? api.cancelRelease() : api.endRelease());
           }}>{modal === 'cancel' ? '确认取消' : '确认结束'}</Button>
         </>}>
         <p>{modal === 'cancel' ? '当前任务会在安全点停下，后续服务不会启动。已完成的结果会保留。'

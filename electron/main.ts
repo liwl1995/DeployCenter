@@ -42,6 +42,7 @@ import { BackupManager } from './backup-manager';
 import { WorkbenchRecovery } from './workbench-recovery';
 import { workbenchHeader, workbenchPath, workbenchScope } from './workbench';
 import { ReleaseScheduler, validScheduleTime, scheduleConfiguration, schedulePins } from './scheduler';
+import { SerialRelease } from './serial-release';
 import { pendingSchedule } from '../src/schedules';
 import { ServiceOperations } from './service-operations';
 import { confirmProduction } from '../src/presentation';
@@ -191,6 +192,7 @@ let migrating = false,
   dataNotice: string | undefined;
 const readOnlyDuringMigration = new Set([
   'load',
+  'release-state',
   'operations-list',
   'startup-painted',
   'data-directory',
@@ -410,6 +412,8 @@ async function boot() {
     });
     const approvedImagePaths = new Map<string, Set<string>>();
     let operations: ServiceOperations;
+    let release: SerialRelease | undefined;
+    const releaseBusy = () => release?.active() === true;
     controller = new Controller(
       storage,
       (onMessage, onExit) => {
@@ -422,8 +426,12 @@ async function boot() {
         child.stderr?.on('data', () => {});
         return { send: (value) => child.postMessage(value), close: () => child.kill() };
       },
-      emit,
+      (event) => {
+        if (event.kind === 'task' && event.committed) release?.observe(event.task);
+        emit(event);
+      },
       {
+        releaseActive: releaseBusy,
         operationBlock: (task) =>
           operations?.isBusy() ? '服务运维正在执行，请等待结束' :
             task.dryRun ? undefined : task.targets.map((run) => operations?.reason(workbenchScope(run.target, run.server))).find(Boolean),
@@ -456,7 +464,7 @@ async function boot() {
         pins: storage.pins(),
         trust: (r, k) => controller.trust.request(r, k),
       }),
-      () => !controller.active() && !backups.isBusy() && !storage.artifacts.isBusy(),
+      () => !controller.active() && !releaseBusy() && !backups.isBusy() && !storage.artifacts.isBusy(),
     );
     operations = new ServiceOperations(
       storage,
@@ -471,12 +479,42 @@ async function boot() {
           }),
         };
       },
-      () => controller.active() || scheduler?.isDispatching() ? '有部署、回滚或定时发布任务正在执行' :
+      () => controller.active() || releaseBusy() || scheduler?.isDispatching() ? '有部署、回滚或定时发布任务正在执行' :
         migrating || pendingRestart || backups.isBusy() || workbench.isBusy() ? '其他远程维护或数据迁移正在进行' :
         storage.recovery || storage.hasUnreadableTasks() || storage.unfinished().length ? '请先核实中断部署或恢复记录' :
         undefined,
       (record) => emit({ kind: 'operation', record: { ...record } }),
     );
+    const assertNoRelease = () => {
+      if (releaseBusy()) throw new Error('串行发布清单正在执行，请等待或取消清单');
+    };
+    const prepareDeployment = (value: unknown, owned = false) => {
+      const request = z.object({ jarPath: z.string().optional() }).passthrough().parse(value);
+      if (
+        request.jarPath &&
+        !approvedJars.has(path.resolve(request.jarPath)) &&
+        !storage.database().services.some(
+          (s) => path.resolve(s.root, s.jarDir, s.jarName) === path.resolve(request.jarPath!),
+        ) &&
+        !storage.artifacts.sources().some((s) => s.path === request.jarPath)
+      )
+        throw new Error('请通过系统对话框选择 JAR，或使用服务配置的产物');
+      return controller.prepare(value, owned);
+    };
+    release = new SerialRelease({
+      prepare: prepareDeployment,
+      start: (token, credentials, approval) => controller.start(token, credentials, approval, undefined, true),
+      cancel: (taskId) => controller.cancel(taskId),
+      readTask: (taskId) => storage.task(taskId),
+      active: () => controller.active(),
+      unfinished: () => storage.unfinished().length > 0,
+      blocked: () =>
+        migrating || pendingRestart ? '请先完成数据迁移并重启' :
+        updater?.isInstalling() ? '正在准备安装更新' :
+        scheduler?.isDispatching() ? '定时发布正在启动，请稍后再操作' :
+        imageJobs.busy() || backups.isBusy() || workbench.isBusy() || operations.isBusy() || storage.artifacts.isBusy()
+          ? '请等待镜像任务、远程维护或本地清理结束' : undefined,
+    }, (run) => storage.saveReleaseRun(run), (run) => emit({ kind: 'release-run', run }), storage.releaseRun());
     const scheduleNotices = new Map<string, string>();
     const scheduleChanged = () => {
       const plans = storage.schedules();
@@ -528,6 +566,7 @@ async function boot() {
       () =>
         migrating ||
         pendingRestart ||
+        releaseBusy() ||
         !!updater?.isInstalling() ||
         imageJobs.usingMaven() ||
         backups.isBusy() ||
@@ -735,6 +774,12 @@ async function boot() {
     win.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) =>
       callback(false),
     );
+    const blockedDuringRelease = new Set([
+      'prepare', 'start', 'recover', 'create-schedule', 'reschedule',
+      'resolve-workbench', 'apply-backups', 'reconcile-backup', 'takeover-lock',
+      'operations-run', 'operations-settle', 'image-start-build', 'image-start-import',
+      'import-config', 'preview-cleanup', 'apply-cleanup', 'migrate-directory', 'restart', 'remove-old-data',
+    ]);
     const handle = (name: string, fn: (...args: unknown[]) => unknown) =>
       ipcMain.handle('deploy:' + name, (event, ...args) => {
         if (
@@ -752,6 +797,7 @@ async function boot() {
               ? '数据迁移已完成，请先重启后再修改配置或部署。'
               : '正在迁移数据，暂时不能执行其他操作。',
           );
+        if (blockedDuringRelease.has(name)) assertNoRelease();
         if (storage.artifacts.isBusy() && ['prepare', 'start', 'recover', 'create-schedule', 'reschedule'].includes(name))
           throw new Error('正在整理本地产物，请完成后重新准备部署');
         if (imageJobs.usingMaven() && ['prepare', 'start', 'create-schedule', 'reschedule'].includes(name))
@@ -828,7 +874,7 @@ async function boot() {
       installBlocked: () => {
         if (!installed)
           return '请在 Windows x64 安装版中安装更新';
-        if (controller.active() || storage.unfinished().length)
+        if (controller.active() || releaseBusy() || storage.unfinished().length)
           return '请先等待部署结束，并核实尚未结束的任务，再安装更新';
         if (migrating || pendingRestart) return '请先完成数据迁移并重启，再安装更新';
         if (imageJobs.busy()) return '镜像任务正在执行，请等待完成后再安装更新';
@@ -904,6 +950,7 @@ async function boot() {
       darkTheme: nativeTheme.shouldUseDarkColors,
       preferences: preferences.preferences,
       update: updater?.state(),
+      releaseRun: release.get(),
     }));
     handle('save', (value) => {
       const config = validateDatabase(value);
@@ -913,21 +960,15 @@ async function boot() {
       return saved;
     });
     handle('confirm-recovery', () => storage.confirmRecovery());
-    handle('prepare', (value) => {
-      const request = z.object({ jarPath: z.string().optional() }).passthrough().parse(value);
-      if (
-        request.jarPath &&
-        !approvedJars.has(path.resolve(request.jarPath)) &&
-        !storage
-          .database()
-          .services.some(
-            (s) => path.resolve(s.root, s.jarDir, s.jarName) === path.resolve(request.jarPath!),
-          ) &&
-        !storage.artifacts.sources().some((s) => s.path === request.jarPath)
-      )
-        throw new Error('请通过系统对话框选择 JAR，或使用服务配置的产物');
-      return controller.prepare(value);
-    });
+    handle('prepare', (value) => prepareDeployment(value));
+    handle('release-state', () => release.get());
+    handle('release-import-legacy', (value) => release.importLegacy(text(value, 5 * 1024 * 1024)));
+    handle('release-preview', (requests) => release.preview(requests));
+    handle('release-start', (token, credentials, approval, policy, resume) =>
+      release.begin(text(token, 100), credentials, approval, policy, z.boolean().parse(resume)));
+    handle('release-check', () => release.check());
+    handle('release-cancel', () => release.cancel());
+    handle('release-end', () => release.end());
     handle('start', (token, values, approval) =>
       controller.start(text(token, 100), values, approval),
     );
@@ -985,7 +1026,10 @@ async function boot() {
       storage.saveSchedule(plan);
       publishSchedules();
     });
-    handle('cancel', (value) => controller.cancel(id(value)));
+    handle('cancel', (value) => {
+      const taskId = id(value);
+      return release.ownsTask(taskId) ? release.cancel() : controller.cancel(taskId);
+    });
     handle('recover', (value, creds) => controller.recover(id(value), creds));
     const backupCredential = async (targetId: string, supplied: unknown) => {
       const target = storage.database().targets.find((t) => t.id === targetId),
@@ -1410,6 +1454,7 @@ async function boot() {
         });
       try {
         await transport.connect();
+        assertNoRelease();
         if (!/^[A-Za-z0-9_-]+$/.test(entry.owner)) throw new Error('锁持有者无效，请人工核实');
         await mustExec(
           transport,
@@ -1515,6 +1560,7 @@ async function boot() {
         ].join('\n'),
       });
       if (confirmation.response !== 1) return null;
+      assertNoRelease();
       storage.importDatabase(value, real);
       onlineLogs.reconcile(value);
       emit({ kind: 'database', database: storage.database() });
@@ -1795,23 +1841,24 @@ async function boot() {
         });
         return;
       }
-      if (!controller.active() && !confirmedScheduleExit && storage.schedules().some(pendingSchedule)) {
+      if (!controller.active() && !releaseBusy() && !confirmedScheduleExit && storage.schedules().some(pendingSchedule)) {
         event.preventDefault();
         void confirmScheduleExit().then((confirmed) => { if (confirmed) app.quit(); });
         return;
       }
-      if (controller.active()) {
+      if (controller.active() || releaseBusy()) {
         event.preventDefault();
         void dialog
           .showMessageBox(win!, {
             type: 'warning',
             buttons: ['继续运行', '请求取消任务'],
             defaultId: 0,
-            message: '部署仍在执行',
+            message: releaseBusy() ? '串行发布清单仍在执行' : '部署仍在执行',
             detail: '切换期间不会强制结束远端任务。可请求安全取消，完成后再关闭软件。',
           })
           .then((result) => {
             if (result.response === 1) {
+              if (releaseBusy()) { void release.cancel(); return; }
               const task = storage.latestTask();
               if (task) controller.cancel(task.id);
             }

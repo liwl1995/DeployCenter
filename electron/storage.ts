@@ -10,6 +10,7 @@ import {
 } from '../src/model';
 import { recordTask, pruneHistory } from '../src/records';
 import type { ReleaseSchedule } from '../src/schedules';
+import type { ReleaseRun } from '../src/serial-release';
 import type { Pin } from './contracts';
 import type { TaskSummary } from '../src/platform';
 import { summarizeTask, importedSummaries } from '../src/history-model';
@@ -251,6 +252,15 @@ export class Storage {
   isOpen() {
     return this.sql.open;
   }
+  releaseRun(): ReleaseRun | undefined {
+    const row = this.sql.prepare("SELECT value FROM app_meta WHERE key='serial-release'").get() as { value: string } | undefined;
+    return row ? JSON.parse(row.value) as ReleaseRun : undefined;
+  }
+  saveReleaseRun(run: ReleaseRun) {
+    this.sql.prepare(
+      "INSERT INTO app_meta VALUES ('serial-release',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    ).run(JSON.stringify(run));
+  }
   schedules(): ReleaseSchedule[] {
     if (!this.sql.open) return structuredClone(this.scheduleCache);
     this.scheduleCache = (
@@ -430,6 +440,11 @@ export class Storage {
     this.state.history = this.state.history.filter((h) => Date.parse(h.time) >= cutoff);
     this.state = pruneHistory(this.state);
     const referenced = new Set(this.state.history.map((h) => h.taskId));
+    const release = this.releaseRun();
+    if (release && release.state !== 'done') {
+      // 核实期间仍需读取当初的任务结果，包括已经被历史保留规则移出列表的记录。
+      for (const row of release.rows) if (row.taskId) referenced.add(row.taskId);
+    }
     for (const plan of this.schedules()) {
       // 计划详情和确认记录依赖准备日志；活动计划还需保护产物引用。
       referenced.add(plan.preparationId);

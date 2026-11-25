@@ -82,6 +82,7 @@ export class Controller {
       resolveBuild?: typeof resolveBuild;
       onFinished?: (task: Task, credentials: Record<string, string>) => void;
       operationBlock?: (task: Task) => string | undefined;
+      releaseActive?: () => boolean;
     } = {},
   ) {
     this.trust = new TrustBroker(storage, emit);
@@ -89,11 +90,15 @@ export class Controller {
   active() {
     return !!this.worker;
   }
+  private assertRelease(owned = false) {
+    if (!owned && this.options.releaseActive?.()) throw new Error('串行发布清单正在执行，请等待或取消清单');
+  }
   private assertOperations(task: Task) {
     const reason = this.options.operationBlock?.(task);
     if (reason) throw new Error(reason);
   }
-  async prepare(value: unknown) {
+  async prepare(value: unknown, owned = false) {
+    this.assertRelease(owned);
     if (this.storage.recovery) throw new Error('请先确认配置恢复，禁止覆盖原始数据');
     if (this.storage.hasUnreadableTasks())
       throw new Error('有无法读取的任务记录，请先检查数据库备份并核实远端状态。');
@@ -289,7 +294,9 @@ export class Controller {
     values: unknown,
     rawApproval: unknown,
     schedule?: { at: number; replaces?: string },
+    owned = false,
   ) {
+    this.assertRelease(owned);
     if (schedule) validScheduleTime(schedule.at);
     if (this.active()) throw new Error('已有任务正在执行');
     const pending = this.prepared.get(token);
@@ -347,6 +354,7 @@ export class Controller {
     }
     const credentials = await this.credentials(task, values);
     // 读取凭据期间配置可能被另一请求更新，不能发布未经确认的新配置。
+    this.assertRelease(owned);
     if (this.active()) throw new Error('已有任务正在执行');
     this.assertOperations(task);
     if (schedule && scheduleConfiguration(this.storage.database(), task) !== pending.configuration)
@@ -401,6 +409,7 @@ export class Controller {
   }
   /** 计划只引用准备好的快照，到点不再解析构建环境或读取原始 JAR。 */
   async startScheduled(plan: ReleaseSchedule) {
+    this.assertRelease();
     if (this.active()) throw new Error('已有任务正在执行');
     if (this.storage.recovery || this.storage.hasUnreadableTasks())
       throw new Error('请先核实本地恢复记录');
@@ -430,6 +439,7 @@ export class Controller {
     task.preparation = true;
     task.scheduleId = plan.id;
     const credentials = await this.credentials(task, {});
+    this.assertRelease();
     if (this.active()) throw new Error('已有任务正在执行');
     this.assertOperations(task);
     if (
@@ -496,6 +506,7 @@ export class Controller {
     this.emit({ kind: 'schedules', schedules: this.storage.schedules() });
   }
   async recover(taskId: string, values: unknown) {
+    this.assertRelease();
     if (this.active()) throw new Error('请先结束当前任务');
     const task = this.storage.task(taskId);
     if (task?.preparation) throw new Error('准备任务未执行远端部署，请在发布计划中重新准备');
@@ -532,6 +543,7 @@ export class Controller {
       { ...task, targets: task.targets.filter((r) => r.remote && r.remote.phase !== 'complete') },
       values,
     );
+    this.assertRelease();
     if (this.active()) throw new Error('已有任务正在执行');
     this.assertOperations(task);
     this.activeCredentials = credentials;
@@ -576,8 +588,9 @@ export class Controller {
       this.emit({ kind: 'database', database: this.storage.database() });
       worker?.close();
     };
-    this.worker = this.factory(
+    const worker: WorkerHandle = this.factory(
       (message) => {
+        if (this.worker !== worker) return;
         if (message.kind === 'schedule-dispatch') {
           let error: string | undefined;
           try {
@@ -670,7 +683,8 @@ export class Controller {
         }
       },
       () => {
-        if (this.worker && this.current) {
+        // 上一个进程的退出通知可能晚于清单派发下一个服务。
+        if (this.worker === worker && this.current) {
           const task = structuredClone(this.current);
           task.status = 'interrupted';
           for (const r of task.targets)
@@ -682,7 +696,8 @@ export class Controller {
         }
       },
     );
-    this.worker.send({ kind: 'begin', value: input });
+    this.worker = worker;
+    worker.send({ kind: 'begin', value: input });
   }
   cancel(taskId: string) {
     if (!this.current || this.current.id !== taskId || !this.worker) return;

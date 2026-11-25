@@ -15,6 +15,7 @@ import type {
 } from './features';
 import type { Artifact, Backup, Database, History, Recovery, Task } from './model';
 import type { ImageBuild, ImageCheck, ImageEngine, ImageJob, ImageLogChunk, ImagePackage, ImageSource } from './images';
+import type { ReleaseRequest, ReleaseReview, ReleaseRun } from './serial-release';
 
 export type PathKind = 'directory' | 'jar' | 'key' | 'maven' | 'dockerfile' | 'image-archive';
 
@@ -87,6 +88,7 @@ export type Startup = {
   recovery?: Recovery;
   task?: Task;
   deploymentActive?: boolean;
+  releaseRun?: ReleaseRun | null;
   unfinished: Task[];
   dataDir: string;
   savedCredentials: string[];
@@ -109,6 +111,7 @@ export type DesktopEvent =
   | { kind: 'open-service'; serviceId: string }
   | { kind: 'open-schedules' }
   | { kind: 'schedules'; schedules: import('./schedules').ReleaseSchedule[] }
+  | { kind: 'release-run'; run: ReleaseRun }
   | {
       kind: 'log';
       taskId: string;
@@ -144,6 +147,14 @@ export type DesktopEvent =
   | { kind: 'open-task'; taskId: string }
   | { kind: 'update'; update: import('./app-update').AppUpdate };
 export interface DesktopAPI {
+  releaseState(): Promise<ReleaseRun | null>;
+  importLegacyRelease(raw: string): Promise<void>;
+  previewRelease(requests: ReleaseRequest[]): Promise<ReleaseReview>;
+  startRelease(token: string, credentials: Record<string, string>, approval: Approval,
+    policy: PrepareRequest['failurePolicy'], resume: boolean): Promise<void>;
+  checkRelease(): Promise<void>;
+  cancelRelease(): Promise<void>;
+  endRelease(): Promise<void>;
   operationsList(target: string): Promise<import('./operations').OperationRecord[]>;
   operationsStatus(target: string, credential: string): Promise<import('./operations').OperationStatus>;
   operationsPrepare(target: string, action: import('./operations').ServiceOperation): Promise<import('./operations').OperationPlan>;

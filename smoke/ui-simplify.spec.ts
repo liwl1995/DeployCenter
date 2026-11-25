@@ -293,54 +293,49 @@ test('串行发布清单复用部署控件，确认后串行执行并进入完�
   test.setTimeout(120_000);
   const page = await app.firstWindow();
   const db = (await page.evaluate(() => window.deployCenter!.load())).database;
-  const tasks = [0, 1].map((index) => createTask(db, db.services[index], [db.targets[index]], {}, 'rebuild'));
-  await app.evaluate(({ ipcMain, BrowserWindow }, fixture) => {
-    const prepared = new Map();
-    const active = new Map();
-    let number = 0;
-    const mock = (name: string, handler: (...args: any[]) => unknown) => {
-      ipcMain.removeHandler('deploy:' + name);
-      ipcMain.handle('deploy:' + name, (_event, ...args) => handler(...args));
-    };
-    const emit = (task: any, committed = false) => BrowserWindow.getAllWindows()[0].webContents.send('deploy:event', { kind: 'task', task, committed });
-    mock('prepare', (request) => {
-      const task = structuredClone(fixture.find((item) => item.service.id === request.serviceId));
-      task.id = 'DC-release-smoke-' + number++;
-      task.build = request.build;
-      task.note = request.note;
-      for (const item of task.targets) item.backup = request.overrides[item.target.id] ?? item.backup;
-      prepared.set(task.id, task);
-      return { token: task.id, task };
-    });
-    mock('start', (token, _credentials, approval) => {
-      if ([...active.values()].some((item) => item.status === 'running')) throw new Error('已有任务正在执行');
-      const task = prepared.get(token);
-      for (const item of task.targets) {
-        if (item.target.production && approval.productionNames[item.target.id] !== item.target.name)
-          throw new Error('正式目标确认不完整');
-      }
-      active.set(task.id, task);
-      emit(task);
-      return task;
-    });
-    mock('read-task', (id) => {
-      const task = active.get(id);
-      if (!task) throw new Error('任务不存在');
-      return task;
-    });
+  await page.evaluate(({ service, target }) => {
+    localStorage.setItem('deploy-center-release-v1', JSON.stringify({
+      state: 'done', message: '旧清单结果', failurePolicy: 'stop',
+      rows: [{
+        name: service.name, targets: [target.name], state: 'success',
+        request: { serviceId: service.id, targetIds: [target.id], build: 'existing', overrides: {}, failurePolicy: 'stop' },
+      }],
+    }));
+  }, { service: db.services[0], target: db.targets[0] });
+  await page.reload();
+  const nav = page.getByRole('navigation', { name: '主导航' });
+  await nav.getByRole('button', { name: '发布清单', exact: true }).click();
+  const manifest = page.getByRole('region', { name: '发布清单', exact: true });
+  await expect(manifest.getByRole('status').getByText('旧清单结果')).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('deploy-center-release-v1'))).toBeNull();
+  await manifest.getByRole('button', { name: '返回清单配置' }).click();
+  // 让 Electron 主进程走正式 IPC 与 SQLite，只替换会实际连接服务器的工作进程。
+  await app.evaluate(({ utilityProcess }) => {
+    const fork = utilityProcess.fork.bind(utilityProcess);
+    const jobs = new Map<string, { input: any; emit: (kind: string, payload: unknown) => void }>();
+    utilityProcess.fork = ((file, ...args) => {
+      if (!file.endsWith('worker.cjs')) return fork(file, ...args);
+      const listeners = new Map<string, (value: unknown) => void>();
+      const emit = (kind: string, payload: unknown) => listeners.get(kind)?.(payload);
+      return {
+        on(kind: string, listener: (value: unknown) => void) { listeners.set(kind, listener); },
+        postMessage(message: any) {
+          if (message.kind === 'begin') jobs.set(message.value.task.service.id, { input: message.value, emit });
+        },
+        kill() {},
+      } as unknown as Electron.UtilityProcess;
+    }) as typeof utilityProcess.fork;
     Object.assign(globalThis, { finishReleaseFixture: (serviceId: string, committed: boolean) => {
-      const task = [...active.values()].find((item) => item.service.id === serviceId);
-      if (!task) throw new Error('服务没有任务');
+      const job = jobs.get(serviceId);
+      if (!job) throw new Error('服务没有任务');
+      const task = structuredClone(job.input.task);
       task.status = 'success';
       task.targets.forEach((item: any) => { item.status = 'success'; });
       task.elapsed = 2;
-      emit(task, committed);
+      job.emit('message', { kind: committed ? 'done' : 'snapshot', task });
     }});
-  }, tasks);
-  const nav = page.getByRole('navigation', { name: '主导航' });
-  await nav.getByRole('button', { name: '发布清单', exact: true }).click();
+  });
   await size(900, 600);
-  const manifest = page.getByRole('region', { name: '发布清单', exact: true });
   await manifest.getByRole('button', { name: '添加服务', exact: true }).click();
   const add = page.getByRole('dialog', { name: '添加服务' });
   await add.getByRole('checkbox', { name: db.services[0].name, exact: true }).check();
@@ -350,6 +345,8 @@ test('串行发布清单复用部署控件，确认后串行执行并进入完�
   await expect(production).not.toBeChecked();
   await manifest.getByRole('checkbox', { name: '选择' + db.targets[0].name }).check();
   await production.check();
+  for (const button of await manifest.getByRole('button', { name: '使用现有 JAR', exact: true }).all())
+    await button.click();
   await expect(manifest.getByRole('button', { name: /查看线上日志|上移|下移/ })).toHaveCount(0);
   await manifest.getByRole('button', { name: '展开' + db.targets[0].name + '详情' }).click();
   await expect(manifest.getByRole('textbox', { name: '备份目录', exact: true })).toBeVisible();
@@ -406,6 +403,9 @@ test('串行发布清单复用部署控件，确认后串行执行并进入完�
   await boundaries();
   await footer.getByRole('button', { name: '返回清单配置' }).click();
   await expect(production).not.toBeChecked();
+  await page.reload();
+  await nav.getByRole('button', { name: '发布清单', exact: true }).click();
+  await expect(manifest.getByRole('status').getByText('全部成功')).toBeVisible();
 });
 
 test('部署统计共享筛选，键盘可切换，在两种主题与高缩放下保持可用', async () => {

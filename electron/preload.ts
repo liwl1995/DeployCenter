@@ -2,6 +2,14 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { DesktopAPI, DesktopEvent } from '../src/platform';
 const invoke = (name: string, ...args: unknown[]) => ipcRenderer.invoke('deploy:' + name, ...args);
 const api: DesktopAPI = {
+  releaseState: () => invoke('release-state'),
+  importLegacyRelease: (raw) => invoke('release-import-legacy', raw),
+  previewRelease: (requests) => invoke('release-preview', requests),
+  startRelease: (token, credentials, approval, policy, resume) =>
+    invoke('release-start', token, credentials, approval, policy, resume),
+  checkRelease: () => invoke('release-check'),
+  cancelRelease: () => invoke('release-cancel'),
+  endRelease: () => invoke('release-end'),
   operationsList: (target) => invoke('operations-list', target),
   operationsStatus: (target, credential) => invoke('operations-status', target, credential),
   operationsPrepare: (target, action) => invoke('operations-prepare', target, action),

@@ -7,9 +7,9 @@ import { HistoryDetail } from './HistoryDetail';
 import { ServicePicker } from './ServicePicker';
 import { ReleaseSchedules } from './ReleaseSchedules';
 import { ReleaseManifest, type ReleaseDraft } from './ReleaseManifest';
-import { SerialRelease } from './serial-release';
+import type { ReleaseRun } from './serial-release';
 import type { ReleaseSchedule } from './schedules';
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Rocket,
   Activity,
@@ -148,8 +148,6 @@ const ImageWorkspace = lazy(() => import('./ImageWorkspace').then((module) => ({
 const uid = () => Math.random().toString(36).slice(2, 10);
 const isActive = (t: Task | null) => !!t && ['running', 'cancelling'].includes(t.status);
 const failedStatuses = ['failed', 'rolledback'];
-const emptyRelease = () => null;
-const subscribeEmptyRelease = () => () => {};
 function upsert<T extends { id: string }>(list: T[], v: T) {
   return list.some((x) => x.id === v.id) ? list.map((x) => (x.id === v.id ? v : x)) : [...list, v];
 }
@@ -243,10 +241,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   const [currentTask, setTask] = useState<Task | null>(boot?.task || null);
   const [releaseTask, setReleaseTask] = useState<Task | null>(null);
   const task = page === 'task' && taskReturnPage === 'release-manifest' ? releaseTask ?? currentTask : currentTask;
-  const [serialRelease] = useState(() => desktop && new SerialRelease(
-    desktop, localStorage, 'deploy-center-release-v1',
-  ));
-  const releaseRun = useSyncExternalStore(serialRelease?.subscribe ?? subscribeEmptyRelease, serialRelease?.get ?? emptyRelease);
+  const [releaseRun, setReleaseRun] = useState<ReleaseRun | null>(boot?.releaseRun ?? null);
+  const [releaseShowRun, setReleaseShowRun] = useState(!!boot?.releaseRun);
   const [releaseDraft, setReleaseDraft] = useState<ReleaseDraft>([]);
   const [releasePolicy, setReleasePolicy] = useState<Database['settings']['failurePolicy'] | null>(null);
   const releasing = releaseRun?.state === 'running' || releaseRun?.state === 'cancelling';
@@ -383,7 +379,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     };
     refresh();
     if (!boot?.preferences) void desktop.desktopPreferences?.().then(setDesktopPreferences).catch(() => {});
-    return desktop!.onEvent((event) => {
+    let sawReleaseEvent = false;
+    const unsubscribe = desktop!.onEvent((event) => {
       if (event.kind === 'show-install-tutorial') showInstalledTutorial(event.id);
       if (event.kind === 'native-theme') setNativeDark(event.dark);
       if (event.kind === 'update') {
@@ -391,6 +388,10 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         setUpdate(event.update);
       }
       if (event.kind === 'schedules') setSchedules(event.schedules);
+      if (event.kind === 'release-run') {
+        sawReleaseEvent = true;
+        setReleaseRun(event.run);
+      }
       if (event.kind === 'open-schedules') setPage('schedules');
       if (event.kind === 'desktop-preferences') setDesktopPreferences(event.preferences);
       if (event.kind === 'open-settings') {
@@ -400,7 +401,6 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       if (event.kind === 'open-service') traySelectService.current(event.serviceId);
       if (event.kind === 'maintenance') refresh();
       if (event.kind === 'task') {
-        if (event.committed) serialRelease?.observe(event.task);
         setReleaseTask((old) => old?.id === event.task.id ? event.task : old);
         setTask(event.task);
         if (!['running', 'cancelling'].includes(event.task.status)) {
@@ -436,6 +436,10 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       else if (event.kind === 'trust-closed')
         setTrust((old) => (old?.id === event.id ? undefined : old));
     });
+    void desktop.releaseState?.().then((run) => {
+      if (!sawReleaseEvent) setReleaseRun(run);
+    }).catch(() => {});
+    return () => { sawReleaseEvent = true; unsubscribe(); };
   }, []);
   useEffect(() => {
     if (!desktop || recovery || !db.services.length || page !== 'deploy') return;
@@ -1805,8 +1809,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
             </>
           )}
           {page === 'history' && renderHistory()}
-          {page === 'release-manifest' && desktop && serialRelease && (
-            <ReleaseManifest api={desktop} db={db} serial={serialRelease} run={releaseRun}
+          {page === 'release-manifest' && desktop && (
+            <ReleaseManifest api={desktop} db={db} run={releaseRun} showRun={releaseShowRun} setShowRun={setReleaseShowRun}
               draft={releaseDraft} setDraft={setReleaseDraft} saved={saved} board={serviceScrollRef}
               policy={releasePolicy} onPolicy={setReleasePolicy}
               blocked={busy || isActive(currentTask) || !!recovery || unfinished.length > 0}
