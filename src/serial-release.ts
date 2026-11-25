@@ -138,12 +138,15 @@ export class SerialRelease {
     if (this.run && this.run.state !== 'done') this.update({ ...this.run, state: 'paused', message });
   }
 
-  private finish(message: string) {
+  private finish(message?: string) {
     this.authorization = undefined;
+    const rows = this.run!.rows.map((row): ReleaseRow => row.state === 'queued' ? { ...row, state: 'skipped' } : row);
+    // 正常完成和中断核实共用汇总规则。取消和主动结束保留各自的提示。
+    const result = message ?? (rows.every((row) => row.state === 'success') ? '全部成功' :
+      rows.some((row) => row.state === 'success' || row.state === 'partial') ? '部分成功' : '发布失败');
     this.update({
       ...this.run!,
-      state: 'done', message,
-      rows: this.run!.rows.map((row) => row.state === 'queued' ? { ...row, state: 'skipped' } : row),
+      state: 'done', message: result, rows,
     });
   }
 
@@ -151,8 +154,7 @@ export class SerialRelease {
     if (!this.run || this.run.state !== 'running' || this.dispatching || !this.authorization) return;
     const row = this.run.rows.find((item) => item.state === 'queued');
     if (!row) {
-      this.finish(this.run.rows.every((item) => item.state === 'success') ? '全部成功' :
-        this.run.rows.some((item) => item.state === 'success' || item.state === 'partial') ? '部分成功' : '发布失败');
+      this.finish();
       return;
     }
     const authorization = this.authorization;
@@ -225,12 +227,11 @@ export class SerialRelease {
       if (task.status === 'interrupted') return;
       this.replace({ ...row, state: task.status, elapsed: task.elapsed, detail });
       if (this.cancelRequested || task.status === 'cancelled') this.finish('已取消');
-      else if (task.status !== 'success' && this.run.failurePolicy === 'stop')
-        this.finish(this.run.rows.some((item) => item.state === 'success' || item.state === 'partial') ? '部分成功' : '发布失败');
+      else if (task.status !== 'success' && this.run.failurePolicy === 'stop') this.finish();
       else if (automatic && this.run.state === 'running') proceed = true;
       else if (this.run.state === 'paused') {
         if (this.run.rows.some((item) => item.state === 'queued')) this.pause('原任务已核实。可重新确认后续服务。');
-        else this.finish(this.run.rows.every((item) => item.state === 'success') ? '全部成功' : '部分成功');
+        else this.finish();
       }
     } catch {
       this.pause('本机暂时无法读取已启动任务的结果。请核实原任务后再处理后续服务。');

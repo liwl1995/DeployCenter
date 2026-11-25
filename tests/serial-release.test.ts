@@ -54,6 +54,31 @@ function fixture() {
 }
 
 describe('串行发布清单', () => {
+  it.each([
+    ['failed', 'failed', '发布失败'],
+    ['failed', 'partial', '部分成功'],
+    ['failed', 'success', '部分成功'],
+    ['success', 'success', '全部成功'],
+    ['failed', 'cancelled', '已取消'],
+  ] as const)('首个服务 %s、最后一个服务 %s，直接完成与核实后完成均显示「%s」', async (first, last, message) => {
+    for (const interrupted of [false, true]) {
+      const f = fixture();
+      await f.begin('continue');
+      f.end(first);
+      await vi.waitFor(() => expect(f.start).toHaveBeenCalledTimes(2));
+      if (interrupted) {
+        f.end('interrupted');
+        await vi.waitFor(() => expect(f.release.get()).toMatchObject({ state: 'paused', rows: [{ state: first }, { state: 'unknown' }] }));
+      }
+      f.end(last);
+      if (interrupted) await f.release.check();
+      await vi.waitFor(() => expect(f.release.get()?.state).toBe('done'));
+      expect(f.release.get()?.rows.map((row) => row.state)).toEqual([first, last]);
+      expect(f.release.get()?.message).toBe(message);
+      expect(f.start).toHaveBeenCalledTimes(2);
+    }
+  });
+
   it.each(['stop', 'continue'] as const)('按清单策略 %s 处理失败，单服务目标策略仍沿用配置', async (policy) => {
     const f = fixture();
     await f.begin(policy);
@@ -63,6 +88,7 @@ describe('串行发布清单', () => {
     f.end('failed');
     if (policy === 'stop') {
       await vi.waitFor(() => expect(f.release.get()?.state).toBe('done'));
+      expect(f.release.get()?.message).toBe('发布失败');
       expect(f.release.get()?.rows.map((row) => row.state)).toEqual(['failed', 'skipped']);
       expect(f.start).toHaveBeenCalledTimes(1);
     } else {
@@ -99,6 +125,7 @@ describe('串行发布清单', () => {
     await vi.waitFor(() => expect(interrupted.release.get()?.state).toBe('paused'));
     expect(interrupted.start).toHaveBeenCalledTimes(1);
     interrupted.release.end();
+    expect(interrupted.release.get()).toMatchObject({ state: 'done', message: '已结束 · 保留原任务状态' });
     expect(interrupted.release.get()?.rows.map((row) => row.state)).toEqual(['unknown', 'skipped']);
     const cancelled = fixture();
     await cancelled.begin('continue');
