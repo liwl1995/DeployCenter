@@ -1647,6 +1647,184 @@ th {
   flex-wrap: wrap;
   margin-bottom: 9px;
 }
+.history-tab-panel {
+  padding-top: var(--space-3);
+}
+.history-stats-toolbar {
+  justify-content: flex-end;
+  margin-bottom: var(--space-2);
+}
+.deploy-stats {
+  container-type: inline-size;
+  display: grid;
+  gap: var(--space-3);
+}
+.deploy-stats-metrics,
+.deploy-stats-charts,
+.deploy-stats-comparison {
+  display: grid;
+  gap: var(--space-3);
+}
+.deploy-stats-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.deploy-stats-charts,
+.deploy-stats-comparison {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.deploy-stats .card {
+  min-width: 0;
+  padding: var(--space-4);
+  background: color-mix(in srgb, var(--bg-app) 45%, var(--bg-subtle));
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: var(--radius-panel);
+}
+.deploy-stats .card-head {
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-2);
+}
+.deploy-stats-value {
+  display: block;
+  font-size: var(--fs-page);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: var(--space-1);
+}
+.deploy-stats-breakdown,
+.deploy-stats-excluded {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+}
+.deploy-stats-breakdown {
+  font-size: var(--fs-caption);
+}
+.deploy-stats-passed { color: var(--success-text); }
+.deploy-stats-unverified { color: var(--warning-text); }
+.deploy-stats-failed { color: var(--danger-text); }
+.deploy-stats-excluded {
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-subtle);
+  border-radius: var(--radius-control);
+}
+.deploy-stats-plot {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  --plot-height: 120px;
+  --plot-color: var(--success-text);
+}
+.deploy-stats-average { --plot-color: var(--chart-1); }
+.deploy-stats-axis,
+.deploy-stats-dates {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+}
+.deploy-stats-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: end;
+  height: var(--plot-height);
+  white-space: nowrap;
+}
+.deploy-stats-series {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+.deploy-stats-series > svg:first-child {
+  display: block;
+  width: 100%;
+  height: var(--plot-height);
+}
+.deploy-stats-gridline {
+  stroke: var(--line);
+  fill: var(--chart-grid);
+}
+.deploy-stats-line {
+  stroke: var(--plot-color);
+  stroke-width: 2;
+  fill: none;
+}
+.deploy-stats-dot {
+  position: absolute;
+  width: var(--space-3);
+  height: var(--space-3);
+  transform: translate(-50%, -50%);
+  fill: var(--plot-color);
+}
+.deploy-stats-dates {
+  position: relative;
+  min-height: var(--space-5);
+}
+.deploy-stats-dates > span {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.deploy-stats-dates > span:first-child:not(:only-child) {
+  transform: none;
+}
+.deploy-stats-dates > span:last-child:not(:only-child) {
+  transform: translateX(-100%);
+}
+.deploy-stats-failures {
+  display: grid;
+  gap: var(--space-2);
+  padding: 0;
+  list-style: none;
+}
+.deploy-stats-failures li {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  overflow-wrap: anywhere;
+}
+.deploy-stats-failures svg {
+  width: 100%;
+  height: var(--space-2);
+  border-radius: var(--radius-control);
+}
+.deploy-stats-bar { fill: var(--danger); }
+.deploy-stats-services {
+  width: 100%;
+  table-layout: fixed;
+}
+.deploy-stats-services th,
+.deploy-stats-services td {
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.deploy-stats-services th:first-child {
+  text-align: left;
+  width: 34%;
+}
+.deploy-stats-services button {
+  display: inline-flex;
+  max-width: 100%;
+  padding-inline: 0;
+}
+.deploy-stats-empty {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: var(--space-2);
+  min-height: 180px;
+  align-content: center;
+}
+.deploy-stats-empty > svg { color: var(--text-2); }
+@container (width < 620px) {
+  .deploy-stats-charts { grid-template-columns: minmax(0, 1fr); }
+}
+@container (width < 740px) {
+  .deploy-stats-comparison { grid-template-columns: minmax(0, 1fr); }
+}
+@container (width < 420px) {
+  .deploy-stats-metrics { grid-template-columns: minmax(0, 1fr); }
+}
 .filter-chip {
   display: inline-flex;
   align-items: center;

@@ -71,6 +71,7 @@ test.beforeEach(async ({}, info) => {
     healthState: '未配置健康检查',
   }));
   db.lastTargets = [db.targets[0].id];
+  if (info.title.startsWith('部署统计')) db.targets[1].serverId = db.servers[1].id;
   const store = new Storage(dir, {
     encrypt: async () => {
       throw new Error('界面夹具不写入凭据');
@@ -92,6 +93,20 @@ test.beforeEach(async ({}, info) => {
     });
   }
   store.saveConfig(db);
+  if (info.title.startsWith('部署统计')) {
+    for (let i = 0; i < 3; i++) {
+      const task = createTask(db, db.services[0], db.targets.slice(0, 2), {}, 'existing');
+      task.id = 'DC-stats-' + i;
+      task.started = new Date(Date.now() - i * 86400_000).toISOString();
+      task.status = 'partial';
+      task.targets[0].status = i === 1 ? 'unverified' : 'success';
+      task.targets[0].elapsed = 20;
+      task.targets[1].status = 'failed';
+      task.targets[1].elapsed = 40;
+      task.targets[1].error = '健康检查未通过';
+      store.complete(task, false);
+    }
+  }
   store.close();
   app = await electron.launch({
     executablePath:
@@ -268,6 +283,96 @@ test('历史默认优先记录，筛选弹层支持应用取消与日期嵌套�
     await expect(page.locator('.history-task')).toHaveCount(6);
     await page.getByRole('button', { name: '移除结果：失败 / 检查未通过', exact: true }).click();
     await expect(page.locator('.history-task')).toHaveCount(12);
+  }
+});
+test('部署统计共享筛选，键盘可切换，在两种主题与高缩放下保持可用', async () => {
+  test.setTimeout(120_000);
+  const page = await app.firstWindow();
+  const openHistory = () => page.getByRole('navigation').getByRole('button', { name: '部署历史', exact: true }).click();
+  await openHistory();
+  const records = page.getByRole('tab', { name: '部署记录', exact: true });
+  const stats = page.getByRole('tab', { name: '统计', exact: true });
+  const panel = page.getByRole('tabpanel', { name: '统计', exact: true });
+  await expect(records).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.history-task')).toHaveCount(3);
+  await records.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(stats).toBeFocused();
+  await expect(panel.getByText('3 / 6 个目标 · 含健康未验证')).toBeVisible();
+  await expect(panel.getByText('平均目标耗时')).toBeVisible();
+  await expect(panel.getByText('健康检查未通过')).toBeVisible();
+  await expect(panel.getByRole('img', { name: '成功率趋势' })).toBeVisible();
+  const trigger = page.getByRole('button', { name: '筛选部署历史', exact: true });
+  const filter = page.getByRole('dialog', { name: '筛选部署历史', exact: true });
+  await trigger.click();
+  await expect(filter.getByLabel('任务结果')).toHaveCount(0);
+  await filter.getByLabel('环境', { exact: true }).selectOption('环境1');
+  await filter.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(trigger).toBeFocused();
+  await expect(panel.getByText('3 / 6 个目标 · 含健康未验证')).toBeVisible();
+  await trigger.click();
+  await filter.getByLabel('环境', { exact: true }).selectOption('环境1');
+  await filter.getByRole('button', { name: '应用', exact: true }).click();
+  await expect(panel.getByText('0 / 3 个目标 · 含健康未验证')).toBeVisible();
+  await records.click();
+  await expect(page.getByRole('button', { name: '移除环境：环境1' })).toBeVisible();
+  await expect(page.locator('.history-task')).toHaveCount(3);
+  await stats.click();
+  await trigger.click();
+  await filter.getByRole('button', { name: '今天', exact: true }).click();
+  await filter.getByRole('button', { name: '应用', exact: true }).click();
+  await expect(panel.getByText('0 / 1 个目标 · 含健康未验证')).toBeVisible();
+  await page.getByRole('button', { name: '全部清除', exact: true }).click();
+  await panel.getByRole('button', { name: '筛选服务：中文空格项目0' }).click();
+  await expect(page.getByRole('button', { name: '移除服务：中文空格项目0' })).toBeVisible();
+  await trigger.click();
+  await filter.getByLabel('环境', { exact: true }).selectOption('环境1');
+  await filter.getByRole('button', { name: '应用', exact: true }).click();
+  await expect(panel.getByText('0 / 3 个目标 · 含健康未验证')).toBeVisible();
+  await trigger.click();
+  await filter.getByLabel('服务器', { exact: true }).selectOption('offline');
+  await filter.getByRole('button', { name: '应用', exact: true }).click();
+  await expect(panel.getByRole('heading', { name: '暂无可统计的部署记录' })).toBeVisible();
+  await records.click();
+  await expect(page.locator('.history-task')).toHaveCount(0);
+  await stats.click();
+  await page.getByRole('button', { name: '全部清除', exact: true }).click();
+
+  for (const theme of ['light', 'dark']) {
+    await page.getByRole('button', { name: '设置', exact: true }).click();
+    await page.getByRole('tab', { name: '通用', exact: true }).click();
+    await page.getByRole('group', { name: '界面主题', exact: true })
+      .getByRole('button', { name: theme === 'light' ? '浅色' : '深色' }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    await page.getByRole('button', { name: '返回应用', exact: true }).click();
+    await openHistory();
+    await expect(stats).toHaveAttribute('aria-selected', 'true');
+    for (const [width, height, zoom] of [[900, 600, 1], [900, 600, 1.5], [1000, 620, 1.25], [1280, 800, 1], [1600, 900, 1]]) {
+      await app.evaluate(({ BrowserWindow }, [w, h, factor]) => {
+        const win = BrowserWindow.getAllWindows()[0];
+        win.setContentSize(w, h);
+        win.webContents.setZoomFactor(factor);
+        win.show();
+      }, [width, height, zoom]);
+      await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(Math.round(width / zoom));
+      await boundaries();
+      await expect(trigger).toBeInViewport({ ratio: 1 });
+      const pointOffset = await panel.getByRole('img', { name: '成功率趋势' }).evaluate((chart) => {
+        const point = chart.parentElement!.querySelector('.deploy-stats-dot')!.getBoundingClientRect();
+        return point.top + point.height / 2 - chart.getBoundingClientRect().top;
+      });
+      expect(pointOffset).toBeCloseTo(60, 0);
+      await trigger.click();
+      await expect(filter.getByRole('button', { name: '应用', exact: true })).toBeInViewport({ ratio: 1 });
+      await page.keyboard.press('Escape');
+      await expect(trigger).toBeFocused();
+      // 用 Electron 截取完整窗口，避免 Playwright 在页面缩放时只截取 CSS 视口大小。
+      const png = await app.evaluate(async ({ BrowserWindow }) =>
+        (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64'),
+      );
+      await fs.mkdir(captures, { recursive: true });
+      await fs.writeFile(path.join(captures, `部署统计-${theme}-${width}x${height}-${zoom}.png`), Buffer.from(png, 'base64'));
+    }
   }
 });
 test('日志优先任务页的八种状态与连续输出在三个尺寸下可用', async () => {

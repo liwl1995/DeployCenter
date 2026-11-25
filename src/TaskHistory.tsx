@@ -1,6 +1,7 @@
 import { Button } from './design/ui/button';
 import { Input } from './design/ui/input';
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { PageTabs } from './design/ui/page-tabs';
 import type { DesktopAPI, TaskSummary } from './platform';
 import type { Database, History } from './model';
 import { fmtTime, seconds } from './model';
@@ -10,25 +11,26 @@ import { Badge, Card, Field, Modal } from './ui';
 import { MoreMenu } from './EntityActions';
 import { CompactStatus, historyDay, historyState } from './compact-list';
 import { DateRangeFilter } from './DateRangeFilter';
-import { withinDateRange, type DateRange } from './date-range';
+import { DeployStatsView } from './DeployStatsView';
+import { matchesHistoryScope, matchesHistoryTarget, type HistoryScope } from './deploy-stats';
 import { HashValue } from './DeployDetails';
 import { Search, SlidersHorizontal, X, ChevronDown } from 'lucide-react';
-type HistoryFilters = {
+type HistoryFilters = HistoryScope & {
   kind: string;
   status: string;
-  service: string;
-  server: string;
-  environment: string;
-  date: DateRange;
 };
-const emptyFilters: HistoryFilters = {
-  kind: 'all',
-  status: 'all',
+const emptyScope: HistoryScope = {
   service: 'all',
   server: 'all',
   environment: 'all',
   date: { from: '', to: '' },
 };
+const emptyFilters: HistoryFilters = { ...emptyScope, kind: 'all', status: 'all' };
+type HistoryTab = 'records' | 'stats';
+const historyTabs = [
+  { value: 'records', label: '部署记录' },
+  { value: 'stats', label: '统计' },
+] satisfies { value: HistoryTab; label: string }[];
 
 export type HistoryViewState = {
   filters: HistoryFilters;
@@ -36,6 +38,7 @@ export type HistoryViewState = {
   expanded: Set<string>;
   search?: HistorySearchResult;
   openedTask?: string;
+  tab?: HistoryTab;
 };
 
 export function TaskHistory({
@@ -49,6 +52,7 @@ export function TaskHistory({
   onMaintenance,
   initialView,
   onViewChange,
+  showStatistics = false,
 }: {
   rows: TaskSummary[];
   db: Database;
@@ -60,12 +64,17 @@ export function TaskHistory({
   onMaintenance?: (record: import('./features').MaintenanceRecord) => void;
   initialView?: HistoryViewState;
   onViewChange?: (view: HistoryViewState) => void;
+  showStatistics?: boolean;
 }) {
   const initial = useRef(initialView);
   const [filters, setFilters] = useState<HistoryFilters>(
     () => initial.current?.filters ?? emptyFilters,
   );
   const [draft, setDraft] = useState<HistoryFilters>();
+  const [tab, setTab] = useState<HistoryTab>(initial.current?.tab ?? 'records');
+  const activeTab = showStatistics ? tab : 'records';
+  const statisticsActive = activeTab === 'stats';
+  const tabId = useId();
   const [query, setQuery] = useState(() => initial.current?.query ?? '');
   const [showVersion, setShowVersion] = useState(
     () => window.matchMedia?.('(min-width: 1151px)').matches ?? true,
@@ -95,6 +104,7 @@ export function TaskHistory({
       expanded,
       search: searchQuery.current === query ? search : undefined,
       openedTask,
+      tab,
     });
   });
   useLayoutEffect(() => {
@@ -148,10 +158,9 @@ export function TaskHistory({
         return (
           (kind === 'all' || kind === type) &&
           (status === 'all' || row.status === status) &&
-          (service === 'all' || row.serviceId === service) &&
-          (server === 'all' || targets.some((t) => t.serverId === server)) &&
-          (environment === 'all' || targets.some((t) => t.name === environment)) &&
-          withinDateRange(fmtTime(row.started).slice(0, 10), date) &&
+          matchesHistoryScope(row.serviceId || row.service, row.started, filters) &&
+          ((server === 'all' && environment === 'all') ||
+            targets.some((target) => matchesHistoryTarget(target.serverId, target.name, filters))) &&
           (!query.trim() ||
             [row.note, row.service, ...targets.flatMap((t) => [t.name, t.server])].some((value) =>
               value?.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
@@ -159,7 +168,7 @@ export function TaskHistory({
             search?.hits.some((h) => h.taskId === row.id))
         );
       }),
-    [rows, kind, status, service, server, environment, date, query, search],
+    [rows, filters, kind, status, server, environment, query, search],
   );
   const open = (row: TaskSummary, targetId?: string) => {
     if (row.maintenance) {
@@ -187,7 +196,7 @@ export function TaskHistory({
     (a, b) => (Date.parse(b.started) || 0) - (Date.parse(a.started) || 0),
   );
   const chips: { key: keyof HistoryFilters; label: string }[] = [];
-  if (kind !== 'all')
+  if (!statisticsActive && kind !== 'all')
     chips.push({
       key: 'kind',
       label:
@@ -200,7 +209,7 @@ export function TaskHistory({
           unknown: '记录待恢复',
         }[kind] || kind),
     });
-  if (status !== 'all')
+  if (!statisticsActive && status !== 'all')
     chips.push({
       key: 'status',
       label:
@@ -216,7 +225,8 @@ export function TaskHistory({
   if (service !== 'all')
     chips.push({
       key: 'service',
-      label: '服务：' + (rows.find((row) => row.serviceId === service)?.service || service),
+      label: '服务：' + (rows.find((row) => (row.serviceId || row.service) === service)?.service ||
+        db.history.find((record) => record.service.id === service)?.service.name || service),
     });
   if (server !== 'all')
     chips.push({
@@ -224,7 +234,7 @@ export function TaskHistory({
       label:
         '服务器：' +
         (rows.flatMap((row) => row.targets || []).find((target) => target.serverId === server)
-          ?.server || server),
+          ?.server || db.history.find((record) => record.server.id === server)?.server.name || server),
     });
   if (environment !== 'all') chips.push({ key: 'environment', label: '环境：' + environment });
   if (date.from || date.to)
@@ -232,10 +242,26 @@ export function TaskHistory({
       key: 'date',
       label: '日期：' + (date.from || '不限') + ' 至 ' + (date.to || '不限'),
     });
-  return (
+  const openFilters = () => setDraft({ ...filters, date: { ...date } });
+  const clearFilters = (current: HistoryFilters) =>
+    statisticsActive ? { ...current, ...emptyScope } : emptyFilters;
+  const historicalTargets = showStatistics ? db.history : [];
+  const services = draft && new Map([
+    ...historicalTargets.map((record) => [record.service.id, record.service.name] as const),
+    ...rows.map((row) => [row.serviceId || row.service, row.service] as const),
+  ]);
+  const servers = draft && new Map([
+    ...historicalTargets.map((record) => [record.server.id, record.server.name] as const),
+    ...rows.flatMap((row) => (row.targets || []).map((target) => [target.serverId, target.server] as const)),
+  ]);
+  const environments = draft && new Set([
+    ...historicalTargets.map((record) => record.target.name),
+    ...rows.flatMap((row) => (row.targets || []).map((target) => target.name)),
+  ]);
+  const controls = (
     <>
-      <div className="history-search-bar">
-        <label className="search-box">
+      <div className={`history-search-bar${statisticsActive ? ' history-stats-toolbar' : ''}`}>
+        {!statisticsActive && <label className="search-box">
           <Search size={16} aria-hidden="true" />
           <Input
             aria-label="搜索完整历史"
@@ -244,12 +270,12 @@ export function TaskHistory({
             onChange={(event) => setQuery(event.target.value)}
             maxLength={200}
           />
-        </label>
+        </label>}
         <Button
           variant="neutral"
           size="compact"
           aria-label="筛选部署历史"
-          onClick={() => setDraft({ ...filters, date: { ...filters.date } })}
+          onClick={openFilters}
         >
           <SlidersHorizontal size={16} />
           筛选{chips.length > 0 && ' · ' + chips.length}
@@ -268,7 +294,7 @@ export function TaskHistory({
               <X size={13} aria-hidden="true" />
             </button>
           ))}
-          <Button variant="link" size="compact" onClick={() => setFilters(emptyFilters)}>
+          <Button variant="link" size="compact" onClick={() => setFilters(clearFilters)}>
             全部清除
           </Button>
         </div>
@@ -279,7 +305,7 @@ export function TaskHistory({
           onClose={() => setDraft(undefined)}
           footer={
             <>
-              <Button variant="neutral" size="compact" onClick={() => setDraft(emptyFilters)}>
+              <Button variant="neutral" size="compact" onClick={() => setDraft((current) => current && clearFilters(current))}>
                 重置
               </Button>
               <Button variant="neutral" size="compact" onClick={() => setDraft(undefined)}>
@@ -300,6 +326,7 @@ export function TaskHistory({
           }
         >
           <div className="form-grid history-filter-form">
+            {!statisticsActive && <>
             <Field label="任务类型">
               <select value={draft.kind} onChange={(e) => changeDraft('kind', e.target.value)}>
                 <option value="all">全部类型</option>
@@ -320,13 +347,14 @@ export function TaskHistory({
                 <option value="interrupted">待核实</option>
               </select>
             </Field>
+            </>}
             <Field label="服务">
               <select
                 value={draft.service}
                 onChange={(e) => changeDraft('service', e.target.value)}
               >
                 <option value="all">全部服务</option>
-                {[...new Map(rows.map((r) => [r.serviceId || r.service, r.service])).entries()].map(
+                {[...(services || [])].map(
                   ([id, name]) => (
                     <option key={id} value={id}>
                       {name}
@@ -338,13 +366,7 @@ export function TaskHistory({
             <Field label="服务器">
               <select value={draft.server} onChange={(e) => changeDraft('server', e.target.value)}>
                 <option value="all">全部服务器</option>
-                {[
-                  ...new Map(
-                    rows.flatMap((r) =>
-                      (r.targets || []).map((t) => [t.serverId, t.server] as const),
-                    ),
-                  ).entries(),
-                ].map(([id, name]) => (
+                {[...(servers || [])].map(([id, name]) => (
                   <option key={id} value={id}>
                     {name}
                   </option>
@@ -357,7 +379,7 @@ export function TaskHistory({
                 onChange={(e) => changeDraft('environment', e.target.value)}
               >
                 <option value="all">全部环境</option>
-                {[...new Set(rows.flatMap((r) => (r.targets || []).map((t) => t.name)))].map(
+                {[...(environments || [])].map(
                   (name) => (
                     <option key={name}>{name}</option>
                   ),
@@ -373,6 +395,10 @@ export function TaskHistory({
           </div>
         </Modal>
       )}
+    </>
+  );
+  const records = statisticsActive ? null : (
+    <>
       {searching && (
         <p className="note" role="status">
           正在后台搜索完整日志，界面可继续操作…
@@ -621,6 +647,42 @@ export function TaskHistory({
           </p>
         )}
       </Card>
+    </>
+  );
+  if (!showStatistics) return <>{controls}{records}</>;
+  return (
+    <>
+      <PageTabs
+        aria-label="部署历史视图"
+        idPrefix={tabId}
+        controls={(value) => `${tabId}-panel-${value}`}
+        items={historyTabs}
+        value={activeTab}
+        onValueChange={setTab}
+      />
+      {historyTabs.map(({ value }) => (
+        <div
+          key={value}
+          className="history-tab-panel"
+          role="tabpanel"
+          id={`${tabId}-panel-${value}`}
+          aria-labelledby={`${tabId}-${value}`}
+          hidden={activeTab !== value}
+        >
+          {activeTab === value && <>
+            {controls}
+            {value === 'records' ? records : (
+              <DeployStatsView
+                history={db.history}
+                tasks={rows}
+                scope={filters}
+                onAdjust={openFilters}
+                onService={(id) => setFilters((old) => old.service === id ? old : { ...old, service: id })}
+              />
+            )}
+          </>}
+        </div>
+      ))}
     </>
   );
 }

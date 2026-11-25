@@ -1257,6 +1257,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     return (
     desktop ? (
                 <TaskHistory
+                  showStatistics={!scoped}
                   initialView={historyViews.current.get(scope)}
                   onViewChange={(view) => historyViews.current.set(scope, view)}
                   onMaintenance={setBackupAudit}
