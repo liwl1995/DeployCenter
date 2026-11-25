@@ -22,7 +22,7 @@ const labels: Record<ReleaseRow['state'], string> = {
   failed: '失败', cancelled: '已取消', unknown: '待核实', skipped: '未执行',
 };
 
-export function ReleaseManifest({ api, db, run, showRun, setShowRun, draft, setDraft, saved, blocked, onTask, onCopy, board, policy, onPolicy, onEditTarget }: {
+export function ReleaseManifest({ api, db, run, showRun, setShowRun, draft, setDraft, saved, blocked, onTask, onHistory, onCopy, board, policy, onPolicy, onEditTarget }: {
   api: DesktopAPI;
   db: Database;
   run: ReleaseRun | null;
@@ -33,6 +33,7 @@ export function ReleaseManifest({ api, db, run, showRun, setShowRun, draft, setD
   saved: string[];
   blocked: boolean;
   onTask: (id: string) => void;
+  onHistory: (releaseId: string) => void;
   onCopy: (value: string) => void;
   onEditTarget: (target: Target) => void;
   board: RefObject<HTMLDivElement | null>;
@@ -53,6 +54,7 @@ export function ReleaseManifest({ api, db, run, showRun, setShowRun, draft, setD
   const [drop, setDrop] = useState('');
   const dragging = useRef('');
   const active = run?.state === 'running' || run?.state === 'cancelling';
+  const unverifiedTargets = run?.rows.reduce((sum, row) => sum + (row.unverifiedTargets ?? 0), 0) ?? 0;
   const step = review.length ? 1 : run && (showRun || active || run.state === 'paused') ? 2 : 0;
   const defaults = db.settings.failurePolicy;
   const selectedTargets = draft.flatMap((row) => row.targetIds);
@@ -285,6 +287,7 @@ export function ReleaseManifest({ api, db, run, showRun, setShowRun, draft, setD
           <div className={'notice release-result ' + (run.state === 'paused' ? 'warning' : '')} role="status">
             <strong>{run.message || '正在串行发布'}</strong>
             <p>{run.rows.filter((row) => row.state === 'success').length} 成功 · {run.rows.filter((row) => row.state === 'failed' || row.state === 'partial').length} 失败或部分成功 · {run.rows.filter((row) => row.state === 'skipped').length} 未执行</p>
+            {unverifiedTargets > 0 && <p>{unverifiedTargets} 个目标健康未验证</p>}
             {(active || run.state === 'done') && <progress aria-label="清单处理进度" max={run.rows.length}
               value={run.rows.filter((row) => !['queued', 'starting', 'running', 'unknown'].includes(row.state)).length} />}
           </div>
@@ -299,6 +302,7 @@ export function ReleaseManifest({ api, db, run, showRun, setShowRun, draft, setD
                   <Badge kind={row.state === 'success' ? 'good' : row.state === 'failed' || row.state === 'partial' ? 'danger' : row.state === 'unknown' ? 'warn' : ''}>{labels[row.state]}</Badge>
                   {row.elapsed !== undefined && <small>{seconds(row.elapsed)}</small>}</div>
                   <small>{row.targets.join('、')}</small>
+                  {!!row.unverifiedTargets && <p className="note">{row.unverifiedTargets} 个目标健康未验证</p>}
                   {row.detail && <p className="note">{row.detail}</p>}
                 </div>
                 {row.taskId && <span className="row release-log-link">执行日志<ChevronRight size={14} /></span>}
@@ -339,6 +343,8 @@ export function ReleaseManifest({ api, db, run, showRun, setShowRun, draft, setD
           {unresolved ? <Button disabled={busy} onClick={() => void action(() => api.checkRelease())}>刷新核实结果</Button>
             : <Button disabled={!pending.length || busy || blocked} onClick={() => prepare(true)}>复核后续服务</Button>}
         </>}
+        {step === 2 && run?.state === 'done' && run.id && run.rows.some((row) => row.taskId) &&
+          <Button variant="neutral" onClick={() => onHistory(run.id!)}>查看清单历史</Button>}
         {step === 2 && run?.state === 'done' && <Button onClick={() => {
           setDraft((old) => old.map((row) => ({
             ...row,

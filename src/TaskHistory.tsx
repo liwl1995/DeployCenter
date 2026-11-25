@@ -18,6 +18,7 @@ import { Search, SlidersHorizontal, X, ChevronDown } from 'lucide-react';
 type HistoryFilters = HistoryScope & {
   kind: string;
   status: string;
+  releaseId?: string;
 };
 const emptyScope: HistoryScope = {
   service: 'all',
@@ -40,6 +41,13 @@ export type HistoryViewState = {
   openedTask?: string;
   tab?: HistoryTab;
 };
+
+export const releaseHistoryView = (releaseId: string): HistoryViewState => ({
+  filters: { ...emptyFilters, releaseId },
+  query: '',
+  expanded: new Set(),
+  tab: 'records',
+});
 
 export function TaskHistory({
   rows,
@@ -87,7 +95,7 @@ export function TaskHistory({
     media.addEventListener('change', update);
     return () => media.removeEventListener('change', update);
   }, []);
-  const { kind, status, service, server, environment, date } = filters;
+  const { kind, status, service, server, environment, date, releaseId } = filters;
   const changeDraft = <K extends keyof HistoryFilters>(key: K, value: HistoryFilters[K]) =>
     setDraft((old) => (old ? { ...old, [key]: value } : old));
   const [expanded, setExpanded] = useState(() => initial.current?.expanded ?? new Set<string>()),
@@ -156,6 +164,7 @@ export function TaskHistory({
                 ? 'dry-run'
                 : row.operation;
         return (
+          (!releaseId || row.releaseId === releaseId) &&
           (kind === 'all' || kind === type) &&
           (status === 'all' || row.status === status) &&
           matchesHistoryScope(row.serviceId || row.service, row.started, filters) &&
@@ -168,7 +177,7 @@ export function TaskHistory({
             search?.hits.some((h) => h.taskId === row.id))
         );
       }),
-    [rows, filters, kind, status, server, environment, query, search],
+    [rows, filters, kind, status, server, environment, releaseId, query, search],
   );
   const open = (row: TaskSummary, targetId?: string) => {
     if (row.maintenance) {
@@ -196,6 +205,7 @@ export function TaskHistory({
     (a, b) => (Date.parse(b.started) || 0) - (Date.parse(a.started) || 0),
   );
   const chips: { key: keyof HistoryFilters; label: string }[] = [];
+  if (releaseId) chips.push({ key: 'releaseId', label: '清单：' + releaseId.slice(0, 11) });
   if (!statisticsActive && kind !== 'all')
     chips.push({
       key: 'kind',
@@ -244,7 +254,7 @@ export function TaskHistory({
     });
   const openFilters = () => setDraft({ ...filters, date: { ...date } });
   const clearFilters = (current: HistoryFilters) =>
-    statisticsActive ? { ...current, ...emptyScope } : emptyFilters;
+    statisticsActive ? { ...current, ...emptyScope, releaseId: undefined } : emptyFilters;
   const historicalTargets = showStatistics ? db.history : [];
   const services = draft && new Map([
     ...historicalTargets.map((record) => [record.service.id, record.service.name] as const),
@@ -287,6 +297,7 @@ export function TaskHistory({
             <button
               className="filter-chip"
               key={chip.key}
+              title={chip.key === 'releaseId' ? releaseId : undefined}
               aria-label={'移除' + chip.label}
               onClick={() => setFilters((old) => ({ ...old, [chip.key]: emptyFilters[chip.key] }))}
             >
@@ -489,7 +500,9 @@ export function TaskHistory({
                     </td>
                     <td>
                       <div className="history-content">
-                        <span className="history-operation">{operationLabel(row)}</span>
+                        <span className="history-operation" title={row.releaseId}>
+                          {row.releaseId ? '清单部署' : operationLabel(row)}
+                        </span>
                         <strong className="compact-ellipsis" title={note}>
                           {note}
                         </strong>
@@ -557,6 +570,13 @@ export function TaskHistory({
                             onClick: () => toggle(row.id),
                           },
                           { label: '复制任务编号', onClick: () => onCopy(row.id) },
+                          ...(row.releaseId ? [{
+                            label: '筛选同清单',
+                            onClick: () => {
+                              setQuery('');
+                              setFilters({ ...emptyFilters, releaseId: row.releaseId });
+                            },
+                          }] : []),
                           ...(validHash(row.commit)
                             ? [{ label: '复制 Git 提交', onClick: () => onCopy(row.commit!) }]
                             : []),
@@ -673,8 +693,8 @@ export function TaskHistory({
             {controls}
             {value === 'records' ? records : (
               <DeployStatsView
-                history={db.history}
-                tasks={rows}
+                history={releaseId ? db.history.filter((record) => record.releaseId === releaseId) : db.history}
+                tasks={releaseId ? rows.filter((row) => row.releaseId === releaseId) : rows}
                 scope={filters}
                 onAdjust={openFilters}
                 onService={(id) => setFilters((old) => old.service === id ? old : { ...old, service: id })}

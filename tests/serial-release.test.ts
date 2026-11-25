@@ -157,7 +157,7 @@ describe('串行发布清单', () => {
         if (owned && request.serviceId === f.requests[1].serviceId) await between;
         return controller.prepare(request, owned);
       },
-      start: (token, credentials, value) => controller.start(token, credentials, value, undefined, true),
+      start: (token, credentials, value, releaseId) => controller.start(token, credentials, value, undefined, releaseId),
       cancel: (id) => controller.cancel(id),
       readTask: (id) => f.store.task(id),
       active: () => controller.active(),
@@ -200,6 +200,9 @@ describe('串行发布清单', () => {
     complete(1);
     await vi.waitFor(() => expect(release.get()?.message).toBe('全部成功'));
     expect(release.active()).toBe(false);
+    expect(release.get()?.id).toMatch(/^RL-/);
+    expect(f.store.summaries().map(({ releaseId }) => releaseId)).toEqual([release.get()?.id, release.get()?.id]);
+    expect(f.store.database().history.map(({ releaseId }) => releaseId)).toEqual([release.get()?.id, release.get()?.id]);
     await expect(controller.prepare(f.requests[0])).resolves.toHaveProperty('token');
   });
 
@@ -252,6 +255,7 @@ describe('串行发布清单', () => {
   it('重启后暂停，核实原任务并重新确认后才发布剩余服务', async () => {
     const f = fixture();
     await f.begin('continue');
+    const id = f.release.get()?.id;
     f.store.close();
     const recovered = f.make(openStorage(f.dir));
     expect(recovered.get()?.state).toBe('paused');
@@ -266,7 +270,21 @@ describe('串行发布清单', () => {
     expect(recovered.get()?.rows.map((row) => row.state)).toEqual(['success', 'queued']);
     const review = await recovered.preview(f.requests.slice(1));
     recovered.begin(review.token, {}, approval, 'continue', true);
+    expect(recovered.get()?.id).toBe(id);
     await vi.waitFor(() => expect(f.start).toHaveBeenCalledTimes(2));
+  });
+
+  it('部分成功时分别记录失败原因和未验证的目标数量', async () => {
+    const f = fixture();
+    await f.begin('stop');
+    const target = f.last().targets[0];
+    target.error = '应用未启动';
+    f.last().targets.push({ ...structuredClone(target), status: 'unverified', error: undefined });
+    f.end('partial');
+    await vi.waitFor(() => expect(f.store.releaseRun()).toMatchObject({
+      message: '部分成功',
+      rows: [{ state: 'partial', unverifiedTargets: 1, detail: '应用未启动' }, { state: 'skipped' }],
+    }));
   });
 
   it('暂停时保留中断现场，取消等任务结束并跳过后续服务', async () => {

@@ -503,7 +503,7 @@ async function boot() {
     };
     release = new SerialRelease({
       prepare: prepareDeployment,
-      start: (token, credentials, approval) => controller.start(token, credentials, approval, undefined, true),
+      start: (token, credentials, approval, releaseId) => controller.start(token, credentials, approval, undefined, releaseId),
       cancel: (taskId) => controller.cancel(taskId),
       readTask: (taskId) => storage.task(taskId),
       active: () => controller.active(),

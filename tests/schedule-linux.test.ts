@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -11,6 +11,7 @@ import { Storage } from '../electron/storage';
 import { Controller } from '../electron/controller';
 import { Deployment } from '../electron/deployment';
 import { ReleaseScheduler } from '../electron/scheduler';
+import { SerialRelease } from '../electron/serial-release';
 import { seed, shellQuote as q } from '../src/model';
 
 const distro = process.env.DEPLOY_CENTER_TEST_WSL;
@@ -40,9 +41,9 @@ async function run(script: string) {
   return result.out.trim();
 }
 
-it.skipIf(process.platform !== 'win32' || !distro)(
-  '定时计划通过真实回环 SSH/SFTP 在隔离 Linux 部署固定快照（无业务服务）',
-  async () => {
+it.skipIf(process.platform !== 'win32' || !distro).each(['定时计划', '串行发布清单'] as const)(
+  '%s通过回环 SSH/SFTP 在隔离 Linux 部署（无业务服务）',
+  async (mode) => {
     const remote = await run('mktemp -d /tmp/deploy-center-schedule.XXXXXXXX');
     if (!/^\/tmp\/deploy-center-schedule\.[A-Za-z0-9]+$/.test(remote))
       throw new Error('远端夹具目录越界');
@@ -157,6 +158,19 @@ it.skipIf(process.platform !== 'win32' || !distro)(
         health: { type: 'none', value: '', timeout: 1, retries: 1, interval: 1 },
         backup: { ...target.backup, enabled: true, directory: remote + '/backups' },
       });
+      const secondDirectory = remote + '/second';
+      const secondService = { ...service, id: 'serial-second', name: '串行测试服务二' };
+      const secondTarget = {
+        ...target, id: 'serial-second-target', serviceId: secondService.id, directory: secondDirectory,
+        stop: 'printf stopped >> ' + q(secondDirectory + '/commands.log'),
+        start: 'printf started >> ' + q(secondDirectory + '/commands.log'),
+        backup: { ...target.backup, directory: secondDirectory + '/backups' },
+      };
+      if (mode === '串行发布清单') {
+        db.services.push(secondService);
+        db.targets.push(secondTarget);
+        await run('mkdir -- ' + q(secondDirectory) + ' && printf old > ' + q(secondDirectory + '/service.jar'));
+      }
       store.saveConfig(db);
       await store.saveCredential(hostConfig.id, 'isolated-fixture');
       const parsed = utils.parseKey(host.private);
@@ -175,6 +189,8 @@ it.skipIf(process.platform !== 'win32' || !distro)(
       );
       await run('printf old > ' + q(remote + '/service.jar'));
       let completed: (() => void) | undefined;
+      let release: SerialRelease | undefined;
+      const launched: string[] = [];
       const controller = new Controller(
         store,
         (onMessage) => {
@@ -184,6 +200,7 @@ it.skipIf(process.platform !== 'win32' || !distro)(
           return {
             send: (message) => {
               if (message.kind === 'begin') {
+                launched.push(message.value.task.service.id);
                 engine = new Deployment(
                   message.value,
                   (event) => {
@@ -211,8 +228,43 @@ it.skipIf(process.platform !== 'win32' || !distro)(
             close() {},
           };
         },
-        () => {},
+        (event) => {
+          if (event.kind === 'task' && event.committed) release?.observe(event.task);
+        },
+        { releaseActive: () => release?.active() === true },
       );
+      if (mode === '串行发布清单') {
+        release = new SerialRelease({
+          prepare: (request, owned) => controller.prepare(request, owned),
+          start: (token, credentials, approval, releaseId) => controller.start(token, credentials, approval, undefined, releaseId),
+          cancel: (id) => controller.cancel(id),
+          readTask: (id) => store.task(id),
+          active: () => controller.active(),
+          unfinished: () => store.unfinished().length > 0,
+          blocked: () => undefined,
+        }, (value) => store.saveReleaseRun(value), () => {});
+        const requests = [target, secondTarget].map((entry) => ({
+          serviceId: entry.serviceId, targetIds: [entry.id], build: 'existing', overrides: {}, failurePolicy: 'stop',
+        }));
+        const review = await release.preview(requests);
+        release.begin(review.token, {}, { productionWord: '', allowWeak: false, protectCurrent: true }, 'stop', false);
+        await vi.waitFor(() => expect(release?.get()?.state).toBe('done'), { timeout: 90_000 });
+        const result = store.releaseRun();
+        expect(result).toMatchObject({ message: '全部成功', rows: [{ unverifiedTargets: 1 }, { unverifiedTargets: 1 }] });
+        expect(result?.id).toMatch(/^RL-/);
+        expect(launched).toEqual([service.id, secondService.id]);
+        expect(uploads).toBe(2);
+        expect(store.summaries().map((row) => row.releaseId)).toEqual([result?.id, result?.id]);
+        expect(store.database().history.map((record) => record.releaseId)).toEqual([result?.id, result?.id]);
+        const expectedHash = createHash('sha256').update(await fs.readFile(path.join(dir, 'fixture.jar'))).digest('hex');
+        for (const directory of [remote, secondDirectory]) {
+          expect((await run('sha256sum -- ' + q(directory + '/service.jar'))).split(' ')[0]).toBe(expectedHash);
+          expect(await run('cat -- ' + q(directory + '/commands.log'))).toBe('stoppedstarted');
+          expect(await run('find ' + q(directory + '/backups') + ' -type f -exec cat {} +')).toBe('old');
+          await run('test ! -e ' + q(directory + '/.deploy-center') + ' && test ! -e ' + q(directory + '/.deploy-center.lock'));
+        }
+        return;
+      }
       const ready = new Promise<void>((resolve) => {
         completed = resolve;
       });

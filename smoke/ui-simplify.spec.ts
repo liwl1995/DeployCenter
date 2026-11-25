@@ -97,6 +97,14 @@ test.beforeEach(async ({}, info) => {
     });
   }
   store.saveConfig(db);
+  if (info.title.startsWith('串行发布清单')) {
+    const task = createTask(db, db.services[0], [db.targets[0]], {}, 'existing');
+    task.id = 'DC-unrelated-release-fixture';
+    task.status = 'failed';
+    task.targets[0].status = 'failed';
+    task.note = '独立部署记录';
+    store.saveTask(task);
+  }
   if (info.title.startsWith('部署统计')) {
     for (let i = 0; i < 3; i++) {
       const task = createTask(db, db.services[0], db.targets.slice(0, 2), {}, 'existing');
@@ -330,7 +338,7 @@ test('串行发布清单复用部署控件，确认后串行执行并进入完�
       if (!job) throw new Error('服务没有任务');
       const task = structuredClone(job.input.task);
       task.status = 'success';
-      task.targets.forEach((item: any) => { item.status = 'success'; });
+      task.targets.forEach((item: any) => { item.status = serviceId === 'workspace-smoke' ? 'unverified' : 'success'; });
       task.elapsed = 2;
       job.emit('message', { kind: committed ? 'done' : 'snapshot', task });
     }});
@@ -406,6 +414,19 @@ test('串行发布清单复用部署控件，确认后串行执行并进入完�
   await page.reload();
   await nav.getByRole('button', { name: '发布清单', exact: true }).click();
   await expect(manifest.getByRole('status').getByText('全部成功')).toBeVisible();
+  await expect(manifest.getByRole('status').getByText('1 个目标健康未验证')).toBeVisible();
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1.5));
+  const openReleaseHistory = footer.getByRole('button', { name: '查看清单历史' });
+  await expect(openReleaseHistory).toBeInViewport({ ratio: 1 });
+  await openReleaseHistory.press('Enter');
+  const tasks = page.locator('.history-task');
+  await expect(tasks).toHaveCount(2);
+  await expect(tasks.getByText('清单部署')).toHaveCount(2);
+  await page.getByRole('button', { name: /移除清单/ }).click();
+  await expect(tasks).toHaveCount(3);
+  await tasks.filter({ hasText: '清单部署' }).first().getByRole('button', { name: /更多任务/ }).click();
+  await page.getByRole('menuitem', { name: '筛选同清单' }).click();
+  await expect(tasks).toHaveCount(2);
 });
 
 test('部署统计共享筛选，键盘可切换，在两种主题与高缩放下保持可用', async () => {

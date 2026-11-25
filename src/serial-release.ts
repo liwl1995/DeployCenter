@@ -11,8 +11,10 @@ export type ReleaseRow = {
   taskId?: string;
   elapsed?: number;
   detail?: string;
+  unverifiedTargets?: number;
 };
 export type ReleaseRun = {
+  id?: string;
   state: 'running' | 'cancelling' | 'paused' | 'done';
   rows: ReleaseRow[];
   message: string;

@@ -294,9 +294,9 @@ export class Controller {
     values: unknown,
     rawApproval: unknown,
     schedule?: { at: number; replaces?: string },
-    owned = false,
+    releaseId?: string,
   ) {
-    this.assertRelease(owned);
+    this.assertRelease(!!releaseId);
     if (schedule) validScheduleTime(schedule.at);
     if (this.active()) throw new Error('已有任务正在执行');
     const pending = this.prepared.get(token);
@@ -354,7 +354,7 @@ export class Controller {
     }
     const credentials = await this.credentials(task, values);
     // 读取凭据期间配置可能被另一请求更新，不能发布未经确认的新配置。
-    this.assertRelease(owned);
+    this.assertRelease(!!releaseId);
     if (this.active()) throw new Error('已有任务正在执行');
     this.assertOperations(task);
     if (schedule && scheduleConfiguration(this.storage.database(), task) !== pending.configuration)
@@ -362,6 +362,7 @@ export class Controller {
     this.activeCredentials = credentials;
     this.prepared.delete(token);
     const started = startTask(task);
+    started.releaseId = releaseId;
     if (schedule) {
       started.preparation = true;
       for (const run of started.targets)

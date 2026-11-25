@@ -218,6 +218,7 @@ export type Task = {
   /** 定时计划的准备任务不会生成部署历史或更新线上版本。 */
   preparation?: boolean;
   scheduleId?: string;
+  releaseId?: string;
   scheduleCheck?: 'locked' | 'changed' | 'expired';
   scheduleBaselines?: Record<string, string>;
   scheduleAliases?: Record<string, string>;
@@ -252,6 +253,7 @@ export type Task = {
 export type History = {
   id: string;
   taskId: string;
+  releaseId?: string;
   operation: Task['operation'];
   service: ServiceSnapshot;
   target: TargetSnapshot;
@@ -532,6 +534,7 @@ export function validDatabase(data: unknown): data is Database {
     d.history.every(
       (h: any) =>
         strings(h, ['id', 'taskId', 'time']) &&
+        (h.releaseId === undefined || typeof h.releaseId === 'string') &&
         strings(h.service, ['id', 'name']) &&
         strings(h.service.git, ['branch', 'commit', 'time']) &&
         strings(h.target, [

@@ -83,7 +83,7 @@ import { RemoteBackups, BackupAudit } from './RemoteBackups';
 import { WorkbenchReviewPanel } from './WorkbenchReview';
 import { PresetShelf, EmptyServiceWorkspace } from './WorkspaceHome';
 import { preparePreset, type WorkspacePage } from './workspace-model';
-import { TaskHistory, type HistoryViewState } from './TaskHistory';
+import { releaseHistoryView, TaskHistory, type HistoryViewState } from './TaskHistory';
 import { useWorkspaceNavigation } from './workspace-navigation';
 import { MoreMenu, DeleteEntity } from './EntityActions';
 import { BuildEnvironment, useBuildEnvironmentChecks } from './BuildEnvironment';
@@ -1815,6 +1815,10 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               policy={releasePolicy} onPolicy={setReleasePolicy}
               blocked={busy || isActive(currentTask) || !!recovery || unfinished.length > 0}
               onCopy={(value) => void copy(value)}
+              onHistory={(releaseId) => {
+                historyViews.current.set('all', releaseHistoryView(releaseId));
+                setPage('history');
+              }}
               onEditTarget={(value) => setDialog({ kind: 'target', value })}
               onTask={(id) => void nativeAction(async () => {
                 const value = currentTask?.id === id ? currentTask : await desktop!.readTask(id);

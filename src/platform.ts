@@ -54,6 +54,7 @@ export type TrustRequest = {
 };
 export type TaskSummary = {
   id: string;
+  releaseId?: string;
   service: string;
   operation: Task['operation'];
   status: Task['status'];

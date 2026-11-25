@@ -322,6 +322,7 @@ export function toHistory(task: Task): History[] {
     .map((r, i) => ({
       id: task.id + '-' + i,
       taskId: task.id,
+      releaseId: task.releaseId,
       operation: task.operation,
       service: snapshotService(task.service),
       target: snapshotTarget(r.target),

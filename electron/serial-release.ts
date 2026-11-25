@@ -27,7 +27,7 @@ const journalSchema = z.object({
 
 type DeploymentAccess = {
   prepare(request: ReleaseRequest, owned: boolean): Promise<{ task: Task; token: string }>;
-  start(token: string, credentials: Record<string, string>, approval: Approval): Promise<Task>;
+  start(token: string, credentials: Record<string, string>, approval: Approval, releaseId: string): Promise<Task>;
   cancel(id: string): void | Promise<void>;
   readTask(id: string): Task | undefined | Promise<Task | undefined>;
   active(): boolean;
@@ -172,6 +172,7 @@ export class SerialRelease {
     this.cancelRequested = false;
     try {
       this.update({
+        id: resume ? this.run!.id ?? 'RL-' + randomUUID() : 'RL-' + randomUUID(),
         state: 'running', message: '',
         failurePolicy: resume ? this.run!.failurePolicy : policy,
         rows: resume ? [...this.run!.rows.filter((row) => row.state !== 'queued'), ...pending] : pending,
@@ -228,7 +229,7 @@ export class SerialRelease {
       const serverIds = new Set(prepared.task.targets.map((item) => item.server.id));
       started = await this.api.start(prepared.token,
         Object.fromEntries(Object.entries(authorization.credentials).filter(([id]) => serverIds.has(id))),
-        authorization.approval);
+        authorization.approval, this.run.id!);
       if (started.id !== dispatch.taskId) throw new Error('执行任务与清单记录不一致。');
       this.replace({ ...dispatch, state: 'running' }, this.cancelRequested ? 'cancelling' : 'running');
       if (this.cancelRequested && running(started)) await this.api.cancel(started.id);
@@ -274,11 +275,10 @@ export class SerialRelease {
         this.authorization = undefined;
         return;
       }
-      const failed = task.targets.find((item) => item.error)?.error;
-      const detail = failed || (task.status === 'success' && task.targets.some((item) => item.status === 'unverified')
-        ? '已部署，应用健康未验证' : undefined);
+      const detail = task.targets.find((item) => item.error)?.error;
+      const unverifiedTargets = task.targets.filter((item) => item.status === 'unverified').length;
       if (task.status === 'interrupted') return;
-      const resolved: ReleaseRow = { ...row, state: task.status, elapsed: task.elapsed, detail };
+      const resolved: ReleaseRow = { ...row, state: task.status, elapsed: task.elapsed, detail, unverifiedTargets };
       const rows = this.run.rows.map((item) => item === row ? resolved : item);
       // 子任务结果和清单去向一起保存，避免崩溃恢复时丢失停止策略。
       if (this.cancelRequested || task.status === 'cancelled') this.finish('已取消', rows);

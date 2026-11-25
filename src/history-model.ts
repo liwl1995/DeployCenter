@@ -3,6 +3,7 @@ import type { TaskSummary } from './platform';
 export function summarizeTask(task: Task): TaskSummary {
   return {
     id: task.id,
+    releaseId: task.releaseId,
     service: task.service.name,
     serviceId: task.service.id,
     operation: task.operation,
@@ -34,6 +35,7 @@ export function importedSummaries(db: Database, existing: Set<string>): TaskSumm
       someGood = group.some((h) => ['success', 'unverified'].includes(h.status));
     return {
       id,
+      releaseId: first.releaseId,
       service: first.service.name,
       serviceId: first.service.id,
       operation: first.operation,

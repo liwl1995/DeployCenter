@@ -7,6 +7,7 @@ export function parseTaskRecord(raw: string, id?: string): Task {
     typeof t.id !== 'string' ||
     (id && t.id !== id) ||
     !/^DC-[a-zA-Z0-9-]+$/.test(t.id) ||
+    (t.releaseId !== undefined && typeof t.releaseId !== 'string') ||
     !['running', 'cancelling', 'success', 'partial', 'failed', 'cancelled', 'interrupted'].includes(
       t.status,
     ) ||
