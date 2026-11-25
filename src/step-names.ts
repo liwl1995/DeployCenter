@@ -19,3 +19,12 @@ export const stepNames: Record<string, string> = {
   health: '检查应用是否可用',
   rollback: '恢复并检查旧版本',
 };
+
+export const deploymentStages = ['构建', '上传与校验', '备份', '切换', '检查'];
+
+export function deploymentStage(key: string) {
+  if (key === 'backup') return 2;
+  if (['stop', 'replace', 'chmod', 'start', 'rollback'].includes(key)) return 3;
+  if (['health', 'containerHash', 'stability'].includes(key)) return 4;
+  return 1;
+}

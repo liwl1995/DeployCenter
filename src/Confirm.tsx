@@ -2,8 +2,7 @@ import { ConfirmTargets } from './ConfirmTargets';
 import { GitBranch, Rocket } from 'lucide-react';
 import { useState } from 'react';
 import { ArtifactInfo } from './ArtifactInfo';
-import { ConfirmWarning } from './ConfirmWarning';
-import { OldArtifactWarning } from './OldArtifactWarning';
+import { ConfirmWarning, confirmationWarnings } from './ConfirmWarning';
 import { credentialServers } from './credentials';
 import { prototype } from './defaults';
 import { HashValue } from './DeployDetails';
@@ -174,7 +173,7 @@ export function Confirm({
                 ? '重新构建一次'
                 : '使用现有 JAR'}
         </Badge>
-        <OldArtifactWarning value={initial.artifact} service={initial.service} compact />
+        <ConfirmWarning warnings={confirmationWarnings(initial)} />
       </div>
       <p className="confirm-brief">
         {initial.targets.length} 个目标 · {initial.artifact.name} ·{' '}
@@ -216,21 +215,15 @@ export function Confirm({
       )}
       {servers.map((s) => (
         <div className="confirm-target mt" key={s.id}>
-          <div className="row wrap">
-            <h3>{s.name} · 本次认证</h3>
-            {s.credentialMode === 'windows' && (
-              <ConfirmWarning label="口令保存提示" text={fixture
-                ? 'Windows 凭据管理器是正式版能力。原型仍需本次输入，不会保存。'
-                : saved.includes(s.id)
-                  ? '已保存本机 DPAPI 加密凭据；留空复用，输入新值将更新。'
-                  : '输入后使用当前 Windows 用户的 DPAPI 加密保存到本机。'} />
-            )}
-          </div>
+          <h3>{s.name} · 本次认证</h3>
           <Field
             label={
               (s.auth === 'password' ? '登录密码' : '私钥口令（未加密可留空）') + ' · ' + s.name
             }
-            hint="仅保留在当前任务内存，任务结束清除，不进入配置、日志或导出"
+            hint={s.credentialMode === 'windows'
+              ? fixture ? 'Windows 凭据管理器是正式版能力，模拟时仅使用本次输入。'
+                : saved.includes(s.id) ? '留空复用本机加密凭据，输入新值将更新。' : '输入后使用当前 Windows 用户加密保存。'
+              : '仅保留在当前任务内存，任务结束清除，不进入配置、日志或导出。'}
           >
             <input
               type="password"

@@ -163,7 +163,12 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   const [failureOverride, setFailureOverride] = useState<
     Database['settings']['failurePolicy'] | null
   >(null);
-  const { page, returnPage: taskReturnPage, navigate: setPage, openTask, returnFromTask, mainRef, serviceScrollRef } = useWorkspaceNavigation(initialPage);
+  const { page, returnPage: taskReturnPage, navigate: setPage, openTask: navigateToTask, returnFromTask, mainRef, serviceScrollRef } = useWorkspaceNavigation(initialPage);
+  const [historySnapshot, setHistorySnapshot] = useState<History>();
+  const openTask = (source?: Parameters<typeof navigateToTask>[0], snapshot?: History) => {
+    setHistorySnapshot(snapshot);
+    navigateToTask(source);
+  };
   const [buildEnvironmentOpened, setBuildEnvironmentOpened] = useState(page === 'tools');
   useEffect(() => {
     if (page === 'tools') setBuildEnvironmentOpened(true);
@@ -1195,7 +1200,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                   api={desktop}
                   busy={isActive(task)}
                   onCopy={(value) => void copy(value)}
-                  onHistory={(value) => setDialog({ kind: 'history', value })}
+                  onHistory={(value) => openTask(scoped ? 'deploy' : 'history', value)}
                   onOpen={(id, targetId) =>
                     void nativeAction(async () => {
                       const next = await desktop!.readTask(id);
@@ -1810,7 +1815,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           )}
           {page === 'history' && renderHistory()}
           {page === 'release-manifest' && desktop && (
-            <ReleaseManifest api={desktop} db={db} run={releaseRun} showRun={releaseShowRun} setShowRun={setReleaseShowRun}
+            <ReleaseManifest api={desktop} db={db} run={releaseRun} liveTask={currentTask} showRun={releaseShowRun} setShowRun={setReleaseShowRun}
               draft={releaseDraft} setDraft={setReleaseDraft} saved={saved} board={serviceScrollRef}
               policy={releasePolicy} onPolicy={setReleasePolicy}
               blocked={busy || isActive(currentTask) || !!recovery || unfinished.length > 0}
@@ -1861,7 +1866,37 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               }}
             />
           )}
-          {page === 'task' && task && (
+          {page === 'task' && historySnapshot && (
+            <section className="task-page history-snapshot-page">
+              <header className="task-page-header">
+                <div className="task-title">
+                  <h1>{historySnapshot.service.name} · {historySnapshot.target.name} · 历史记录</h1>
+                </div>
+                <Button variant="neutral" size="compact" onClick={returnFromTask}>
+                  <ArrowLeft size={15} />{taskReturnPage === 'deploy' ? '返回发布记录' : '返回部署历史'}
+                </Button>
+              </header>
+              {db.history.filter((record) => record.taskId === historySnapshot.taskId).length > 1 && (
+                <div className="task-target-tabs" role="group" aria-label="选择任务目标">
+                  {db.history.filter((record) => record.taskId === historySnapshot.taskId).map((record) =>
+                    <Button key={record.id} variant="neutral" size="compact"
+                      aria-pressed={record.id === historySnapshot.id}
+                      onClick={() => setHistorySnapshot(record)}>{record.target.name}</Button>)}
+                </div>
+              )}
+              <div className="history-snapshot-scroll" key={historySnapshot.id}>
+                <HistoryDetail value={historySnapshot} fullPage
+                  taskRecord={db.taskHistory[historySnapshot.taskId]}
+                  canRollback={canRollback(historySnapshot)}
+                  onRollback={() => {
+                    const current = db.targets.find((target) => target.id === historySnapshot.target.id);
+                    if (current && canRollback(historySnapshot)) void launch([current], historySnapshot);
+                  }}
+                  onExport={() => void nativeAction(() => desktop!.exportLogs(historySnapshot.taskId, historySnapshot.target.id))} />
+              </div>
+            </section>
+          )}
+          {page === 'task' && task && !historySnapshot && (
                 <TaskView
                   key={task.id}
                   task={task}

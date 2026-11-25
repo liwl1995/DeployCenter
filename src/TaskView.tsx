@@ -1,5 +1,5 @@
 import { Button } from './design/ui/button';
-import { stepNames as names } from './step-names';
+import { deploymentStage, deploymentStages, stepNames as names } from './step-names';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft, Check, Circle, CircleAlert, CircleDot, Clock3, Loader2, Minus, X } from 'lucide-react';
 import { desktop } from './platform';
@@ -10,7 +10,7 @@ import { UploadProgress } from './UploadProgress';
 import { NativeLogPanel } from './NativeLogPanel';
 import { VirtualLogs } from './LogViewer';
 import { diagnostics } from './validation';
-import { seconds, type RunTarget, type Step, type Task } from './model';
+import { seconds, type RunTarget, type Task } from './model';
 import { failureAdvice, operationLabel, taskResult } from './presentation';
 import type { DiagnosticKind } from './features';
 
@@ -26,7 +26,6 @@ const targetStatus: Record<RunTarget['status'], string> = {
   cancelled: '已取消',
   unknown: '待核实',
 };
-const stageNames = ['构建', '上传与校验', '备份', '切换', '检查'];
 const statusText = {
   pending: '等待',
   running: '进行中',
@@ -44,13 +43,6 @@ const icons = {
   skipped: Minus,
   warning: CircleAlert,
 };
-
-function stageOf(step: Step) {
-  if (step.key === 'backup') return 2;
-  if (['stop', 'replace', 'chmod', 'start', 'rollback'].includes(step.key)) return 3;
-  if (['health', 'containerHash', 'stability'].includes(step.key)) return 4;
-  return 1;
-}
 
 function resultFor(task: Task, run?: RunTarget): { tone: Status; text: string } {
   if (task.preparation)
@@ -158,9 +150,9 @@ export function TaskView({
   const run = task.targets[inspected];
   const active = task.status === 'running' || task.status === 'cancelling';
   const result = resultFor(task, run);
-  const groups = (task.preparation ? ['产物准备', '只读检查'] : stageNames).map((name, index) => ({
+  const groups = (task.preparation ? ['产物准备', '只读检查'] : deploymentStages).map((name, index) => ({
     name,
-    steps: index === 0 ? task.buildSteps : (run?.steps || []).filter((s) => stageOf(s) === index),
+    steps: index === 0 ? task.buildSteps : (run?.steps || []).filter((s) => deploymentStage(s.key) === index),
   }));
   const stages = groups.map(({ name, steps }, index) => {
     const skippedBuild = index === 0 && task.build === 'existing' && !task.dryRun;

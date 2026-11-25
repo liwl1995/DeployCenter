@@ -688,6 +688,24 @@ hr {
 .release-heading {
   flex-wrap: wrap;
 }
+.release-service-name {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.release-order {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.release-review-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-panel);
+  background: var(--bg-subtle);
+}
 .release-service,
 .release-review {
   border: 1px solid var(--line);
@@ -715,7 +733,6 @@ hr {
   margin: 0;
 }
 .release-jar,
-.release-sequence,
 .release-run-row > div {
   min-width: 0;
   overflow-wrap: anywhere;
@@ -736,10 +753,24 @@ button.release-run-row:hover { border-color: var(--border-strong); }
 .release-running,
 .release-starting {
   background: var(--bg-selected);
+  border-color: var(--action-text);
+}
+.release-result {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-panel);
+  background: var(--bg-subtle);
+}
+.release-totals,
+.release-live-phase {
+  color: var(--text-2);
+  font-size: var(--fs-body);
 }
 .release-result progress {
   display: block;
   width: 100%;
+  height: var(--space-2);
   accent-color: var(--action-bg);
 }
 @media (max-width: 950px) {
@@ -1372,7 +1403,15 @@ p.code,
 .confirm-warning-icon {
   color: var(--warning-text);
 }
-.confirm-warning-text {
+.confirm-warning-tooltip {
+  border-radius: var(--radius-panel);
+}
+.confirm-warning-list {
+  display: grid;
+  gap: var(--space-1);
+  padding-inline-start: var(--space-4);
+  margin: 0;
+  list-style: disc;
   overflow-wrap: anywhere;
 }
 .confirm-target {
@@ -1976,6 +2015,19 @@ th {
   margin-inline: -24px;
   padding-inline: 24px;
   border-bottom: 1px solid var(--line);
+}
+.history-snapshot-scroll {
+  overflow: auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--space-3);
+}
+.history-snapshot-logs {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
 }
 .task-title {
   flex: 1;

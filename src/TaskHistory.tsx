@@ -105,15 +105,16 @@ export function TaskHistory({
   const [openedTask, setOpenedTask] = useState(initial.current?.openedTask);
   const searchQuery = useRef(initial.current?.query);
   const returnRow = useRef<HTMLTableRowElement>(null);
+  const viewState = (taskId = openedTask): HistoryViewState => ({
+    filters,
+    query,
+    expanded,
+    search: searchQuery.current === query ? search : undefined,
+    openedTask: taskId,
+    tab,
+  });
   useLayoutEffect(() => {
-    onViewChange?.({
-      filters,
-      query,
-      expanded,
-      search: searchQuery.current === query ? search : undefined,
-      openedTask,
-      tab,
-    });
+    onViewChange?.(viewState());
   });
   useLayoutEffect(() => {
     returnRow.current?.focus({ preventScroll: true });
@@ -184,14 +185,22 @@ export function TaskHistory({
       onMaintenance?.(row.maintenance);
       return;
     }
-    if (!row.imported) {
+    const rememberRow = () => {
       setOpenedTask(row.id);
+      // 快照详情直接切页，列表可能在本次 React 更新提交前就卸载。
+      onViewChange?.(viewState(row.id));
+    };
+    if (!row.imported) {
+      rememberRow();
       onOpen(row.id, targetId);
     } else {
       const h = db.history.find(
         (h) => h.taskId === row.id && (!targetId || h.target.id === targetId),
       );
-      if (h) onHistory(h);
+      if (h) {
+        rememberRow();
+        onHistory(h);
+      }
     }
   };
   const toggle = (id: string) =>
@@ -501,7 +510,7 @@ export function TaskHistory({
                     <td>
                       <div className="history-content">
                         <span className="history-operation" title={row.releaseId}>
-                          {row.releaseId ? '清单部署' : operationLabel(row)}
+                          {row.releaseId ? '批量部署' : operationLabel(row)}
                         </span>
                         <strong className="compact-ellipsis" title={note}>
                           {note}

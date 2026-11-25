@@ -2,6 +2,7 @@ import { expectViewport } from './window-size';
 import Sqlite from 'better-sqlite3';
 import { Storage } from '../electron/storage';
 import { createTask } from '../src/engine';
+import { recordTask } from '../src/records';
 import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test';
 import fs from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -118,6 +119,16 @@ test.beforeEach(async ({}, info) => {
       task.targets[1].error = '健康检查未通过';
       store.complete(task, false);
     }
+  }
+  if (info.title.startsWith('历史快照')) {
+    const task = createTask(db, db.services[0], db.targets.slice(0, 2), {}, 'existing');
+    task.id = 'DC-legacy-history';
+    task.note = '保留快照的历史部署';
+    task.status = 'success';
+    task.buildLogs = [];
+    for (const target of task.targets) target.status = 'success';
+    task.targets[0].logs = ['旧记录保留的日志'];
+    store.importDatabase(recordTask(db, task, false), true);
   }
   store.close();
   app = await electron.launch({
@@ -328,7 +339,14 @@ test('串行发布清单复用部署控件，确认后串行执行并进入完�
       return {
         on(kind: string, listener: (value: unknown) => void) { listeners.set(kind, listener); },
         postMessage(message: any) {
-          if (message.kind === 'begin') jobs.set(message.value.task.service.id, { input: message.value, emit });
+          if (message.kind === 'begin') {
+            jobs.set(message.value.task.service.id, { input: message.value, emit });
+            const task = structuredClone(message.value.task);
+            const target = task.targets[0];
+            target.status = 'running';
+            target.steps.find((step: any) => step.key === 'upload').status = 'running';
+            emit('message', { kind: 'snapshot', task });
+          }
         },
         kill() {},
       } as unknown as Electron.UtilityProcess;
@@ -382,6 +400,7 @@ test('串行发布清单复用部署控件，确认后串行执行并进入完�
   const start = footer.getByRole('button', { name: '确认并开始发布' });
   await expect(start).toBeDisabled();
   await expect(manifest.locator('.confirm-target').first()).toContainText('远程文件');
+  await expect(manifest.locator('.confirm-target-details[open], .release-review details[open]')).toHaveCount(0);
   await expect(manifest.getByRole('checkbox', { name: /已核对/ })).toHaveCount(0);
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1.5));
   await expect(start).toBeInViewport({ ratio: 1 });
@@ -394,6 +413,7 @@ test('串行发布清单复用部署控件，确认后串行执行并进入完�
   const firstLog = manifest.getByRole('button', { name: '查看 ' + db.services[0].name + ' 执行日志' });
   const secondLog = manifest.getByRole('button', { name: '查看 ' + db.services[1].name + ' 执行日志' });
   await expect(firstLog).toBeVisible();
+  await expect(firstLog.getByText(/上传与校验/)).toBeVisible();
   await expect(secondLog).toHaveCount(0);
   await firstLog.click();
   await expect(page.getByRole('heading', { name: '执行日志' })).toBeVisible();
@@ -421,12 +441,36 @@ test('串行发布清单复用部署控件，确认后串行执行并进入完�
   await openReleaseHistory.press('Enter');
   const tasks = page.locator('.history-task');
   await expect(tasks).toHaveCount(2);
-  await expect(tasks.getByText('清单部署')).toHaveCount(2);
+  await expect(tasks.getByText('批量部署')).toHaveCount(2);
   await page.getByRole('button', { name: /移除清单/ }).click();
   await expect(tasks).toHaveCount(3);
-  await tasks.filter({ hasText: '清单部署' }).first().getByRole('button', { name: /更多任务/ }).click();
+  await tasks.filter({ hasText: '批量部署' }).first().getByRole('button', { name: /更多任务/ }).click();
   await page.getByRole('menuitem', { name: '筛选同清单' }).click();
   await expect(tasks).toHaveCount(2);
+});
+
+test('历史快照进入全页详情，保留日志并可切换目标', async () => {
+  const page = await app.firstWindow();
+  await size(900, 600);
+  await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '部署历史', exact: true }).click();
+  const row = page.getByRole('row', { name: '查看任务：保留快照的历史部署' });
+  await row.press('Enter');
+  await expect(page.getByRole('heading', { name: /环境0 · 历史记录/ })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: '部署记录详情' })).toHaveCount(0);
+  await expect(page.getByText('旧记录保留的日志', { exact: true })).toBeVisible();
+  await expect(page.getByText(/完整日志未保存/)).toBeVisible();
+  const exported = path.join(dir, 'history-snapshot.log');
+  await app.evaluate(({ dialog }, filePath) => {
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath });
+  }, exported);
+  await page.getByRole('button', { name: '导出日志', exact: true }).click();
+  await expect.poll(() => fs.readFile(exported, 'utf8').catch(() => '')).toContain('旧记录保留的日志');
+  await page.getByRole('button', { name: '环境1', exact: true }).click();
+  await expect(page.getByRole('heading', { name: /环境1 · 历史记录/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: '导出日志', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: '返回部署历史' }).click();
+  await expect(row).toBeFocused();
+  await boundaries();
 });
 
 test('部署统计共享筛选，键盘可切换，在两种主题与高缩放下保持可用', async () => {

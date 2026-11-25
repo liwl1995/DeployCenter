@@ -1593,11 +1593,18 @@ async function boot() {
       ];
       const destination = await fsp.open(result.filePath, 'w', 0o600);
       try {
-        for (const file of files) {
+        const database = target && !storage.task(task) ? storage.database() : undefined;
+        const saved = database && [
+          database.taskHistory[task]?.buildLogs,
+          database.history.find((record) => record.taskId === task && record.target.id === target)?.logs,
+        ];
+        for (const [index, file] of files.entries()) {
           await destination.write('\n=== ' + path.basename(file) + ' ===\n');
           if (fs.existsSync(file))
             for await (const chunk of fs.createReadStream(file))
               await destination.writeFile(chunk as Buffer);
+          else if (saved?.[index]?.length)
+            await destination.write(saved[index]!.join('\n') + '\n');
         }
       } finally {
         await destination.close();

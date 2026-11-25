@@ -11,6 +11,7 @@ export interface HoverTipProps {
   align?: 'start' | 'center' | 'end';
   /** 鼠标离开触发元素后关闭，提示本身不接收指针事件。 */
   disableHoverableContent?: boolean;
+  contentClassName?: string;
 }
 
 /** 文案末尾的「…」是菜单项「会弹出对话框」的约定，放进提示里像被截断，去掉。 */
@@ -36,6 +37,7 @@ export function HoverTip({
   side = 'bottom',
   align = 'center',
   disableHoverableContent,
+  contentClassName,
 }: HoverTipProps) {
   if (content === undefined || content === null || content === '') {
     return children;
@@ -49,7 +51,7 @@ export function HoverTip({
         <TooltipContent
           side={side}
           align={align}
-          className={disableHoverableContent ? 'pointer-events-none' : undefined}
+          className={[contentClassName, disableHoverableContent && 'pointer-events-none'].filter(Boolean).join(' ')}
         >
           {stripEllipsis(content)}
         </TooltipContent>

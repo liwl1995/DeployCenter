@@ -2,6 +2,7 @@ import { ArrowLeft, ChevronRight, GripVertical, ListOrdered, Plus, Rocket, X } f
 import { useRef, useState, type RefObject } from 'react';
 import { BuildModeChoice } from './BuildArtifactChoice';
 import { ConfirmTargets } from './ConfirmTargets';
+import { ConfirmWarning, confirmationWarnings } from './ConfirmWarning';
 import { DeploymentTargetRow } from './DeploymentTargetRow';
 import { DeployFailurePolicy } from './DeployFailurePolicy';
 import { TargetObservationOverride } from './TargetObservationOverride';
@@ -12,6 +13,8 @@ import { Button } from './design/ui/button';
 import { Checkbox } from './design/ui/checkbox';
 import { confirmProduction, productionNames } from './presentation';
 import { seconds, type Database, type Target, type Task } from './model';
+import { deploymentStage, deploymentStages } from './step-names';
+import { useTaskClock } from './task-clock';
 import type { DesktopAPI } from './platform';
 import type { ReleaseRequest, ReleaseReview, ReleaseRow, ReleaseRun } from './serial-release';
 import { Badge, Card, Field, Modal } from './ui';
@@ -22,10 +25,21 @@ const labels: Record<ReleaseRow['state'], string> = {
   failed: '失败', cancelled: '已取消', unknown: '待核实', skipped: '未执行',
 };
 
-export function ReleaseManifest({ api, db, run, showRun, setShowRun, draft, setDraft, saved, blocked, onTask, onHistory, onCopy, board, policy, onPolicy, onEditTarget }: {
+function LivePhase({ snapshot }: { snapshot: Task }) {
+  const task = useTaskClock(snapshot);
+  const build = task.buildSteps.some((step) => step.status === 'running');
+  const target = task.targets[task.active];
+  const step = target?.steps.find((entry) => entry.status === 'running');
+  const phase = task.status === 'cancelling' ? '等待安全取消' :
+    step ? deploymentStages[deploymentStage(step.key)] : build ? deploymentStages[0] : '执行中';
+  return <p className="release-live-phase">{phase}{step ? ' · ' + target.target.name : ''} · {seconds(task.elapsed)}</p>;
+}
+
+export function ReleaseManifest({ api, db, run, liveTask, showRun, setShowRun, draft, setDraft, saved, blocked, onTask, onHistory, onCopy, board, policy, onPolicy, onEditTarget }: {
   api: DesktopAPI;
   db: Database;
   run: ReleaseRun | null;
+  liveTask: Task | null;
   showRun: boolean;
   setShowRun: (value: boolean) => void;
   draft: ReleaseDraft;
@@ -54,6 +68,9 @@ export function ReleaseManifest({ api, db, run, showRun, setShowRun, draft, setD
   const [drop, setDrop] = useState('');
   const dragging = useRef('');
   const active = run?.state === 'running' || run?.state === 'cancelling';
+  const current = run?.rows.find((row) => row.state === 'starting' || row.state === 'running');
+  const awaiting = run?.rows.find((row) => row.state === 'unknown' || row === current);
+  const processed = run?.rows.filter((row) => !['queued', 'starting', 'running', 'unknown'].includes(row.state)).length ?? 0;
   const unverifiedTargets = run?.rows.reduce((sum, row) => sum + (row.unverifiedTargets ?? 0), 0) ?? 0;
   const step = review.length ? 1 : run && (showRun || active || run.state === 'paused') ? 2 : 0;
   const defaults = db.settings.failurePolicy;
@@ -121,7 +138,7 @@ export function ReleaseManifest({ api, db, run, showRun, setShowRun, draft, setD
   const confirmedPolicy = resume ? run?.failurePolicy ?? defaults : policy ?? defaults;
   const policyText = confirmedPolicy === 'stop' ? '失败后停止后续服务' : '失败后继续其他服务';
   const previewTargets = review.flatMap(({ task }) => task.targets);
-  const backupOff = previewTargets.filter((item) => !item.backup.enabled).length;
+  const warnings = review.flatMap(({ task }) => confirmationWarnings(task, true));
   const stage = (task: Task) => task.targets.map((item) => item.target.name).join('、');
 
   return (
@@ -175,7 +192,7 @@ export function ReleaseManifest({ api, db, run, showRun, setShowRun, draft, setD
                       const destination = draft[index + (event.key === 'ArrowUp' ? -1 : 1)];
                       if (destination) { event.preventDefault(); move(row.serviceId, destination.serviceId); }
                     }}><GripVertical size={16} /></Button>
-                  <small>{index + 1}</small><h3>{service?.name ?? '服务已删除'}</h3>
+                  <small className="release-order">{index + 1}</small><h3 className="release-service-name">{service?.name ?? '服务已删除'}</h3>
                 </div>
                 <div className="row wrap">
                   {!busy && <BuildModeChoice mode={row.build}
@@ -234,23 +251,22 @@ export function ReleaseManifest({ api, db, run, showRun, setShowRun, draft, setD
           })}
         </>}
         {step === 1 && <>
-          <Card title="核对本次发布" className="release-review">
-            <p className="release-sequence">{review.map(({ task }) => task.service.name).join(' → ')}</p>
-            <p className="note">{review.length} 个服务 · {previewTargets.length} 个目标 · {policyText}</p>
-            {(production.length > 0 || backupOff > 0) && <p className="warning">
-              {production.length > 0 && <span>含 {production.length} 个正式目标。 </span>}
-              {backupOff > 0 && <span>有 {backupOff} 个目标未启用备份。</span>}
-            </p>}
-          </Card>
+          <div className="release-review-summary">
+            <strong>核对本次发布</strong>
+            <span className="note">{review.length} 个服务 · {previewTargets.length} 个目标 · {policyText}</span>
+            {production.length > 0 && <Badge kind="warn">{production.length} 个正式目标</Badge>}
+            <ConfirmWarning warnings={warnings} />
+          </div>
           {review.map(({ task }, index) => (
             <Card className="release-review" key={task.service.id}>
               <div className="confirm-header">
-                <h3>{index + 1}. {task.service.name}</h3>
+                <small className="release-order">{index + 1}</small>
+                <h3 className="release-service-name">{task.service.name}</h3>
                 <Badge>{task.build === 'rebuild' ? '重新构建一次' : '使用现有 JAR'}</Badge>
               </div>
               <p className="confirm-brief">{stage(task)} · {task.failurePolicy === 'stop' ? '失败后停止后续目标' : '失败后继续其他目标'}</p>
               {task.note && <p className="note">本次内容：{task.note}</p>}
-              <ConfirmTargets task={task} expanded />
+              <ConfirmTargets task={task} />
               {productionNames(task).length > 0 && <div className="production-confirm">
                 <strong>正式环境确认</strong>
                 {productionNames(task).map(({ id, name }) => <Field key={id} label={'输入环境名称：' + name}>
@@ -258,14 +274,14 @@ export function ReleaseManifest({ api, db, run, showRun, setShowRun, draft, setD
                     onChange={(event) => setNames((old) => ({ ...old, [id]: event.target.value }))} />
                 </Field>)}
               </div>}
-              <details className="workspace-disclosure" open>
+              <details className="workspace-disclosure">
                 <summary>构建、产物与 Git 详情</summary>
                 {task.build === 'rebuild' && <dl className="detail-list">
                   <dt>构建命令</dt><dd className="path">{task.buildContext.command}</dd>
                   <dt>构建目录</dt><dd className="path">{task.buildContext.workDir}</dd>
                   <dt>构建 JDK</dt><dd>{task.buildContext.jdk}</dd>
                 </dl>}
-                <ArtifactInfo value={task.artifact} service={task.service} />
+                <ArtifactInfo value={task.artifact} />
                 <p className="branch">{task.service.git.branch} <HashValue label="Git 提交" value={task.service.git.commit} onCopy={onCopy} /></p>
               </details>
             </Card>
@@ -284,12 +300,22 @@ export function ReleaseManifest({ api, db, run, showRun, setShowRun, draft, setD
           </Card>}
         </>}
         {step === 2 && run && <>
-          <div className={'notice release-result ' + (run.state === 'paused' ? 'warning' : '')} role="status">
-            <strong>{run.message || '正在串行发布'}</strong>
-            <p>{run.rows.filter((row) => row.state === 'success').length} 成功 · {run.rows.filter((row) => row.state === 'failed' || row.state === 'partial').length} 失败或部分成功 · {run.rows.filter((row) => row.state === 'skipped').length} 未执行</p>
-            {unverifiedTargets > 0 && <p>{unverifiedTargets} 个目标健康未验证</p>}
-            {(active || run.state === 'done') && <progress aria-label="清单处理进度" max={run.rows.length}
-              value={run.rows.filter((row) => !['queued', 'starting', 'running', 'unknown'].includes(row.state)).length} />}
+          <div className="release-result" role="status">
+            <div className="release-heading">
+              <strong className="release-service-name">{run.state === 'done' ? run.message : `已处理 ${processed} / ${run.rows.length} 个服务`}</strong>
+              {run.state === 'paused' && <Badge kind="warn">已暂停</Badge>}
+              {active && current && <span className="note">当前服务 · {current.name}</span>}
+            </div>
+            {active && <progress aria-label="清单处理进度" max={run.rows.length} value={processed} />}
+            {run.state === 'cancelling' && <p className="note">{run.message}</p>}
+            {run.state === 'paused' && <p className="note">{awaiting && <strong>{awaiting.name} · </strong>}{run.message}</p>}
+            {run.state === 'done' && <div className="row wrap release-totals">
+              {(['success', 'partial', 'failed', 'cancelled', 'unknown', 'skipped'] as const).map((state) => {
+                const count = run.rows.filter((row) => row.state === state).length;
+                return (count > 0 || state === 'success') && <span key={state}>{labels[state]} {count} 个服务</span>;
+              })}
+            </div>}
+            {unverifiedTargets > 0 && <p className="note">{unverifiedTargets} 个目标健康未验证</p>}
           </div>
           <div className="release-run-list">
             {run.rows.map((row, index) => {
@@ -297,11 +323,13 @@ export function ReleaseManifest({ api, db, run, showRun, setShowRun, draft, setD
               return <Row className={'release-run-row release-' + row.state} key={row.request.serviceId}
                 type={row.taskId ? 'button' : undefined} onClick={row.taskId ? () => onTask(row.taskId!) : undefined}
                 aria-label={row.taskId ? '查看 ' + row.name + ' 执行日志' : undefined}>
-                <small>{index + 1}</small>
+                <small className="release-order">{index + 1}</small>
                 <div className="grow"><div className="row wrap"><strong>{row.name}</strong>
                   <Badge kind={row.state === 'success' ? 'good' : row.state === 'failed' || row.state === 'partial' ? 'danger' : row.state === 'unknown' ? 'warn' : ''}>{labels[row.state]}</Badge>
                   {row.elapsed !== undefined && <small>{seconds(row.elapsed)}</small>}</div>
                   <small>{row.targets.join('、')}</small>
+                  {active && row === current && liveTask?.id === row.taskId && liveTask &&
+                    <LivePhase key={liveTask.id} snapshot={liveTask} />}
                   {!!row.unverifiedTargets && <p className="note">{row.unverifiedTargets} 个目标健康未验证</p>}
                   {row.detail && <p className="note">{row.detail}</p>}
                 </div>
