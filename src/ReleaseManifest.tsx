@@ -144,7 +144,7 @@ export function ReleaseManifest({ api, db, run, liveTask, showRun, setShowRun, d
   return (
     <section className="release-manifest" aria-label="发布清单">
       <ol className="release-steps" aria-label="发布步骤">
-        {['编排', '确认', '执行与汇总'].map((label, index) => (
+        {['编排', '确认', '执行'].map((label, index) => (
           <li key={label} aria-current={step === index ? 'step' : undefined}>
             <span>{index + 1}</span>{label}
           </li>
@@ -362,7 +362,7 @@ export function ReleaseManifest({ api, db, run, liveTask, showRun, setShowRun, d
             setConfirmation(undefined);
             setShowRun(true);
             board.current?.scrollTo(0, 0);
-          })}><Rocket size={15} />确认并开始发布</Button>
+          })}><Rocket size={15} />开始发布</Button>
         </>}
         {step === 2 && run?.state === 'running' && <Button variant="danger" onClick={() => setModal('cancel')}>取消清单</Button>}
         {step === 2 && run?.state === 'cancelling' && <Button variant="neutral" disabled>正在取消</Button>}

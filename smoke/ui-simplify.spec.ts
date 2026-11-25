@@ -397,7 +397,7 @@ test('串行发布清单复用部署控件，确认后串行执行并进入完�
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1));
   await expect(production).toBeChecked();
   await footer.getByRole('button', { name: '下一步：确认' }).click();
-  const start = footer.getByRole('button', { name: '确认并开始发布' });
+  const start = footer.getByRole('button', { name: '开始发布' });
   await expect(start).toBeDisabled();
   await expect(manifest.locator('.confirm-target').first()).toContainText('远程文件');
   await expect(manifest.locator('.confirm-target-details[open], .release-review details[open]')).toHaveCount(0);
