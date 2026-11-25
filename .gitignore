@@ -25,4 +25,5 @@ __pycache__/
 /SHA256SUMS
 /.workbuddy/
 /AGENTS.md
+/requirements/
 clean-generated.ps1

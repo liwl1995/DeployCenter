@@ -92,7 +92,8 @@
         "to": "docs",
         "filter": [
           "**/*.md",
-          "**/*.txt"
+          "**/*.txt",
+          "screenshots/*.png"
         ]
       }
     ],
