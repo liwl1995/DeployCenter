@@ -142,14 +142,15 @@ describe('v0.3 组件回归', () => {
     const memory = setSpy.mock.contexts[0] as CredentialSession;
     expect(memory.get('s19')).toBeUndefined();
   });
-  it('B8 私钥口令及 Windows 保存选项明确是正式版能力', () => {
+  it('B8 私钥口令及 Windows 保存选项明确是正式版能力', async () => {
     const db = seed();
     db.servers[0].auth = 'key';
     db.servers[0].credentialMode = 'windows';
     localStorage.setItem('deploy-center-v2', safeConfigJson(db));
     render(<App />);
     const modal = showConfirmation();
-    expect(modal.textContent).toContain('Windows 凭据管理器是正式版能力');
+    await userEvent.hover(within(modal).getByRole('button', { name: '口令保存提示' }));
+    expect((await screen.findByRole('tooltip')).textContent).toContain('Windows 凭据管理器是正式版能力');
     expect(within(modal).getByLabelText(/私钥口令/)).toBeTruthy();
     fireEvent.click(within(modal).getByRole('button', { name: '返回检查' }));
     fireEvent.click(screen.getByRole('button', { name: '服务器' }));
@@ -195,7 +196,7 @@ describe('v0.3 组件回归', () => {
     expect(modal.textContent).toContain('E:\\dev\\jdk\\jdk21');
     expect(modal.textContent).toContain('backend\\app\\target\\cordys-crm.jar');
   });
-  it('E12/E14 现有 JAR 显示元信息、旧提交提醒和测试夹具限制', () => {
+  it('E12/E14 现有 JAR 显示元信息、旧提交提醒和测试夹具限制', async () => {
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: '使用现有 JAR' }));
     expect(screen.getByText('测试夹具只提供文件名、大小和修改时间。')).toBeTruthy();
@@ -203,11 +204,14 @@ describe('v0.3 组件回归', () => {
     const modal = showConfirmation();
     const details = within(modal).getByText('产物与 Git 详情', { exact: true });
     expect(details.closest('details')?.open).toBe(false);
-    expect(within(modal).getByText(/JAR 早于当前 Git 提交/).closest('details')).toBeNull();
+    const warning = within(modal).getByRole('button', { name: '产物版本提示' });
+    expect(warning.closest('details')).toBeNull();
+    await userEvent.hover(warning);
+    expect((await screen.findByRole('tooltip')).textContent).toContain('JAR 早于当前 Git 提交');
+    await userEvent.unhover(warning);
     fireEvent.click(details);
     expect(modal.textContent).toContain('80.3 MB');
     expect(modal.textContent).toContain('2026-11-01');
-    expect(modal.textContent).toContain('JAR 早于当前 Git 提交');
     expect(modal.textContent).toContain('E:\\projects\\CordysCRM');
     expect(within(modal).queryByRole('heading', { name: '构建配置' })).toBeNull();
   });
