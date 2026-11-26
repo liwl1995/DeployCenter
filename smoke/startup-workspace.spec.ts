@@ -110,9 +110,11 @@ test('启动骨架、工作台首帧与原生主题一致，更新提醒同步�
     await expect(update.locator('.update-notification-dot')).toBeVisible();
     await update.press('Enter');
     const startupCheck = page.getByRole('switch', { name: '启动时检查更新' });
-    await expect(startupCheck).not.toBeChecked();
-    await startupCheck.press('Space');
     await expect(startupCheck).toBeChecked();
+    await page.getByText('启动时检查更新', { exact: true }).click();
+    await expect(startupCheck).toBeChecked();
+    await startupCheck.press('Space');
+    await expect(startupCheck).not.toBeChecked();
     await emit(false);
     await expect(update.locator('.update-notification-dot')).toHaveCount(0);
 

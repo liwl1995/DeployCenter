@@ -82,6 +82,8 @@ it('下载后重建实例，离线验证受保护凭据和文件，直接恢复�
   expect(state.installerPath).toContain(f.directory);
   expect(state.release?.version).toBe('1.5.7');
   expect(f.fetch).toHaveBeenCalledTimes(2);
+  // 默认启动检查即使离线失败，也要保留已恢复的可安装状态。
+  expect((await restored.check()).stage).toBe('ready');
   await restored.install();
   expect(f.launch).toHaveBeenCalledTimes(1);
   expect((await restored.location()).file).toBe(state.installerPath);

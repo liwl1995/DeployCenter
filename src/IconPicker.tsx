@@ -3,7 +3,7 @@ import { Check, RotateCcw } from 'lucide-react';
 import { Modal } from './ui';
 import { Button } from './design/ui/button';
 import { Input } from './design/ui/input';
-import { ENTITY_ICON_LIST, ICON_COLORS, type EntityIconKind } from './entity-icons';
+import { DEFAULT_ENTITY_ICON, ENTITY_ICON_LIST, ICON_COLORS, type EntityIconKind } from './entity-icons';
 import type { EntityIcon } from './model';
 
 /** 图标选择器：搜索 + 预设颜色 + 图标平铺网格，选中即应用。 */
@@ -24,13 +24,14 @@ export function IconPicker({
   const searchRef = useRef<HTMLInputElement>(null);
 
   const apply = (nextName: string | undefined, nextColor: string) => {
-    setName(nextName);
+    const iconName = nextName ?? (nextColor ? DEFAULT_ENTITY_ICON[kind] : undefined);
+    setName(iconName);
     setColor(nextColor);
-    if (!nextName) {
+    if (!iconName) {
       onPick(undefined);
       return;
     }
-    onPick(nextColor ? { name: nextName, color: nextColor } : { name: nextName });
+    onPick(nextColor ? { name: iconName, color: nextColor } : { name: iconName });
   };
 
   const reset = () => {
@@ -104,7 +105,7 @@ export function IconPicker({
                   aria-pressed={active}
                   title={icon.label}
                   aria-label={icon.label}
-                  onClick={() => apply(active ? undefined : icon.name, color)}
+                  onClick={() => active ? apply(undefined, '') : apply(icon.name, color)}
                 >
                   <icon.Icon size={20} strokeWidth={1.75} color={color || undefined} />
                   <span>{icon.label}</span>

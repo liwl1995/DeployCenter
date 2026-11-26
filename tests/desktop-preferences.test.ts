@@ -51,6 +51,7 @@ it('后台检查等待一分钟，间隔六小时，并根据当前偏好下载'
   const update: AppUpdate = { currentVersion: '2.1.0', stage: 'available', received: 0, speed: 0 };
   const server = {
     isBusy: vi.fn().mockReturnValue(false),
+    restore: vi.fn(),
     check: vi.fn().mockResolvedValue(update),
     download: vi.fn().mockResolvedValue({ ...update, stage: 'ready' }),
   };
@@ -79,6 +80,7 @@ it('关闭后台检查后，正在返回的检查结果不会触发新下载', a
   let finish!: (result: AppUpdate) => void;
   const server = {
     isBusy: () => false,
+    restore: vi.fn(),
     check: () => new Promise<AppUpdate>((resolve) => { finish = resolve; }),
     download: vi.fn(),
   };
@@ -95,13 +97,16 @@ it('启用启动检查时立即检查一次，手动模式不创建周期任务'
   vi.useFakeTimers();
   const server = {
     isBusy: () => false,
+    restore: vi.fn(),
     check: vi.fn().mockResolvedValue({ stage: 'available' }),
     download: vi.fn(),
   };
   const policy = backgroundUpdates(server, vi.fn());
   policy('manual', true);
   await vi.advanceTimersByTimeAsync(0);
+  expect(server.restore).toHaveBeenCalledTimes(1);
   expect(server.check).toHaveBeenCalledTimes(1);
+  expect(server.restore.mock.invocationCallOrder[0]).toBeLessThan(server.check.mock.invocationCallOrder[0]);
   await vi.advanceTimersByTimeAsync(6 * 3600_000);
   expect(server.check).toHaveBeenCalledTimes(1);
   expect(server.download).not.toHaveBeenCalled();

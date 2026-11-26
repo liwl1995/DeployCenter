@@ -129,7 +129,7 @@ export function EntityWorkspace<T extends { id: string }>({
                     <button
                       type="button"
                       className={'record-icon' + (onPickIcon ? ' record-icon-pickable' : '')}
-                      aria-label={onPickIcon ? '更换' + label + '图标' : undefined}
+                      aria-label={onPickIcon ? '更换' + label + '「' + title(item) + '」的图标' : undefined}
                       title={onPickIcon ? '点击更换图标' : undefined}
                       disabled={!onPickIcon}
                       onClick={onPickIcon ? () => onPickIcon(item) : undefined}

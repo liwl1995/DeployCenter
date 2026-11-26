@@ -37,6 +37,26 @@ it('空计划显示入口与桌面运行条件', () => {
   expect(screen.getByText('暂无发布计划')).toBeTruthy();
   expect(screen.getByText(/电脑须保持开机/)).toBeTruthy();
 });
+it('发布计划跟随当前服务图标，服务删除后使用计划快照', () => {
+  const value = plan();
+  value.task.service.icon = { name: 'Rocket' };
+  const props = {
+    plans: [value],
+    busy: false,
+    onOpen: vi.fn(),
+    onCancel: vi.fn(),
+    onChange: vi.fn(),
+    onPrepare: vi.fn(),
+  };
+  const { container, rerender } = render(
+    <ReleaseSchedules {...props} services={[{ ...value.task.service, icon: { name: 'Server' } }]} />,
+  );
+  expect(container.querySelector('.record-icon .lucide-server')).toBeTruthy();
+  rerender(<ReleaseSchedules {...props} services={[{ ...value.task.service, icon: undefined }]} />);
+  expect(container.querySelector('.record-icon .lucide-boxes')).toBeTruthy();
+  rerender(<ReleaseSchedules {...props} services={[]} />);
+  expect(container.querySelector('.record-icon .lucide-rocket')).toBeTruthy();
+});
 it('默认只显示未执行计划，可以筛出执行中和已结束计划', () => {
   const value = plan();
   render(

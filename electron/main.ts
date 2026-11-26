@@ -907,6 +907,7 @@ async function boot() {
     if (installed && !testing) {
       setBackgroundUpdatePolicy = backgroundUpdates({
         isBusy: () => updater!.isBusy() || migrating || pendingRestart,
+        restore: () => updater!.restore(),
         check: () => updater!.check(),
         download: () => updater!.download(),
       }, (error) => console.warn('后台检查更新失败', error));

@@ -91,7 +91,7 @@ export function ReleaseSchedules({
             return (
               <article className="schedule-record" key={plan.id}>
                 <span className="record-icon">
-                  <EntityIcon kind="service" icon={service?.icon ?? plan.task.service.icon} size={18} strokeWidth={1.5} />
+                  <EntityIcon kind="service" icon={service ? service.icon : plan.task.service.icon} size={18} strokeWidth={1.5} />
                 </span>
                 <div className="schedule-identity">
                   <div className="row wrap">
