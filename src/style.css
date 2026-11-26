@@ -1203,6 +1203,7 @@ p.code,
   border-radius: var(--radius-pill);
   background: var(--control-off);
   position: relative;
+  cursor: pointer;
   transition: background 150ms;
 }
 .switch-row input:checked {

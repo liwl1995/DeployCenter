@@ -22,7 +22,7 @@ export const desktopPreferenceDefaults: DesktopPreferences = {
   launchAtLogin: false,
   closeToTray: false,
   updatePolicy: 'manual',
-  checkUpdatesOnStartup: false,
+  checkUpdatesOnStartup: true,
   sortSidebarByDeployment: false,
   sidebarServiceOrder: [],
 };

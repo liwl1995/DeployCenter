@@ -178,7 +178,7 @@ export function Switch({
   disabled?: boolean;
 }) {
   return (
-    <label className="switch-row">
+    <div className="switch-row">
       <span>
         <strong>{label}</strong>
         {description && <small>{description}</small>}
@@ -191,7 +191,7 @@ export function Switch({
         onChange={(e) => onChange(e.target.checked)}
         aria-label={label}
       />
-    </label>
+    </div>
   );
 }
 const modalPanels = new Set<HTMLElement>();
