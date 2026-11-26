@@ -25,6 +25,7 @@ function plan(): ReleaseSchedule {
 it('空计划显示入口与桌面运行条件', () => {
   render(
     <ReleaseSchedules
+      services={[]}
       plans={[]}
       busy={false}
       onOpen={vi.fn()}
@@ -40,6 +41,7 @@ it('默认只显示未执行计划，可以筛出执行中和已结束计划', (
   const value = plan();
   render(
     <ReleaseSchedules
+      services={[]}
       plans={[
         value,
         { ...value, id: 'SP-executing', state: 'executing' },
@@ -73,6 +75,7 @@ it('计划提供准备日志、改期、重新准备与取消，执行中只提�
     user = userEvent.setup();
   const view = render(
     <ReleaseSchedules
+      services={[]}
       plans={[value]}
       busy={false}
       onOpen={open}
@@ -95,6 +98,7 @@ it('计划提供准备日志、改期、重新准备与取消，执行中只提�
   expect(cancel).toHaveBeenCalledWith(value.id);
   view.rerender(
     <ReleaseSchedules
+      services={[]}
       plans={[{ ...value, state: 'executing', taskId: 'DC-task' }]}
       busy
       onOpen={open}
@@ -114,6 +118,7 @@ it('计划提供准备日志、改期、重新准备与取消，执行中只提�
 it('需重新确认的计划不允许仅改时间绕过检查，忙时禁止重新准备', () => {
   render(
     <ReleaseSchedules
+      services={[]}
       plans={[{ ...plan(), state: 'confirmation' }]}
       busy
       onOpen={vi.fn()}

@@ -1730,6 +1730,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           {page === 'schedules' && desktop && (
             <ReleaseSchedules
               plans={schedules}
+              services={db.services}
               busy={busy || isActive(task)}
               onOpen={(id) =>
                 void nativeAction(async () => {

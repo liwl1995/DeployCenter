@@ -1546,7 +1546,7 @@ p.code,
 }
 .schedule-record {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-3);
   padding: var(--card-py) 12px;
   min-height: var(--h-card);

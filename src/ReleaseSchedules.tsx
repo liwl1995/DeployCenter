@@ -6,7 +6,7 @@ import { scheduleLabels, pendingSchedule, scheduleWindow } from './schedules';
 import { CalendarClock } from 'lucide-react';
 import { Badge } from './ui';
 import { MoreMenu, type MenuAction } from './EntityActions';
-import { fmtTime } from './model';
+import { fmtTime, type Service } from './model';
 import { EntityIcon } from './entity-icons';
 
 type ScheduleFilter = 'pending' | 'executing' | 'finished' | 'all';
@@ -20,6 +20,7 @@ const scheduleFilters: SegmentedItem<ScheduleFilter>[] = [
 /** 计划详情只展示准备结果，真实发布结果由关联任务承载。 */
 export function ReleaseSchedules({
   plans,
+  services,
   busy,
   onOpen,
   onCancel,
@@ -27,6 +28,7 @@ export function ReleaseSchedules({
   onPrepare,
 }: {
   plans: ReleaseSchedule[];
+  services: Service[];
   busy: boolean;
   onOpen: (id: string) => void;
   onCancel: (id: string) => void;
@@ -70,6 +72,7 @@ export function ReleaseSchedules({
         {visible
           .sort((a, b) => b.createdAt - a.createdAt)
           .map((plan) => {
+            const service = services.find((s) => s.id === plan.task.service.id);
             const canPrepare = !['executing', 'preparing'].includes(plan.state);
             const canReschedule = canPrepare && !['completed', 'confirmation'].includes(plan.state);
             const actions: MenuAction[] = [
@@ -88,7 +91,7 @@ export function ReleaseSchedules({
             return (
               <article className="schedule-record" key={plan.id}>
                 <span className="record-icon">
-                  <EntityIcon kind="service" icon={plan.task.service.icon} size={18} strokeWidth={1.5} />
+                  <EntityIcon kind="service" icon={service?.icon ?? plan.task.service.icon} size={18} strokeWidth={1.5} />
                 </span>
                 <div className="schedule-identity">
                   <div className="row wrap">
