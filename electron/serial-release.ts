@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { Task } from '../src/model';
+import { withoutIcon, type Task } from '../src/model';
 import type { Approval } from '../src/platform';
 import { confirmProduction } from '../src/presentation';
 import type { ReleasePreview, ReleaseRequest, ReleaseReview, ReleaseRow, ReleaseRun } from '../src/serial-release';
@@ -37,12 +37,16 @@ type DeploymentAccess = {
 
 function reviewedDetails(task: Task) {
   return JSON.stringify({
-    service: task.service,
+    service: withoutIcon(task.service),
     build: task.buildContext,
     artifact: task.artifact,
     note: task.note,
     failurePolicy: task.failurePolicy,
-    targets: task.targets.map(({ target, server, backup }) => ({ target, server, backup })),
+    targets: task.targets.map(({ target, server, backup }) => ({
+      target: withoutIcon(target),
+      server: withoutIcon(server),
+      backup,
+    })),
   });
 }
 

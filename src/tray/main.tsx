@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Box, ChevronRight, ExternalLink, Power, Settings } from 'lucide-react';
+import { ChevronRight, ExternalLink, Power, Settings } from 'lucide-react';
+import { EntityIcon } from '../entity-icons';
 import type { TrayAction, TraySnapshot } from '../../electron/tray-panel';
 import './panel.css';
 
@@ -55,7 +56,7 @@ function TrayMenu() {
           </button>}
         </> : state?.services.length ? state.services.map((service) =>
           <button key={service.id} className="entry service" onClick={() => open('service', service.id)}>
-            <Box size={16} /><span>{service.name}</span><ChevronRight size={16} />
+            <EntityIcon kind="service" icon={service.icon} size={16} strokeWidth={1.75} /><span>{service.name}</span><ChevronRight size={16} />
           </button>
         ) : <p>暂无最近使用的服务</p>}
       </section>

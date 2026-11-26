@@ -1,13 +1,14 @@
 import { BrowserWindow, ipcMain, screen, Tray, type Rectangle } from 'electron';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import type { EntityIcon } from '../src/model';
 
 export type TraySnapshot = {
   dark: boolean;
   closeToTray: boolean;
   task?: { id: string; name: string; progress: number };
   schedule?: { name: string; at: number };
-  services: { id: string; name: string }[];
+  services: { id: string; name: string; icon?: EntityIcon }[];
 };
 export type TrayAction = 'open' | 'settings' | 'task' | 'schedules' | 'service' | 'toggle' | 'quit';
 

@@ -54,6 +54,7 @@ import {
   type Artifact,
   type Task,
   type History,
+  type EntityIcon,
 } from './model';
 import { copyText } from './clipboard';
 import { createTask, startTask, tick, cancelTask, requestFailure } from './engine';
@@ -61,6 +62,8 @@ import { recordTask, pruneHistory, canRollback as rollbackAllowed, historyLogs }
 import { CredentialSession } from './credentials';
 import { Badge, Card, Field, Modal, Demo, download, hasOpenModal } from './ui';
 import { ServiceForm, ServerForm, TargetForm } from './forms';
+import { IconPicker } from './IconPicker';
+import { EntityIcon as EntityIconView, type EntityIconKind } from './entity-icons';
 import './style.css';
 import { LegacyArtifactReview } from './DataSettings';
 import { SettingsWorkspace, settingsLabels, type SettingsSection } from './SettingsWorkspace';
@@ -243,6 +246,26 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   const [schedules, setSchedules] = useState<ReleaseSchedule[]>([]);
   const [deployNote, setDeployNote] = useState<string>();
   const [dialog, setDialog] = useState<Dialog>(null);
+  const [iconPicker, setIconPicker] = useState<{ kind: EntityIconKind; id: string } | null>(null);
+  const iconPickerEntity = iconPicker
+    ? iconPicker.kind === 'service'
+      ? db.services.find((s) => s.id === iconPicker.id)
+      : iconPicker.kind === 'server'
+        ? db.servers.find((s) => s.id === iconPicker.id)
+        : db.targets.find((t) => t.id === iconPicker.id)
+    : undefined;
+  const pickIcon = (kind: EntityIconKind, id: string) => setIconPicker({ kind, id });
+  const setEntityIcon = (icon: EntityIcon | undefined) => {
+    if (!iconPicker) return;
+    const { kind, id } = iconPicker;
+    setDb((old) => {
+      if (kind === 'service')
+        return { ...old, services: old.services.map((s) => (s.id === id ? { ...s, icon } : s)) };
+      if (kind === 'server')
+        return { ...old, servers: old.servers.map((s) => (s.id === id ? { ...s, icon } : s)) };
+      return { ...old, targets: old.targets.map((t) => (t.id === id ? { ...t, icon } : t)) };
+    });
+  };
   const [currentTask, setTask] = useState<Task | null>(boot?.task || null);
   const [releaseTask, setReleaseTask] = useState<Task | null>(null);
   const task = page === 'task' && taskReturnPage === 'release-manifest' ? releaseTask ?? currentTask : currentTask;
@@ -1354,7 +1377,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           <AppPageHeader
             className="desktop-page-header"
             truncateTitle
-            icon={page === 'deploy' && db.services.length ? <Box size={20} strokeWidth={1.5} /> : page === 'settings' ? <SettingsIcon size={18} strokeWidth={1.5} /> : undefined}
+            icon={page === 'deploy' && db.services.length ? <EntityIconView kind="service" icon={service.icon} size={20} strokeWidth={1.5} /> : page === 'settings' ? <SettingsIcon size={18} strokeWidth={1.5} /> : undefined}
             title={viewingOperationLogs ? service.name + ' · ' + (selectedLogTarget?.name ?? '') + ' · 线上日志' :
               page === 'deploy' && db.services.length ? service.name :
               page === 'settings' && desktop ? settingsLabels[settingsSection] :
@@ -1753,8 +1776,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               }
             />
           )}
-          {page === 'services' && <ServicesWorkspace db={db} taskRows={taskRows} onAdd={() => setDialog({ kind: 'service', value: { ...newService(), id: uid() } })} renderActions={serviceActions} />}
-          {page === 'targets' && <TargetsWorkspace db={db} serviceId={serviceId} runtime={runtime} onService={selectService} onAdd={() => setDialog({ kind: 'target', value: newTarget() })} renderActions={targetActions} />}
+          {page === 'services' && <ServicesWorkspace db={db} taskRows={taskRows} onAdd={() => setDialog({ kind: 'service', value: { ...newService(), id: uid() } })} onPickIcon={(id) => pickIcon('service', id)} renderActions={serviceActions} />}
+          {page === 'targets' && <TargetsWorkspace db={db} serviceId={serviceId} runtime={runtime} onService={selectService} onAdd={() => setDialog({ kind: 'target', value: newTarget() })} onPickIcon={(id) => pickIcon('target', id)} renderActions={targetActions} />}
           {page === 'servers' && (
             <ServersWorkspace
               db={db}
@@ -1777,6 +1800,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                         },
                       })}
               renderActions={serverActions}
+              onPickIcon={(id) => pickIcon('server', id)}
             />
           )}
           {page === 'tools' && (
@@ -2066,6 +2090,14 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         />
       )}
       </>}
+      {iconPicker && (
+        <IconPicker
+          kind={iconPicker.kind}
+          current={iconPickerEntity?.icon}
+          onPick={setEntityIcon}
+          onClose={() => setIconPicker(null)}
+        />
+      )}
       {dialog?.kind === 'service' && (
         <Modal title="服务与构建配置" onClose={() => setDialog(null)} wide>
           <ServiceForm

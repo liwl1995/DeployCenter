@@ -14,6 +14,7 @@ export function TargetsWorkspace({
   serviceId,
   onService: selectService,
   onAdd,
+  onPickIcon,
   renderActions: targetActions,
   runtime,
 }: {
@@ -21,6 +22,7 @@ export function TargetsWorkspace({
   serviceId: string;
   onService: (id: string) => void;
   onAdd: () => void;
+  onPickIcon: (id: string) => void;
   renderActions: (target: Target, detail?: boolean) => ReactNode;
   runtime?: Record<string, OperationStatus>;
 }) {
@@ -83,6 +85,9 @@ export function TargetsWorkspace({
         key={serviceId}
         label="部署目标"
         items={targets}
+        entityKind="target"
+        iconOf={(t) => t.icon}
+        onPickIcon={(t) => onPickIcon(t.id)}
         title={(t) => t.name}
         subtitle={(t) => db.servers.find((s) => s.id === t.serverId)?.name || '未关联服务器'}
         searchText={(t) =>

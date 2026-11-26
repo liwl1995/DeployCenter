@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 import { z } from 'zod';
 import { createTask } from '../src/engine';
-import { remoteJar, shellQuote as q, type Server, type Target } from '../src/model';
+import { remoteJar, shellQuote as q, withoutIcon, type Server, type Target } from '../src/model';
 import type { WorkbenchAction, WorkbenchReview } from '../src/features';
 import { MemoryCredentials } from './native-capabilities';
 import { remotePaths } from './remote';
@@ -96,7 +96,7 @@ export class WorkbenchRecovery {
     const server = target && db.servers.find((entry) => entry.id === target.serverId);
     const service = target && db.services.find((entry) => entry.id === target.serviceId);
     if (!target || !server || !service) throw new Error('部署目标配置已变化');
-    return { db, target, server, service, signature: JSON.stringify([target, server]) };
+    return { db, target, server, service, signature: JSON.stringify([withoutIcon(target), withoutIcon(server)]) };
   }
   private receipt(target: Target, server: Server, info: Inspection): Receipt | undefined {
     const receipts = this.storage.workbenchReceipts(new Set([workbenchScope(target, server)]));

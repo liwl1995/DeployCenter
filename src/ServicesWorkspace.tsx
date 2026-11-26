@@ -11,11 +11,13 @@ export function ServicesWorkspace({
   db,
   taskRows,
   onAdd,
+  onPickIcon,
   renderActions: serviceActions,
 }: {
   db: Database;
   taskRows: TaskSummary[];
   onAdd: () => void;
+  onPickIcon: (id: string) => void;
   renderActions: (service: Service) => ReactNode;
 }) {
   const cardTime = (value?: string) => (deploymentTime(value) ? fmtTime(value!).slice(5, 16) : '—');
@@ -65,6 +67,9 @@ export function ServicesWorkspace({
         )}
         label="服务"
         items={db.services}
+        entityKind="service"
+        iconOf={(s) => s.icon}
+        onPickIcon={(s) => onPickIcon(s.id)}
         title={(s) => s.name}
         subtitle={(s) => s.description || s.code}
         searchText={(s) => s.code + ' ' + s.root}

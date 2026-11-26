@@ -506,6 +506,8 @@ hr {
   flex: none;
   display: grid;
   place-items: center;
+  border: none;
+  padding: 0;
   border-radius: var(--radius-control);
   background: var(--bg-subtle);
   color: var(--text-2);
@@ -692,6 +694,14 @@ hr {
   font-size: var(--fs-title);
   font-weight: 600;
   overflow-wrap: anywhere;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.release-run-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 .release-order {
   color: var(--text-3);
@@ -1419,6 +1429,16 @@ p.code,
   border: 1px solid var(--line);
   border-radius: var(--radius-panel);
   min-width: 0;
+}
+.confirm-target-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.confirm-server {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 .confirm-target > p,
 .confirm-target-details {
@@ -2758,10 +2778,7 @@ th {
 }
 @media (max-width: 960px) {
   .deployment-target-main {
-    grid-template-columns: 16px minmax(0, 1fr) 72px 108px 44px auto;
-  }
-  .deployment-target-main > .record-icon {
-    display: none;
+    grid-template-columns: 16px 30px minmax(0, 1fr) 72px 108px 44px auto;
   }
   .workspace > .main-page,
   .service-workspace-scroll,
@@ -2800,7 +2817,7 @@ th {
     display: none;
   }
   .deployment-target-main {
-    grid-template-columns: 16px minmax(0, 1fr) 72px 44px auto;
+    grid-template-columns: 16px 30px minmax(0, 1fr) 72px 44px auto;
   }
   .task-step-list {
     display: grid;
@@ -2825,4 +2842,145 @@ th {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ===== 实体图标：列表卡片换图标入口 ===== */
+.record-icon-pickable {
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    transform 120ms ease;
+}
+.record-icon-pickable:hover {
+  background: var(--bg-selected);
+  transform: scale(1.06);
+}
+.record-icon-pickable:focus-visible {
+  outline: 2px solid var(--action-bg);
+  outline-offset: 1px;
+}
+
+/* ===== 图标选择器弹窗 ===== */
+.icon-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.icon-picker-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.icon-picker-toolbar .icon-picker-search {
+  flex: 1;
+  min-width: 0;
+}
+.icon-picker-colors {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.icon-color {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-circle);
+  background: var(--bg-subtle);
+  cursor: pointer;
+  transition:
+    transform 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+.icon-color input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.icon-color:hover {
+  transform: scale(1.1);
+}
+.icon-color:has(input:focus-visible) {
+  outline: 2px solid var(--action-bg);
+  outline-offset: 2px;
+}
+.icon-color.selected {
+  border-color: var(--text-1);
+  box-shadow:
+    0 0 0 2px var(--bg-app),
+    0 0 0 4px var(--action-bg);
+}
+.icon-color-none::after {
+  content: '';
+  width: 14px;
+  height: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--text-3);
+  transform: rotate(-45deg);
+}
+.icon-picker-grid-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  height: clamp(220px, 46vh, 600px);
+  overflow-y: auto;
+  padding-right: var(--space-1);
+}
+.icon-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: var(--space-2);
+}
+.icon-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg-card);
+  color: var(--text-1);
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease;
+}
+.icon-cell:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-selected);
+}
+.icon-cell.selected {
+  border-color: var(--action-bg);
+  background: var(--action-soft);
+}
+.icon-cell-check {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  color: var(--action-text);
+}
+.icon-cell span {
+  font-size: var(--fs-xs);
+  line-height: 1.2;
+  color: var(--text-2);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.icon-cell.selected span {
+  color: var(--action-text);
+}
+.icon-picker .muted {
+  color: var(--text-3);
 }

@@ -7,6 +7,7 @@ import { CalendarClock } from 'lucide-react';
 import { Badge } from './ui';
 import { MoreMenu, type MenuAction } from './EntityActions';
 import { fmtTime } from './model';
+import { EntityIcon } from './entity-icons';
 
 type ScheduleFilter = 'pending' | 'executing' | 'finished' | 'all';
 const scheduleFilters: SegmentedItem<ScheduleFilter>[] = [
@@ -87,7 +88,7 @@ export function ReleaseSchedules({
             return (
               <article className="schedule-record" key={plan.id}>
                 <span className="record-icon">
-                  <CalendarClock size={18} strokeWidth={1.5} />
+                  <EntityIcon kind="service" icon={plan.task.service.icon} size={18} strokeWidth={1.5} />
                 </span>
                 <div className="schedule-identity">
                   <div className="row wrap">

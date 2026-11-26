@@ -1,4 +1,4 @@
-import { Box, ChevronDown, Pencil, ScrollText } from 'lucide-react';
+import { ChevronDown, Pencil, ScrollText } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { HashValue } from './DeployDetails';
 import { CompactStatus } from './compact-list';
@@ -8,6 +8,7 @@ import { BackupFields } from './forms';
 import { fmtTime, modeLabel, remoteJar, serverAddress, type Backup, type Server, type Target } from './model';
 import { deploymentTime, knownCommit } from './presentation';
 import { Badge, Switch } from './ui';
+import { EntityIcon } from './entity-icons';
 
 export function DeploymentTargetRow({ target, server, checked, onChecked, open, onOpen,
   backup, onBackup, overridden, onRestore, onCopy, onEdit, onLogs, children }: {
@@ -31,7 +32,7 @@ export function DeploymentTargetRow({ target, server, checked, onChecked, open, 
     <article className={'deployment-target' + (checked ? ' checked' : '')}>
       <div className="target-compact deployment-target-main">
         <Checkbox aria-label={'选择' + t.name} checked={checked} onCheckedChange={onChecked} />
-        <span className="record-icon"><Box size={18} strokeWidth={1.5} /></span>
+        <span className="record-icon"><EntityIcon kind="target" icon={t.icon} size={18} strokeWidth={1.5} /></span>
         <button className="target-identity" aria-expanded={open}
           aria-label={(open ? '收起' : '展开') + t.name + '详情'} onClick={onOpen}>
           <strong>{t.name} {t.production && <Badge kind="warn">正式</Badge>}</strong>

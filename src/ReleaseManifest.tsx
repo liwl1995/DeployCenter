@@ -13,6 +13,7 @@ import { Button } from './design/ui/button';
 import { Checkbox } from './design/ui/checkbox';
 import { confirmProduction, productionNames } from './presentation';
 import { seconds, type Database, type Target, type Task } from './model';
+import { EntityIcon } from './entity-icons';
 import { deploymentStage, deploymentStages } from './step-names';
 import { useTaskClock } from './task-clock';
 import type { DesktopAPI } from './platform';
@@ -192,7 +193,7 @@ export function ReleaseManifest({ api, db, run, liveTask, showRun, setShowRun, d
                       const destination = draft[index + (event.key === 'ArrowUp' ? -1 : 1)];
                       if (destination) { event.preventDefault(); move(row.serviceId, destination.serviceId); }
                     }}><GripVertical size={16} /></Button>
-                  <small className="release-order">{index + 1}</small><h3 className="release-service-name">{service?.name ?? '服务已删除'}</h3>
+                  <small className="release-order">{index + 1}</small><h3 className="release-service-name"><EntityIcon kind="service" icon={service?.icon} size={17} strokeWidth={1.75} />{service?.name ?? '服务已删除'}</h3>
                 </div>
                 <div className="row wrap">
                   {!busy && <BuildModeChoice mode={row.build}
@@ -261,7 +262,7 @@ export function ReleaseManifest({ api, db, run, liveTask, showRun, setShowRun, d
             <Card className="release-review" key={task.service.id}>
               <div className="confirm-header">
                 <small className="release-order">{index + 1}</small>
-                <h3 className="release-service-name">{task.service.name}</h3>
+                <h3 className="release-service-name"><EntityIcon kind="service" icon={task.service.icon} size={17} strokeWidth={1.75} />{task.service.name}</h3>
                 <Badge>{task.build === 'rebuild' ? '重新构建一次' : '使用现有 JAR'}</Badge>
               </div>
               <p className="confirm-brief">{stage(task)} · {task.failurePolicy === 'stop' ? '失败后停止后续目标' : '失败后继续其他目标'}</p>
@@ -319,12 +320,13 @@ export function ReleaseManifest({ api, db, run, liveTask, showRun, setShowRun, d
           </div>
           <div className="release-run-list">
             {run.rows.map((row, index) => {
+              const service = db.services.find((item) => item.id === row.request.serviceId);
               const Row = row.taskId ? 'button' : 'div';
               return <Row className={'release-run-row release-' + row.state} key={row.request.serviceId}
                 type={row.taskId ? 'button' : undefined} onClick={row.taskId ? () => onTask(row.taskId!) : undefined}
                 aria-label={row.taskId ? '查看 ' + row.name + ' 执行日志' : undefined}>
                 <small className="release-order">{index + 1}</small>
-                <div className="grow"><div className="row wrap"><strong>{row.name}</strong>
+                <div className="grow"><div className="row wrap"><strong className="release-run-name"><EntityIcon kind="service" icon={service?.icon} size={16} strokeWidth={1.75} />{row.name}</strong>
                   <Badge kind={row.state === 'success' ? 'good' : row.state === 'failed' || row.state === 'partial' ? 'danger' : row.state === 'unknown' ? 'warn' : ''}>{labels[row.state]}</Badge>
                   {row.elapsed !== undefined && <small>{seconds(row.elapsed)}</small>}</div>
                   <small>{row.targets.join('、')}</small>
@@ -394,6 +396,7 @@ export function ReleaseManifest({ api, db, run, liveTask, showRun, setShowRun, d
         <div className="release-add">{available.map((item) => (
           <label className="row" key={item.id}><Checkbox checked={picks.includes(item.id)} aria-label={item.name}
             onCheckedChange={(checked) => setPicks((old) => checked ? [...old, item.id] : old.filter((id) => id !== item.id))} />
+            <EntityIcon kind="service" icon={item.icon} size={16} strokeWidth={1.75} />
             <strong>{item.name}</strong>{item.description && <small>{item.description}</small>}</label>
         ))}</div>
       </Modal>}

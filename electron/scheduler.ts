@@ -10,7 +10,7 @@ const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(va
 export function scheduleConfiguration(db: Database, task: Task) {
   const service = db.services.find((s) => s.id === task.service.id);
   return digest([
-    service && { ...service, git: undefined, description: undefined },
+    service && { ...service, git: undefined, description: undefined, icon: undefined },
     task.targets.map((r) => {
       const target = db.targets.find((t) => t.id === r.target.id);
       const server = db.servers.find((s) => s.id === r.server.id);
@@ -23,8 +23,9 @@ export function scheduleConfiguration(db: Database, task: Task) {
           lastDeploy: undefined,
           healthState: undefined,
           currentCommit: undefined,
+          icon: undefined,
         },
-        server && { ...server, note: undefined },
+        server && { ...server, note: undefined, icon: undefined },
       ];
     }),
     db.jdks.filter((j) => j.name === task.service.jdk),

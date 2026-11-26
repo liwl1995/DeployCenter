@@ -2,6 +2,7 @@ import { ChevronRight } from 'lucide-react';
 import { useState } from 'react';
 import { fmtTime, statusLabel, type Database } from './model';
 import { Field } from './ui';
+import { EntityIcon } from './entity-icons';
 
 export function ServicePicker({ db, onChoose }: { db: Database; onChoose: (id: string) => void }) {
   const [query, setQuery] = useState('');
@@ -24,7 +25,7 @@ export function ServicePicker({ db, onChoose }: { db: Database; onChoose: (id: s
             const h = db.history.find((h) => h.service.id === s.id);
             return (
               <button className="service-result" key={s.id} onClick={() => onChoose(s.id)}>
-                <span className="service-icon">{s.name[0]}</span>
+                <span className="service-icon"><EntityIcon kind="service" icon={s.icon} size={18} strokeWidth={1.5} /></span>
                 <span className="grow">
                   <strong>{s.name}</strong>
                   <small>{s.root}</small>

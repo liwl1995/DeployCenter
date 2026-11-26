@@ -3,6 +3,7 @@ import { GitBranch, Rocket } from 'lucide-react';
 import { useState } from 'react';
 import { ArtifactInfo } from './ArtifactInfo';
 import { ConfirmWarning, confirmationWarnings } from './ConfirmWarning';
+import { EntityIcon } from './entity-icons';
 import { credentialServers } from './credentials';
 import { prototype } from './defaults';
 import { HashValue } from './DeployDetails';
@@ -163,7 +164,7 @@ export function Confirm({
         </>
       )}
       <div className="confirm-header">
-        <h3>{initial.service.name}</h3>
+        <h3 className="confirm-target-name"><EntityIcon kind="service" icon={initial.service.icon} size={17} strokeWidth={1.75} />{initial.service.name}</h3>
         <Badge>
           {initial.dryRun
             ? '试运行 · 不构建、不上传、不修改远端'

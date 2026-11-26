@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
 import type { Health, Server, Target } from '../src/model';
-import { shellQuote as q } from '../src/model';
+import { shellQuote as q, withoutIcon } from '../src/model';
 import { operationHealthSkipReason, type OperationHealth, type OperationPlan, type OperationRecord, type OperationStatus, type ServiceOperation } from '../src/operations';
 import { pendingSchedule } from '../src/schedules';
 import { workbenchHeader, workbenchScope } from './workbench';
@@ -108,7 +108,7 @@ export class ServiceOperations {
         : record);
   }
   private signature(target: Target, server: Server) {
-    return JSON.stringify([target, server]);
+    return JSON.stringify([withoutIcon(target), withoutIcon(server)]);
   }
   prepare(id: string, action: ServiceOperation) {
     const { target, server, service, scope } = this.context(id);

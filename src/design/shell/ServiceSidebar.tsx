@@ -11,6 +11,8 @@ import {
 import { Button } from '../ui/button';
 import { HoverTip } from '../ui/hover-tip';
 import { useSidebarCollapsed } from '../useSidebarCollapsed';
+import { EntityIcon } from '../../entity-icons';
+import type { EntityIcon as EntityIconType } from '../../model';
 import type { WorkspacePage } from '../../workspace-model';
 
 type DropPosition = 'before' | 'after';
@@ -31,7 +33,7 @@ export function ServiceSidebar({
   updateAvailable,
   development,
 }: {
-  services: { id: string; name: string; tone: number }[];
+  services: { id: string; name: string; tone: number; icon?: EntityIconType }[];
   onReorder: (ids: string[]) => Promise<void>;
   savingOrder: boolean;
   deployedServices: ReadonlySet<string>;
@@ -158,7 +160,7 @@ export function ServiceSidebar({
                     }}
                     onDragEnd={endDrag}
                   >
-                    <Box size={17} strokeWidth={1.6} />
+                    <EntityIcon kind="service" icon={service.icon} size={17} strokeWidth={1.6} />
                     <span>{service.name}</span>
                     <i
                       className="sidebar-service-status"

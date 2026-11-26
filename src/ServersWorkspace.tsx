@@ -1,10 +1,11 @@
-import { Plus, Server as ServerIcon } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Button } from './design/ui/button';
 import { Badge } from './ui';
 import { serverAddress, fmtTime, type Database, type Server } from './model';
 import { deploymentTime } from './presentation';
 import { EntityDetail, EntityWorkspace } from './WorkspaceLayout';
+import { EntityIcon } from './entity-icons';
 
 export const serverIdentity = (server: Server) =>
   JSON.stringify([
@@ -23,12 +24,14 @@ export function ServersWorkspace({
   desktop,
   checks: serverChecks,
   onAdd,
+  onPickIcon,
   renderActions: serverActions,
 }: {
   db: Database;
   desktop: boolean;
   checks: Record<string, ServerCheck>;
   onAdd: () => void;
+  onPickIcon: (id: string) => void;
   renderActions: (s: Server) => ReactNode;
 }) {
   const cardTime = (value: string) => (deploymentTime(value) ? fmtTime(value).slice(5, 16) : '—');
@@ -80,6 +83,9 @@ export function ServersWorkspace({
         )}
         label="服务器"
         items={db.servers}
+        entityKind="server"
+        iconOf={(s) => s.icon}
+        onPickIcon={(s) => onPickIcon(s.id)}
         title={(s) => s.name}
         subtitle={(s) => s.note || '服务器连接配置'}
       >
@@ -88,7 +94,7 @@ export function ServersWorkspace({
           return (
             <EntityDetail title={s.name}>
               <div className="list-row server-row" key={s.id}>
-                <ServerIcon size={20} />
+                <EntityIcon kind="server" icon={s.icon} size={20} strokeWidth={1.5} />
                 <div className="grow">
                   <p className="muted">
                     {serverAddress(s)} ·{' '}

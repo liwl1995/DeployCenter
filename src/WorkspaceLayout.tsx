@@ -3,6 +3,8 @@ import { useEffect, useLayoutEffect, useId, useRef, useState, type ReactNode } f
 import { Search, ArrowLeft, Box, Settings, Rocket, HardDrive, CircleHelp, RefreshCw } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Input } from './design/ui/input';
+import { EntityIcon, type EntityIconKind } from './entity-icons';
+import type { EntityIcon as EntityIconType } from './model';
 
 /** 卡片入口和单项详情共用状态，返回时恢复列表位置与键盘焦点。 */
 export function EntityWorkspace<T extends { id: string }>({
@@ -17,6 +19,9 @@ export function EntityWorkspace<T extends { id: string }>({
   cardMeta,
   actions,
   filters,
+  entityKind,
+  iconOf,
+  onPickIcon,
   children,
 }: {
   label: string;
@@ -30,6 +35,9 @@ export function EntityWorkspace<T extends { id: string }>({
   cardMeta?: (item: T) => ReactNode;
   actions?: ReactNode;
   filters?: ReactNode;
+  entityKind?: EntityIconKind;
+  iconOf?: (item: T) => EntityIconType | undefined;
+  onPickIcon?: (item: T) => void;
   children: (item: T) => ReactNode;
 }) {
   const [query, setQuery] = useState('');
@@ -117,9 +125,22 @@ export function EntityWorkspace<T extends { id: string }>({
             {visible.map((item) => (
               <article key={item.id} className="entity-record">
                 <div className="entity-record-main">
-                  <span className="record-icon">
-                    <Box size={18} strokeWidth={1.5} />
-                  </span>
+                  {entityKind ? (
+                    <button
+                      type="button"
+                      className={'record-icon' + (onPickIcon ? ' record-icon-pickable' : '')}
+                      aria-label={onPickIcon ? '更换' + label + '图标' : undefined}
+                      title={onPickIcon ? '点击更换图标' : undefined}
+                      disabled={!onPickIcon}
+                      onClick={onPickIcon ? () => onPickIcon(item) : undefined}
+                    >
+                      <EntityIcon kind={entityKind} icon={iconOf?.(item)} size={18} strokeWidth={1.5} />
+                    </button>
+                  ) : (
+                    <span className="record-icon">
+                      <Box size={18} strokeWidth={1.5} />
+                    </span>
+                  )}
                   <div className="entity-record-identity">
                     <button
                       className="entity-name"

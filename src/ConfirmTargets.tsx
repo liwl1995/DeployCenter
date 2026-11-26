@@ -1,6 +1,7 @@
 import { modeLabel, remoteJar, serverAddress, type Task } from './model';
 import { healthLabels } from './presentation';
 import { Badge } from './ui';
+import { EntityIcon } from './entity-icons';
 
 /** 单次部署和批量发布共用目标摘要与可展开的细节。 */
 export function ConfirmTargets({ task: initial }: { task: Task }) {
@@ -15,13 +16,14 @@ export function ConfirmTargets({ task: initial }: { task: Task }) {
         return (
           <div className="confirm-target" key={r.target.id}>
             <div className="row spread">
-              <h3>{r.target.name}</h3>
+              <h3 className="confirm-target-name">{r.target.name}</h3>
               <Badge kind={r.target.production ? 'warn' : ''}>
                 {r.target.production && '正式 · '}
                 {modeLabel(r.target.mode)}
               </Badge>
             </div>
-            <p className="muted">
+            <p className="muted confirm-server">
+              <EntityIcon kind="server" icon={r.server.icon} size={15} strokeWidth={1.75} />
               {r.server.name} · {serverAddress(r.server)}
             </p>
             <p className="path">远程文件：{remoteJar(r.target)}</p>

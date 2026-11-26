@@ -726,7 +726,7 @@ async function boot() {
             schedule: upcoming ? { name: upcoming.task.service.name, at: upcoming.scheduledAt } : undefined,
             services: [...recent].map((id) => db.services.find((item) => item.id === id))
               .filter((item) => item !== undefined).slice(0, 5)
-              .map(({ id, name }) => ({ id, name })),
+              .map(({ id, name, icon }) => ({ id, name, icon })),
           };
         }, (action, id) => {
           if (action === 'toggle') {

@@ -1,3 +1,15 @@
+/** 实体图标：lucide 图标名 + 可选预设颜色。color 缺省表示跟随主题。 */
+export type EntityIcon = {
+  name: string;
+  color?: string;
+};
+/** 图标是装饰性字段，不应参与任何配置一致性比较（定时发布、串行清单、运维签名、工作台恢复）。返回去掉 icon 的副本。 */
+export function withoutIcon<T extends { icon?: EntityIcon }>(value: T): T {
+  if (value.icon === undefined) return value;
+  const copy = { ...value };
+  delete copy.icon;
+  return copy;
+}
 export type Mode = 'jar' | 'docker';
 export type Health = {
   type: 'none' | 'http' | 'tcp' | 'command';
@@ -31,6 +43,7 @@ export type Server = {
   note: string;
   credentialMode: 'ask' | 'windows';
   sshConfigFile?: string;
+  icon?: EntityIcon;
 };
 export type Service = {
   id: string;
@@ -49,6 +62,7 @@ export type Service = {
   git: { branch: string; commit: string; time: string; dirty?: boolean; message?: string };
   buildTimeout?: number;
   logEncoding?: 'auto' | 'utf8' | 'gb18030';
+  icon?: EntityIcon;
 };
 export type Target = {
   id: string;
@@ -81,6 +95,7 @@ export type Target = {
   currentCommit?: string;
   observation?: { enabled: boolean; duration: number };
   appLogPath?: string;
+  icon?: EntityIcon;
 };
 export type Settings = {
   failurePolicy: 'stop' | 'continue';
@@ -407,6 +422,11 @@ export function validDatabase(data: unknown): data is Database {
     !!v && typeof v === 'object' && !Array.isArray(v);
   const strings = (v: unknown, keys: string[]) =>
     object(v) && keys.every((k) => typeof v[k] === 'string');
+  const entityIcon = (v: unknown) =>
+    v === undefined ||
+    (object(v) &&
+      typeof v.name === 'string' &&
+      (v.color === undefined || typeof v.color === 'string'));
   const b = (v: unknown) =>
     object(v) &&
     strings(v, ['directory', 'template']) &&
@@ -432,7 +452,8 @@ export function validDatabase(data: unknown): data is Database {
     ]) &&
     ['auto', 'wrapper', 'maven'].includes(v.tool) &&
     strings(v.git, ['branch', 'commit', 'time']) &&
-    Number.isFinite(Date.parse(v.git.time));
+    Number.isFinite(Date.parse(v.git.time)) &&
+    entityIcon(v.icon);
   const server = (v: unknown) =>
     object(v) &&
     strings(v, ['id', 'name', 'host', 'user', 'alias', 'keyPath', 'note']) &&
@@ -440,7 +461,8 @@ export function validDatabase(data: unknown): data is Database {
     v.port > 0 &&
     v.port <= 65535 &&
     ['alias', 'password', 'key'].includes(v.auth) &&
-    ['ask', 'windows'].includes(v.credentialMode);
+    ['ask', 'windows'].includes(v.credentialMode) &&
+    entityIcon(v.icon);
   const target = (v: unknown) =>
     object(v) &&
     strings(v, [
@@ -485,7 +507,8 @@ export function validDatabase(data: unknown): data is Database {
       (Number.isInteger(v.health.maxWait) && v.health.maxWait >= 1 && v.health.maxWait <= 3600)) &&
     ['timeout', 'retries', 'interval'].every(
       (k) => Number.isFinite(v.health[k]) && v.health[k] > 0,
-    );
+    ) &&
+    entityIcon(v.icon);
   const artifact = (v: unknown) =>
     object(v) &&
     strings(v, ['name', 'modified', 'path']) &&

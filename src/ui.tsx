@@ -238,13 +238,30 @@ export function Modal({
       document.body.style.overflow = 'hidden';
     }
     modalPanels.add(panel);
-    const controls = () =>
-      [
+    const controls = () => {
+      const nodes = [
         ...panel.querySelectorAll<HTMLElement>(
           'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], summary',
         ),
-      ].filter((e) => {
+      ];
+      // 原生单选组里只有选中项进入 Tab 顺序（组内全未选中时第一项进入）。未选中的
+      // radio 不能 Tab 聚焦，必须排除，否则会把焦点陷阱边界算到不可聚焦的元素上，
+      // 在搜索结果为空、radio 组成为最后一组控件时导致 Tab 跳出弹窗。
+      const checkedGroups = new Set<string>();
+      for (const node of nodes) {
+        if (node instanceof HTMLInputElement && node.type === 'radio' && node.checked) {
+          checkedGroups.add(node.name);
+        }
+      }
+      const firstInGroup = new Set<string>();
+      return nodes.filter((e) => {
         if (e.closest('[hidden]')) return false;
+        if (e instanceof HTMLInputElement && e.type === 'radio') {
+          if (checkedGroups.has(e.name)) return e.checked;
+          if (firstInGroup.has(e.name)) return false;
+          firstInGroup.add(e.name);
+          return true;
+        }
         const collapsed = e.closest('details:not([open])');
         return (
           !collapsed ||
@@ -253,6 +270,7 @@ export function Modal({
             !collapsed.parentElement?.closest('details:not([open])'))
         );
       });
+    };
     if (isTopModal(panel)) {
       const items = controls();
       (

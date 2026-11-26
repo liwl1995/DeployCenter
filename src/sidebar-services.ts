@@ -19,8 +19,8 @@ export function sidebarServices(
         record(entry.service.id, entry.time);
   }
   // 同一时间和未部署的服务按手动顺序排列，新服务跟在已保存的顺序后面。
-  return services.map(({ id, name }, index) => ({
-    id, name, tone: index % 4,
+  return services.map(({ id, name, icon }, index) => ({
+    id, name, icon, tone: index % 4,
     position: positions.get(id) ?? sidebarServiceOrder.length + index,
     time: latestDeployment.get(id) ?? -Infinity,
   })).sort((a, b) => {
