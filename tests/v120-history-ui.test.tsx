@@ -13,6 +13,7 @@ const api = () =>
     searchHistory: vi
       .fn()
       .mockResolvedValue({
+        taskIds: ['DC-build-fail'],
         hits: [{ taskId: 'DC-build-fail', section: '构建日志', line: 42, text: '唯一日志命中' }],
         total: 1,
         warnings: [],
@@ -107,6 +108,39 @@ it('导入历史保留独立快照入口，实际任务不会重复显示', () =
   expect(importedSummaries(db, new Set([id])).some((r) => r.id === id)).toBe(false);
   expect(importedSummaries(db, new Set()).every((r) => r.imported)).toBe(true);
 });
+
+it('全文搜索先限定已应用的筛选，片段截断后仍显示所有命中任务', async () => {
+  const { db, rows: list } = rows();
+  const user = userEvent.setup();
+  const client = api();
+  const snippet = { taskId: 'DC-check', section: '构建日志', line: 1, text: '共享检索词' };
+  vi.mocked(client.searchHistory)
+    .mockResolvedValueOnce({
+      taskIds: ['DC-check', 'DC-build-fail'], hits: [snippet], total: 201, warnings: [],
+    })
+    .mockResolvedValueOnce({ taskIds: [], hits: [], total: 0, warnings: [] });
+  render(<TaskHistory api={client} rows={list} db={db} busy={false}
+    onOpen={() => {}} onHistory={() => {}} onCopy={() => {}} />);
+  await user.type(screen.getByLabelText('搜索完整历史'), ' 共享检索词 ');
+  expect(await screen.findByText('命中 2 个任务，201 处匹配，展示前 1 处。')).toBeTruthy();
+  expect(client.searchHistory).toHaveBeenNthCalledWith(1, '共享检索词', {
+    taskIds: ['DC-build-fail', 'DC-check'],
+  });
+  expect(screen.getByRole('row', { name: '查看任务：构建内容' })).toBeTruthy();
+
+  await user.click(screen.getByRole('button', { name: '筛选部署历史' }));
+  await user.selectOptions(screen.getByLabelText('任务结果'), 'failed');
+  expect(client.searchHistory).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole('button', { name: '应用' }));
+  expect(screen.queryByText(/201 处匹配/)).toBeNull();
+  expect(screen.getByText('正在搜索当前范围的完整日志…')).toBeTruthy();
+  expect(await screen.findByText('无匹配记录，试试调整筛选或关键词。')).toBeTruthy();
+  expect(client.searchHistory).toHaveBeenNthCalledWith(2, '共享检索词', {
+    taskIds: ['DC-build-fail'],
+  });
+  expect(screen.getByText('命中 0 个任务，0 处匹配。')).toBeTruthy();
+});
+
 it('失败建议给出具体操作；诊断只在明确点击后执行，结果含命令和时间', async () => {
   const user = userEvent.setup(),
     client = api(),

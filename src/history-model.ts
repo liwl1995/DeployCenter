@@ -1,5 +1,10 @@
 import type { Database, Task } from './model';
 import type { TaskSummary } from './platform';
+
+export const unreadableTaskService = '无法读取的任务记录';
+export const unreadableTaskNote = '原始任务记录无法读取，已保留；请检查或恢复数据库备份。';
+export const backupCleanupService = '远程备份';
+
 export function summarizeTask(task: Task): TaskSummary {
   return {
     id: task.id,

@@ -8,6 +8,7 @@ import { deploymentReport } from '../src/report';
 import { MemoryCredentials } from '../electron/native-capabilities';
 import { createTask } from '../src/engine';
 import { seed } from '../src/model';
+import { recordTask } from '../src/records';
 const created: { dir: string; store: Storage }[] = [];
 afterEach(async () => {
   for (const { dir, store } of created.splice(0)) {
@@ -67,6 +68,11 @@ it('全文搜索覆盖备注、服务、环境、服务器和完整日志，返�
     taskId: 'DC-CLEAN-search',
     section: '备份清理记录',
   });
+  const maintenance = await scanHistory(dir, '远程备份', {
+    taskIds: ['DC-CLEAN-search'], environment: '清理测试环境',
+  });
+  expect(maintenance.taskIds).toEqual(['DC-CLEAN-search']);
+  expect(maintenance.total).toBe(1);
   const target = await scanHistory(dir, '目标日志独有词');
   expect(target.hits[0]).toMatchObject({
     taskId: task.id,
@@ -76,12 +82,75 @@ it('全文搜索覆盖备注、服务、环境、服务器和完整日志，返�
   });
   const full = await scanHistory(dir, '构建输出');
   expect(full.total).toBe(10000);
+  expect(full.taskIds).toEqual([task.id]);
   expect(full.hits).toHaveLength(200);
   expect(full.hits[0].line).toBe(1);
   expect(
     (await scanHistory(dir, task.targets[0].server.name)).hits.some((h) => h.section === '服务器'),
   ).toBe(true);
   await expect(scanHistory(dir, '')).rejects.toThrow('1–200');
+});
+
+it('在指定任务和目标范围内截取片段，并保留超出展示上限的命中任务', async () => {
+  const { dir, store, task } = await fixture();
+  const visible = task.targets[0];
+  const other = structuredClone(visible);
+  other.target = { ...other.target, id: 'another-target', name: '另一环境' };
+  other.server = { ...other.server, id: 'another-server' };
+  const quiet = { ...task, id: 'DC-quiet', targets: [visible, other] };
+  const noisy = {
+    ...task,
+    id: 'DC-noisy',
+    service: { ...task.service, id: 'another-service' },
+  };
+  store.saveTask(quiet);
+  store.appendLog(quiet.id, '共用命中 构建\n');
+  store.appendLog(quiet.id, 'x'.repeat(700) + '共用命中 稀有片段\n', visible.target.id);
+  store.appendLog(quiet.id, '共用命中 另一环境\n仅另一环境\n', other.target.id);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  store.saveTask(noisy);
+  store.appendLog(noisy.id, '共用命中 重复片段\n'.repeat(220));
+
+  const global = await scanHistory(dir, '共用命中');
+  expect(global.total).toBe(223);
+  expect(global.taskIds).toEqual([noisy.id, quiet.id]);
+  expect(global.hits).toHaveLength(200);
+  expect(global.hits.every((hit) => hit.taskId === noisy.id)).toBe(true);
+
+  const scope = {
+    taskIds: [quiet.id],
+    serverId: visible.server.id,
+    environment: visible.target.name,
+  };
+  const scoped = await scanHistory(dir, '共用命中', scope);
+  expect(scoped.taskIds).toEqual([quiet.id]);
+  expect(scoped.total).toBe(2);
+  expect(scoped.hits).toMatchObject([
+    { taskId: quiet.id, section: '构建日志', line: 1 },
+    { taskId: quiet.id, targetId: visible.target.id, line: 1 },
+  ]);
+  expect(scoped.hits[1].text).toContain('共用命中 稀有片段');
+  expect((await scanHistory(dir, '仅另一环境', scope)).taskIds).toEqual([]);
+  expect(await scanHistory(dir, '共用命中', { taskIds: [] })).toEqual({
+    taskIds: [], hits: [], total: 0, warnings: [],
+  });
+});
+
+it('按范围搜索导入的历史快照和快照内日志', async () => {
+  const { dir, store, task } = await fixture();
+  const imported = { ...structuredClone(task), id: 'DC-imported-search', status: 'success' as const };
+  const target = imported.targets[0];
+  target.status = 'success';
+  target.logs = ['旧版快照独有内容'];
+  store.importDatabase(recordTask(store.database(), imported, false), true);
+  const scoped = await scanHistory(dir, '旧版快照独有内容', {
+    taskIds: [imported.id], serverId: target.server.id, environment: target.target.name,
+  });
+  expect(scoped.taskIds).toEqual([imported.id]);
+  expect(scoped.hits).toMatchObject([
+    { taskId: imported.id, targetId: target.target.id, section: '导入历史' },
+  ]);
+  expect((await scanHistory(dir, '旧版快照独有内容', { taskIds: [task.id] })).taskIds).toEqual([]);
 });
 it('Markdown报告包括备注、版本、备份、步骤和摘要，敏感字段不投影且日志不能破坏代码围栏', async () => {
   const { task } = await fixture(),

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
-import type { HistorySearchResult } from '../src/features';
+import type { HistorySearchResult, HistorySearchScope } from '../src/features';
 export class HistorySearch {
   private worker?: Worker;
   private generation = 0;
@@ -16,13 +16,13 @@ export class HistorySearch {
     this.generation++;
     await this.stopWorker();
   }
-  async search(directory: string, query: string): Promise<HistorySearchResult> {
+  async search(directory: string, query: string, scope?: HistorySearchScope): Promise<HistorySearchResult> {
     const generation = ++this.generation;
     await this.stopWorker();
     if (generation !== this.generation) throw new Error('搜索已取消');
     return new Promise((resolve, reject) => {
       const worker = new Worker(path.join(__dirname, 'history-search.cjs'), {
-        workerData: { directory, query },
+        workerData: { directory, query, scope },
       });
       this.worker = worker;
       this.reject = reject;

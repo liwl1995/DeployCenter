@@ -77,6 +77,7 @@ test.beforeEach(async ({}, info) => {
     db.targets[1].production = true;
   }
   if (info.title.startsWith('部署统计')) db.targets[1].serverId = db.servers[1].id;
+  if (info.title.startsWith('部署历史全文搜索')) db.targets[1].serviceId = db.services[1].id;
   const store = new Storage(dir, {
     encrypt: async () => {
       throw new Error('界面夹具不写入凭据');
@@ -129,6 +130,22 @@ test.beforeEach(async ({}, info) => {
     for (const target of task.targets) target.status = 'success';
     task.targets[0].logs = ['旧记录保留的日志'];
     store.importDatabase(recordTask(db, task, false), true);
+  }
+  if (info.title.startsWith('部署历史全文搜索')) {
+    const quiet = createTask(db, db.services[0], [db.targets[0], db.targets[2]], {}, 'existing');
+    quiet.id = 'DC-search-quiet';
+    quiet.status = 'failed';
+    quiet.note = '单条命中的部署';
+    store.saveTask(quiet);
+    store.appendLog(quiet.id, 'x'.repeat(700) + '跨服务检索词 稀有片段\n', db.targets[0].id);
+    store.appendLog(quiet.id, '跨服务检索词 另一环境片段\n', db.targets[2].id);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const noisy = createTask(db, db.services[1], [db.targets[1]], {}, 'existing');
+    noisy.id = 'DC-search-noisy';
+    noisy.status = 'failed';
+    noisy.note = '高频命中的部署';
+    store.saveTask(noisy);
+    store.appendLog(noisy.id, '跨服务检索词 高频片段\n'.repeat(220));
   }
   store.close();
   app = await electron.launch({
@@ -470,6 +487,60 @@ test('历史快照进入全页详情，保留日志并可切换目标', async ()
   await expect(page.getByRole('button', { name: '导出日志', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: '返回部署历史' }).click();
   await expect(row).toBeFocused();
+  await boundaries();
+});
+
+test('部署历史全文搜索按服务和目标限定范围，保留超出片段上限的任务', async () => {
+  const page = await app.firstWindow();
+  const button = (name: string) => page.getByRole('button', { name, exact: true });
+  const setTheme = async (name: string, theme: string) => {
+    await button('设置').click();
+    await page.getByRole('group', { name: '界面主题' }).getByRole('button', { name }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    await button('返回应用').click();
+  };
+  await setTheme('浅色', 'light');
+  await size(900, 600);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1.5));
+  await expectViewport(page, 600, 400);
+
+  const search = page.getByLabel('搜索完整历史');
+  const quietRow = page.getByRole('row', { name: '查看任务：单条命中的部署' });
+  const noisyRow = page.getByRole('row', { name: '查看任务：高频命中的部署' });
+  const rareHit = page.getByRole('button', { name: /目标日志 · 第 1 行.*稀有片段/ });
+  await button('部署历史').click();
+  await search.fill('跨服务检索词');
+  await expect(page.getByText('命中 2 个任务，222 处匹配，展示前 200 处。')).toBeVisible();
+  await expect(quietRow).toHaveCount(1);
+  await expect(noisyRow).toHaveCount(1);
+  await expect(rareHit).toHaveCount(0);
+
+  await button('筛选部署历史').press('Enter');
+  const filter = page.getByRole('dialog', { name: '筛选部署历史' });
+  await filter.getByLabel('服务', { exact: true }).selectOption('workspace-smoke');
+  await filter.getByLabel('环境', { exact: true }).selectOption('环境0');
+  await filter.getByRole('button', { name: '应用' }).press('Enter');
+  await expect(page.getByText('命中 1 个任务，1 处匹配。')).toBeVisible();
+  await expect(noisyRow).toHaveCount(0);
+  await rareHit.scrollIntoViewIfNeeded();
+  await expect(rareHit).toBeInViewport({ ratio: 1 });
+  await boundaries();
+  await rareHit.press('Enter');
+  await expect(page.getByRole('heading', { name: /中文空格项目0/ })).toBeVisible();
+  await button('返回部署历史').press('Enter');
+  await expect(search).toHaveValue('跨服务检索词');
+  await expect(quietRow).toBeFocused();
+  await expect(page.getByText('命中 1 个任务，1 处匹配。')).toBeVisible();
+
+  await setTheme('深色', 'dark');
+  await button('中文空格项目0').click();
+  await page.getByRole('tab', { name: '发布记录', exact: true }).press('Enter');
+  await expectViewport(page, 600, 400);
+  await search.fill('跨服务检索词');
+  await expect(page.getByText('命中 1 个任务，2 处匹配。')).toBeVisible();
+  await rareHit.scrollIntoViewIfNeeded();
+  await expect(rareHit).toBeInViewport({ ratio: 1 });
+  await expect(noisyRow).toHaveCount(0);
   await boundaries();
 });
 

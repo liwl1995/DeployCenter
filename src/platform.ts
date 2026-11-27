@@ -251,7 +251,7 @@ export interface DesktopAPI {
   saveLoadedLogs(session: string): Promise<boolean>;
   stopLogs(id: string): Promise<void>;
   readLogSession(id: string): Promise<import('./features').LogSessionSnapshot>;
-  searchHistory(query: string): Promise<import('./features').HistorySearchResult>;
+  searchHistory(query: string, scope?: import('./features').HistorySearchScope): Promise<import('./features').HistorySearchResult>;
   cancelSearch(): Promise<void>;
   exportReport(taskId: string): Promise<boolean>;
   previewBackups(targetId: string, credential?: string): Promise<import('./features').BackupPlan>;

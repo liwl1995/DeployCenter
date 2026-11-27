@@ -151,7 +151,15 @@ export type DiagnosticKind =
   | 'lock'
   | 'server';
 
-export type HistorySearchResult = { hits: SearchHit[]; total: number; warnings: string[] };
+/** 任务范围来自已筛选的历史列表，任务内可再限定目标日志。 */
+export type HistorySearchScope = { taskIds: string[]; serverId?: string; environment?: string };
+export type HistorySearchResult = {
+  /** 包含没有展示命中片段的任务。 */
+  taskIds: string[];
+  hits: SearchHit[];
+  total: number;
+  warnings: string[];
+};
 
 export type LogSessionSnapshot = {
   id: string;

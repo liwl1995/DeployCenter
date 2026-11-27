@@ -6,10 +6,10 @@ import type { DesktopAPI, TaskSummary } from './platform';
 import type { Database, History } from './model';
 import { fmtTime, seconds } from './model';
 import { operationLabel, targetLabels, taskResult, shortHash, validHash } from './presentation';
-import type { HistorySearchResult } from './features';
+import type { HistorySearchResult, HistorySearchScope, SearchHit } from './features';
 import { Badge, Card, Field, Modal } from './ui';
 import { MoreMenu } from './EntityActions';
-import { CompactStatus, historyDay, historyState } from './compact-list';
+import { CompactStatus, historyDay, historyState, shortReason } from './compact-list';
 import { DateRangeFilter } from './DateRangeFilter';
 import { DeployStatsView } from './DeployStatsView';
 import { matchesHistoryScope, matchesHistoryTarget, type HistoryScope } from './deploy-stats';
@@ -33,11 +33,13 @@ const historyTabs = [
   { value: 'stats', label: '统计' },
 ] satisfies { value: HistoryTab; label: string }[];
 
+type SavedSearch = { query: string; scopeKey: string; result: HistorySearchResult };
+
 export type HistoryViewState = {
   filters: HistoryFilters;
   query: string;
   expanded: Set<string>;
-  search?: HistorySearchResult;
+  search?: SavedSearch;
   openedTask?: string;
   tab?: HistoryTab;
 };
@@ -98,62 +100,12 @@ export function TaskHistory({
   const { kind, status, service, server, environment, date, releaseId } = filters;
   const changeDraft = <K extends keyof HistoryFilters>(key: K, value: HistoryFilters[K]) =>
     setDraft((old) => (old ? { ...old, [key]: value } : old));
-  const [expanded, setExpanded] = useState(() => initial.current?.expanded ?? new Set<string>()),
-    [search, setSearch] = useState<HistorySearchResult | undefined>(() => initial.current?.search),
-    [searching, setSearching] = useState(false),
-    [error, setError] = useState('');
+  const [expanded, setExpanded] = useState(() => initial.current?.expanded ?? new Set<string>());
+  const [completedSearch, setCompletedSearch] = useState(initial.current?.search);
+  const [failedSearch, setFailedSearch] = useState<{ query: string; scopeKey: string; error: string }>();
   const [openedTask, setOpenedTask] = useState(initial.current?.openedTask);
-  const searchQuery = useRef(initial.current?.query);
   const returnRow = useRef<HTMLTableRowElement>(null);
-  const viewState = (taskId = openedTask): HistoryViewState => ({
-    filters,
-    query,
-    expanded,
-    search: searchQuery.current === query ? search : undefined,
-    openedTask: taskId,
-    tab,
-  });
-  useLayoutEffect(() => {
-    onViewChange?.(viewState());
-  });
-  useLayoutEffect(() => {
-    returnRow.current?.focus({ preventScroll: true });
-  }, []);
-  useEffect(() => {
-    let alive = true;
-    if (searchQuery.current !== query) setSearch(undefined);
-    searchQuery.current = query;
-    setError('');
-    setSearching(!!query.trim());
-    const timer = setTimeout(() => {
-      if (!query.trim()) {
-        void api.cancelSearch();
-        return;
-      }
-      void api
-        .searchHistory(query.trim())
-        .then((value) => {
-          if (alive) setSearch(value);
-        })
-        .catch((e) => {
-          if (alive) setError(String(e));
-        })
-        .finally(() => {
-          if (alive) setSearching(false);
-        });
-    }, 250);
-    return () => {
-      alive = false;
-      clearTimeout(timer);
-    };
-  }, [api, query]);
-  useEffect(
-    () => () => {
-      void api.cancelSearch();
-    },
-    [api],
-  );
-  const matching = useMemo(
+  const eligibleRows = useMemo(
     () =>
       rows.filter((row) => {
         const targets = row.targets || [],
@@ -170,16 +122,82 @@ export function TaskHistory({
           (status === 'all' || row.status === status) &&
           matchesHistoryScope(row.serviceId || row.service, row.started, filters) &&
           ((server === 'all' && environment === 'all') ||
-            targets.some((target) => matchesHistoryTarget(target.serverId, target.name, filters))) &&
-          (!query.trim() ||
-            [row.note, row.service, ...targets.flatMap((t) => [t.name, t.server])].some((value) =>
-              value?.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
-            ) ||
-            search?.hits.some((h) => h.taskId === row.id))
+            targets.some((target) => matchesHistoryTarget(target.serverId, target.name, filters)))
         );
       }),
-    [rows, filters, kind, status, server, environment, releaseId, query, search],
+    [rows, filters, kind, status, server, environment, releaseId],
   );
+  const keyword = query.trim();
+  const scopeKey = useMemo(() => {
+    const scope: HistorySearchScope = {
+      taskIds: eligibleRows.map((row) => row.id).sort(),
+      serverId: server === 'all' ? undefined : server,
+      environment: environment === 'all' ? undefined : environment,
+    };
+    return JSON.stringify(scope);
+  }, [eligibleRows, server, environment]);
+  // 只复用当前关键词和范围的结果，切换筛选时不会显示上一轮命中。
+  const savedSearch = completedSearch?.query === keyword && completedSearch.scopeKey === scopeKey
+    ? completedSearch
+    : undefined;
+  const search = savedSearch?.result;
+  const error = failedSearch?.query === keyword && failedSearch.scopeKey === scopeKey
+    ? failedSearch.error
+    : undefined;
+  const searching = !!keyword && !statisticsActive && !search && !error;
+  const matchedIds = useMemo(() => new Set(search?.taskIds), [search]);
+  const hitsByTask = useMemo(() => {
+    const groups = new Map<string, SearchHit[]>();
+    for (const hit of search?.hits || []) {
+      const hits = groups.get(hit.taskId);
+      if (hits) hits.push(hit);
+      else groups.set(hit.taskId, [hit]);
+    }
+    return groups;
+  }, [search]);
+  const matching = useMemo(
+    () => keyword ? eligibleRows.filter((row) => matchedIds.has(row.id)) : eligibleRows,
+    [eligibleRows, keyword, matchedIds],
+  );
+  const viewState = (taskId = openedTask): HistoryViewState => ({
+    filters,
+    query,
+    expanded,
+    search: savedSearch,
+    openedTask: taskId,
+    tab,
+  });
+  useLayoutEffect(() => {
+    onViewChange?.(viewState());
+  });
+  useLayoutEffect(() => {
+    returnRow.current?.focus({ preventScroll: true });
+  }, []);
+  useEffect(() => {
+    if (!keyword || statisticsActive) return;
+    let alive = true;
+    let running = false;
+    setFailedSearch(undefined);
+    const timer = setTimeout(() => {
+      running = true;
+      void api
+        .searchHistory(keyword, JSON.parse(scopeKey) as HistorySearchScope)
+        .then((value) => {
+          if (alive) setCompletedSearch({ query: keyword, scopeKey, result: value });
+        })
+        .catch((e) => {
+          if (alive) setFailedSearch({ query: keyword, scopeKey, error: shortReason(String(e)) });
+        })
+        .finally(() => {
+          running = false;
+        });
+    }, 250);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+      if (running) void api.cancelSearch().catch(() => {});
+    };
+  }, [api, keyword, scopeKey, statisticsActive]);
   const open = (row: TaskSummary, targetId?: string) => {
     if (row.maintenance) {
       onMaintenance?.(row.maintenance);
@@ -284,7 +302,7 @@ export function TaskHistory({
           <Search size={16} aria-hidden="true" />
           <Input
             aria-label="搜索完整历史"
-            placeholder="搜索备注、服务、环境、服务器和完整日志"
+            placeholder="搜索部署记录和日志"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             maxLength={200}
@@ -421,14 +439,17 @@ export function TaskHistory({
     <>
       {searching && (
         <p className="note" role="status">
-          正在后台搜索完整日志，界面可继续操作…
+          正在搜索当前范围的完整日志…
         </p>
       )}
       {search && (
         <p className="note" role="status">
-          共 {search.total} 处命中{search.total > 200 ? '，展示前 200 处' : ''}。
-          {search.warnings.join('；')}
+          命中 {search.taskIds.length} 个任务，{search.total} 处匹配
+          {search.total > search.hits.length ? '，展示前 ' + search.hits.length + ' 处' : ''}。
         </p>
+      )}
+      {!!search?.warnings.length && (
+        <p className="warning" role="status">{search.warnings.join(' ')}</p>
       )}
       {error && (
         <p className="warning" role="alert">
@@ -468,7 +489,8 @@ export function TaskHistory({
             {ordered.map((row, index) => {
               const day = historyDay(row.started),
                 state = historyState(row),
-                isExpanded = expanded.has(row.id);
+                isExpanded = expanded.has(row.id),
+                hits = hitsByTask.get(row.id);
               const environments = (row.targets || []).map((t) => t.name).join('、') || '构建阶段';
               const note = row.note || operationLabel(row) + row.service;
               const blocked = busy || !!row.uncertain;
@@ -641,26 +663,24 @@ export function TaskHistory({
                       </td>
                     </tr>
                   )}
-                  {!!search?.hits.some((h) => h.taskId === row.id) && (
+                  {!!hits?.length && (
                     <tr className="compact-detail-row">
                       <td colSpan={showVersion ? 7 : 6}>
                         <div className="history-hits">
-                          {search.hits
-                            .filter((h) => h.taskId === row.id)
-                            .map((hit, i) => (
-                              <button
-                                key={i}
-                                className="history-hit"
-                                disabled={blocked}
-                                onClick={() => open(row, hit.targetId)}
-                              >
-                                <strong>
-                                  {hit.section}
-                                  {hit.line ? ' · 第 ' + hit.line + ' 行' : ''}
-                                </strong>
-                                <span>{hit.text}</span>
-                              </button>
-                            ))}
+                          {hits.map((hit, i) => (
+                            <button
+                              key={i}
+                              className="history-hit"
+                              disabled={blocked}
+                              onClick={() => open(row, hit.targetId)}
+                            >
+                              <strong>
+                                {hit.section}
+                                {hit.line ? ' · 第 ' + hit.line + ' 行' : ''}
+                              </strong>
+                              <span>{hit.text}</span>
+                            </button>
+                          ))}
                         </div>
                       </td>
                     </tr>
@@ -670,9 +690,13 @@ export function TaskHistory({
             })}
           </tbody>
         </table>
-        {!matching.length && (
+        {!matching.length && !searching && (
           <p className="empty">
-            {query ? '暂无匹配记录，可等待后台日志搜索完成。' : '尚无匹配任务。'}
+            {error
+              ? '搜索未完成，请调整关键词或筛选后重试。'
+              : keyword
+                ? '无匹配记录，试试调整筛选或关键词。'
+                : '尚无匹配任务。'}
           </p>
         )}
       </Card>

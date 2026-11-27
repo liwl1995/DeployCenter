@@ -312,6 +312,10 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   const [backupTarget, setBackupTarget] = useState<Target>();
   const [backupAudit, setBackupAudit] = useState<import('./features').MaintenanceRecord>();
   const [taskRows, setTaskRows] = useState<TaskSummary[]>([]);
+  const serviceHistoryRows = useMemo(
+    () => taskRows.filter((row) => row.serviceId === serviceId),
+    [taskRows, serviceId],
+  );
   const [inspected, setInspected] = useState(-1);
   const viewedTarget = Math.max(0, Math.min(inspected < 0 ? task?.active ?? 0 : inspected, (task?.targets.length || 1) - 1));
   const [message, setMessage] = useState('');
@@ -1232,7 +1236,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                   initialView={historyViews.current.get(scope)}
                   onViewChange={(view) => historyViews.current.set(scope, view)}
                   onMaintenance={setBackupAudit}
-                  rows={scoped ? taskRows.filter((row) => row.serviceId === serviceId) : taskRows}
+                  rows={scoped ? serviceHistoryRows : taskRows}
                   db={db}
                   api={desktop}
                   busy={taskRunning}

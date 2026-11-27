@@ -41,7 +41,7 @@ function row(change: Partial<TaskSummary> = {}): TaskSummary {
 const api = () =>
   ({
     cancelSearch: vi.fn().mockResolvedValue(undefined),
-    searchHistory: vi.fn().mockResolvedValue({ hits: [], total: 0, warnings: [] }),
+    searchHistory: vi.fn().mockResolvedValue({ taskIds: [], hits: [], total: 0, warnings: [] }),
   }) as unknown as DesktopAPI;
 it('日期分组使用本地日期，正确处理跨月昨天及未知时间；版本来自实际检测输出', () => {
   const now = new Date('2026-11-01T01:00:00');

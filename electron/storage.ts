@@ -14,7 +14,7 @@ import type { ReleaseSchedule } from '../src/schedules';
 import type { ReleaseRun } from '../src/serial-release';
 import type { Pin } from './contracts';
 import type { TaskSummary } from '../src/platform';
-import { summarizeTask, importedSummaries } from '../src/history-model';
+import { summarizeTask, importedSummaries, unreadableTaskService, unreadableTaskNote, backupCleanupService } from '../src/history-model';
 import { emptyDatabase } from '../src/defaults';
 import { ArtifactStore, artifactPolicy } from './artifact-store';
 import type { HistoryRetentionPolicy, HistoryRetentionPreview, LogContext } from '../src/features';
@@ -59,7 +59,7 @@ export class Storage {
       } catch {
         this.taskIssues.push({
           id: row.id,
-          message: '原始任务记录无法读取，已保留；请检查或恢复数据库备份。',
+          message: unreadableTaskNote,
         });
       }
     return tasks;
@@ -594,7 +594,7 @@ export class Storage {
       .map(
         (m): TaskSummary => ({
           id: m.id,
-          service: '远程备份',
+          service: backupCleanupService,
           operation: 'deploy',
           status: m.status === 'pending' || m.status === 'unknown' ? 'interrupted' : m.status,
           started: m.time,
@@ -624,7 +624,7 @@ export class Storage {
       ...this.taskIssues.map(
         (issue): TaskSummary => ({
           id: issue.id,
-          service: '无法读取的任务记录',
+          service: unreadableTaskService,
           operation: 'deploy',
           status: 'interrupted',
           started: '',

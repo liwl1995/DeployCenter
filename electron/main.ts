@@ -1086,8 +1086,16 @@ async function boot() {
       if (controller.active()) throw new Error('任务执行中暂不读取本地差异');
       return localDifferences(storage.database());
     });
-    handle('search-history', (query) =>
-      historySearch.search(dataDir, z.string().trim().min(1).max(200).parse(query)),
+    handle('search-history', (query, scope) =>
+      historySearch.search(
+        dataDir,
+        z.string().trim().min(1).max(200).parse(query),
+        z.object({
+          taskIds: z.array(z.string()),
+          serverId: z.string().optional(),
+          environment: z.string().optional(),
+        }).optional().parse(scope),
+      ),
     );
     handle('cancel-search', () => historySearch.stop());
     handle('export-report', async (value) => {
