@@ -8,6 +8,8 @@ import { snapshotJar } from '../electron/files';
 import { scheduleConfiguration, schedulePins } from '../electron/scheduler';
 import { emptyDatabase, newService, newTargetTemplate } from '../src/defaults';
 import { createTask } from '../src/engine';
+import type { ReleaseSchedule } from '../src/schedules';
+import { expectViewport } from './window-size';
 test.skip(process.platform !== 'win32', 'Windows 桌面验收');
 let app: ElectronApplication, dir: string;
 test.beforeEach(async ({}, info) => {
@@ -206,6 +208,129 @@ test('计划页面在三个尺寸下可用，重新准备仍需确认', async ()
   await expect(page.getByRole('heading', { name: '确认定时发布', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '返回检查' }).click();
   expect(await page.evaluate(() => window.deployCenter!.listTasks())).toEqual([]);
+});
+
+test('从计划返回恢复筛选、展开、滚动与焦点，后台任务独立更新', async () => {
+  const page = await app.firstWindow();
+  const button = (name: string) => page.getByRole('button', { name, exact: true });
+  const setTheme = async (label: string, theme: string) => {
+    await button('设置').click();
+    await page.getByRole('group', { name: '界面主题' }).getByRole('button', { name: label }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    await button('返回应用').click();
+    await button('发布计划').click();
+  };
+  const [fixture] = await page.evaluate(() => window.deployCenter!.listSchedules());
+  const plans = Array.from({ length: 20 }, (_, index): ReleaseSchedule => ({
+    ...fixture,
+    id: 'SP-navigation-' + index,
+    state: 'completed',
+    createdAt: fixture.createdAt - index,
+    preparationId: 'DC-navigation-prep-' + index,
+    task: {
+      ...fixture.task,
+      id: 'DC-navigation-prep-' + index,
+      service: { ...fixture.task.service, name: '历史计划 ' + index },
+    },
+  }));
+  const selected = plans[plans.length - 1];
+  selected.taskId = 'DC-navigation-deploy';
+  const deployment = { ...selected.task, id: selected.taskId, preparation: false };
+  const background = {
+    ...deployment,
+    id: 'DC-navigation-active',
+    service: { ...deployment.service, name: '后台验收任务' },
+    status: 'running' as const,
+  };
+  const active: ReleaseSchedule = {
+    ...fixture,
+    id: 'SP-navigation-active',
+    state: 'executing',
+    task: { ...fixture.task, service: background.service },
+    taskId: background.id,
+  };
+  await app.evaluate(({ BrowserWindow, ipcMain }, data) => {
+    ipcMain.removeHandler('deploy:list-schedules');
+    ipcMain.handle('deploy:list-schedules', () => data.plans);
+    ipcMain.removeHandler('deploy:read-task');
+    ipcMain.handle('deploy:read-task', (_event, id) => {
+      const task = data.tasks.find((entry) => entry.id === id);
+      if (!task) throw new Error('验收任务不存在');
+      return task;
+    });
+    BrowserWindow.getAllWindows()[0].webContents.send('deploy:event', {
+      kind: 'schedules',
+      schedules: data.plans,
+    });
+  }, { plans: [fixture, ...plans, active], tasks: [selected.task, deployment, background] });
+
+  await setTheme('浅色', 'light');
+  await app.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    window.setContentSize(900, 600);
+    window.webContents.setZoomFactor(1.5);
+  });
+  await expectViewport(page, 600, 400);
+  await button('已结束').click();
+  const card = page.getByRole('article').filter({ has: page.getByRole('heading', { name: selected.task.service.name }) });
+  const planMenu = button(selected.task.service.name + '发布计划操作');
+  await card.getByText('产物与计划详情', { exact: true }).click();
+  await expect(card.locator('details')).toHaveJSProperty('open', true);
+  await planMenu.scrollIntoViewIfNeeded();
+  const scrollTop = () => page.getByRole('main').evaluate((main) => main.scrollTop);
+  const position = await scrollTop();
+  expect(position).toBeGreaterThan(0);
+  await planMenu.press('Enter');
+  await page.getByRole('menuitem', { name: '准备日志', exact: true }).press('Enter');
+  const back = button('返回发布计划');
+  const taskHeading = page.locator('.task-page-header h1');
+  await expect(back).toBeFocused();
+  await expect(taskHeading).toContainText(selected.task.service.name);
+  await expect(taskHeading).toContainText('定时发布准备');
+
+  await app.evaluate(({ BrowserWindow }, task) => {
+    BrowserWindow.getAllWindows()[0].webContents.send('deploy:event', { kind: 'task', task });
+  }, background);
+  await expect(button('当前任务')).toBeVisible();
+  await expect(button('当前任务')).not.toHaveAttribute('aria-current', 'page');
+  await expect(taskHeading).toContainText(selected.task.service.name);
+  await back.press('Enter');
+  await expect(button('已结束')).toHaveAttribute('aria-pressed', 'true');
+  await expect(planMenu).toBeFocused();
+  await expect(card.locator('details')).toHaveJSProperty('open', true);
+  expect(Math.abs((await scrollTop()) - position)).toBeLessThanOrEqual(1);
+
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('menuitem', { name: '部署任务', exact: true })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(taskHeading).toContainText(selected.task.service.name);
+  await expect(taskHeading).not.toContainText('定时发布准备');
+  await button('当前任务').press('Enter');
+  await expect(taskHeading).toContainText(background.service.name);
+  await expect(button('当前任务')).toHaveAttribute('aria-current', 'page');
+  await back.press('Enter');
+  await expect(planMenu).toBeFocused();
+
+  await setTheme('深色', 'dark');
+  await expectViewport(page, 600, 400);
+  await button('执行中').click();
+  await button(background.service.name + '发布计划操作').press('Enter');
+  await page.getByRole('menuitem', { name: '部署任务', exact: true }).press('Enter');
+  await expect(taskHeading).toContainText(background.service.name);
+  await app.evaluate(({ BrowserWindow, ipcMain }, data) => {
+    ipcMain.removeHandler('deploy:list-schedules');
+    ipcMain.handle('deploy:list-schedules', () => data.plans);
+    const contents = BrowserWindow.getAllWindows()[0].webContents;
+    contents.send('deploy:event', { kind: 'schedules', schedules: data.plans });
+    contents.send('deploy:event', { kind: 'task', task: data.task });
+  }, { plans: [fixture, ...plans, { ...active, state: 'completed' }], task: { ...background, status: 'success' } });
+  await expect(button('当前任务')).toHaveCount(0);
+  await expect(page.getByText('已部署成功', { exact: true })).toBeVisible();
+  await back.press('Enter');
+  await expect(button('执行中')).toHaveAttribute('aria-pressed', 'true');
+  await expect(button('执行中')).toBeFocused();
+  await expect(page.getByText('当前状态下暂无发布计划')).toBeVisible();
 });
 
 test('创建计划通过真实 IPC 和 utilityProcess 准备，认证失败不上传且不产生部署历史', async () => {

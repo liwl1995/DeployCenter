@@ -5,7 +5,7 @@ import { ArtifactInfo, niceSize } from './ArtifactInfo';
 import { Confirm } from './Confirm';
 import { HistoryDetail } from './HistoryDetail';
 import { ServicePicker } from './ServicePicker';
-import { ReleaseSchedules } from './ReleaseSchedules';
+import { ReleaseSchedules, type ScheduleViewState } from './ReleaseSchedules';
 import { ReleaseManifest, type ReleaseDraft } from './ReleaseManifest';
 import type { ReleaseRun } from './serial-release';
 import type { ReleaseSchedule } from './schedules';
@@ -168,8 +168,13 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   >(null);
   const { page, returnPage: taskReturnPage, navigate: setPage, openTask: navigateToTask, returnFromTask, mainRef, serviceScrollRef } = useWorkspaceNavigation(initialPage);
   const [historySnapshot, setHistorySnapshot] = useState<History>();
-  const openTask = (source?: Parameters<typeof navigateToTask>[0], snapshot?: History) => {
-    setHistorySnapshot(snapshot);
+  const [viewedTask, setViewedTask] = useState<Task>();
+  const openTask = (
+    source?: Parameters<typeof navigateToTask>[0],
+    detail?: { history: History } | { task: Task },
+  ) => {
+    setHistorySnapshot(detail && 'history' in detail ? detail.history : undefined);
+    setViewedTask(detail && 'task' in detail ? detail.task : undefined);
     navigateToTask(source);
   };
   const [buildEnvironmentOpened, setBuildEnvironmentOpened] = useState(page === 'tools');
@@ -178,6 +183,10 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   }, [page]);
   const buildEnvironmentChecks = useBuildEnvironmentChecks(desktop, db, page === 'tools' || buildEnvironmentOpened);
   const historyViews = useRef(new Map<string, HistoryViewState>());
+  const scheduleView = useRef<ScheduleViewState>(undefined);
+  const rememberScheduleView = useCallback((view: ScheduleViewState) => {
+    scheduleView.current = view;
+  }, []);
   const [serviceTab, setServiceTab] = useState('deploy');
   const [logTarget, setLogTarget] = useState('');
   const [showOperationLogs, setShowOperationLogs] = useState(false);
@@ -267,8 +276,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     });
   };
   const [currentTask, setTask] = useState<Task | null>(boot?.task || null);
-  const [releaseTask, setReleaseTask] = useState<Task | null>(null);
-  const task = page === 'task' && taskReturnPage === 'release-manifest' ? releaseTask ?? currentTask : currentTask;
+  const task = page === 'task' && viewedTask && viewedTask.id !== currentTask?.id ? viewedTask : currentTask;
+  const taskRunning = isActive(currentTask);
   const [releaseRun, setReleaseRun] = useState<ReleaseRun | null>(boot?.releaseRun ?? null);
   const [releaseShowRun, setReleaseShowRun] = useState(!!boot?.releaseRun);
   const [releaseDraft, setReleaseDraft] = useState<ReleaseDraft>([]);
@@ -375,17 +384,17 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   }, [density]);
   useEffect(() => { setEnvironment('all'); }, [serviceId]);
   useEffect(() => {
-    if (!fixture || !isActive(task)) return;
+    if (!fixture || !taskRunning) return;
     const timer = setInterval(() => setTask((current) => (current ? tick(current) : null)), 850);
     return () => clearInterval(timer);
-  }, [task?.id, task?.status]);
+  }, [currentTask?.id, taskRunning]);
   useEffect(() => {
-    if (!fixture || !task || isActive(task)) return;
+    if (!fixture || !currentTask || taskRunning) return;
     credentials.current.clear();
-    if (recorded.current.has(task.id)) return;
-    recorded.current.add(task.id);
-    setDb((old) => recordTask(old, task));
-  }, [task]);
+    if (recorded.current.has(currentTask.id)) return;
+    recorded.current.add(currentTask.id);
+    setDb((old) => recordTask(old, currentTask));
+  }, [currentTask, taskRunning]);
   useEffect(() => () => credentials.current.clear(), []);
   useEffect(() => {
     if (db.history.length > db.settings.historyLimit) setDb((old) => pruneHistory(old));
@@ -429,7 +438,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       if (event.kind === 'open-service') traySelectService.current(event.serviceId);
       if (event.kind === 'maintenance') refresh();
       if (event.kind === 'task') {
-        setReleaseTask((old) => old?.id === event.task.id ? event.task : old);
+        setViewedTask((old) => old?.id === event.task.id ? event.task : old);
         setTask(event.task);
         if (!['running', 'cancelling'].includes(event.task.status)) {
           refresh();
@@ -455,9 +464,10 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           old.map((s) => (s.sessionId === event.id ? { ...s, active: false } : s)),
         );
       } else if (event.kind === 'open-task') {
-        void desktop!.readTask(event.taskId).then((value) => {
-          setTask(value);
-          openTask('history');
+        void nativeAction(async () => {
+          const value = await desktop!.readTask(event.taskId);
+          setInspected(-1);
+          openTask('history', { task: value });
         });
       } else if (event.kind === 'database') {
         setDb((old) => mergedDatabase(old, event.database));
@@ -515,7 +525,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     infoRefresh,
   ]);
   useEffect(() => {
-    if (!desktop || recovery || !db.services.length || page !== 'deploy' || isActive(task)) return;
+    if (!desktop || recovery || !db.services.length || page !== 'deploy' || taskRunning) return;
     let alive = true;
     setPreflight(null);
     setPreflightBusy(true);
@@ -553,7 +563,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       alive = false;
       clearTimeout(timer);
     };
-  }, [preflightKey, page, recovery, task?.status]);
+  }, [preflightKey, page, recovery, taskRunning]);
   const invalidObservation = chosen.find((t) => {
     const v = observationOverrides[t.id] || t.observation;
     return (
@@ -565,7 +575,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     );
   });
   const blockReason =
-    desktop && !isActive(task)
+    desktop && !taskRunning
       ? (taskIssues.length ? '有任务元数据无法读取，请先检查数据目录中的数据库备份。' : '') ||
         deploymentBlockReason(preflight, preflightBusy, chosen.length) ||
         (invalidObservation
@@ -651,12 +661,12 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     }));
   }
   async function launch(targetList = chosen, rollback?: History, dryRun = false, schedule = false) {
-    if (releasing && !isActive(task)) {
+    if (releasing && !taskRunning) {
       setPage('release-manifest');
       notify('发布清单正在执行，请等待清单结束。');
       return;
     }
-    if (isActive(task)) {
+    if (taskRunning) {
       openTask();
       notify('请先结束当前任务');
       return;
@@ -731,7 +741,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     }
   }
   async function repeatTask(dryRun: boolean) {
-    if (!task || !desktop || isActive(task) || releasing) return;
+    if (!task || !desktop || taskRunning || isActive(task) || releasing) return;
     setBusy(true);
     try {
       await desktop.save(db);
@@ -817,7 +827,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     };
   }
   function entityRemovalReason(entity: 'service' | 'target' | 'server' | 'jdk', id: string) {
-    if (isActive(task)) return '任务执行或取消中，不能删除配置。';
+    if (taskRunning) return '任务执行或取消中，不能删除配置。';
     if (
       unfinished.some((t) =>
         entity === 'service'
@@ -974,8 +984,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 },
                 {
                   label: '核实远程工作台',
-                  disabled: isActive(task),
-                  reason: isActive(task) ? '请先等待当前任务结束' : undefined,
+                  disabled: taskRunning,
+                  reason: taskRunning ? '请先等待当前任务结束' : undefined,
                   onClick: () =>
                     setNativeDialog({
                       title: t.name + ' · 核实远程工作台',
@@ -985,8 +995,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 },
                 {
                   label: '检查或接管任务锁',
-                  disabled: isActive(task),
-                  reason: isActive(task) ? '任务执行中不能接管锁' : undefined,
+                  disabled: taskRunning,
+                  reason: taskRunning ? '任务执行中不能接管锁' : undefined,
                   onClick: () =>
                     setNativeDialog({
                       title: t.name + ' · 检查任务锁',
@@ -1161,7 +1171,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     </div>
   );
   async function loadPreset(p: import('./model').Preset) {
-    if (isActive(task) || busy) {
+    if (taskRunning || busy) {
       notify('请先等待当前操作结束');
       return;
     }
@@ -1208,7 +1218,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       }
       onChange={(presets) => setDb((old) => ({ ...old, presets }))}
       onLoad={(p) => void loadPreset(p)}
-      disabled={busy || isActive(task)}
+      disabled={busy || taskRunning}
       pinnedOnly={pinnedOnly}
     />
   );
@@ -1225,20 +1235,19 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                   rows={scoped ? taskRows.filter((row) => row.serviceId === serviceId) : taskRows}
                   db={db}
                   api={desktop}
-                  busy={isActive(task)}
+                  busy={taskRunning}
                   onCopy={(value) => void copy(value)}
-                  onHistory={(value) => openTask(scoped ? 'deploy' : 'history', value)}
+                  onHistory={(value) => openTask(scoped ? 'deploy' : 'history', { history: value })}
                   onOpen={(id, targetId) =>
                     void nativeAction(async () => {
                       const next = await desktop!.readTask(id);
-                      setTask(next);
                       setInspected(
                         Math.max(
                           0,
                           next.targets.findIndex((r) => r.target.id === targetId),
                         ),
                       );
-                      openTask(scoped ? 'deploy' : 'history');
+                      openTask(scoped ? 'deploy' : 'history', { task: next });
                     })
                   }
                 />
@@ -1313,7 +1322,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         if (
           hasOpenModal() ||
           busy ||
-          isActive(task) ||
+          taskRunning ||
           !db.services.length
         ) {
           notify('请先结束当前操作并选择服务，再拖入 JAR。');
@@ -1357,13 +1366,13 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         }}
         onSearch={() => db.services.length && setDialog({ kind: 'picker' })}
         settingsNavigation={<div id="settings-directory" className="settings-directory" />}
-        task={isActive(task) && <button className="sidebar-link sidebar-task" aria-current={page === 'task' ? 'page' : undefined}
+        task={taskRunning && currentTask && <button className="sidebar-link sidebar-task"
+          aria-current={page === 'task' && !historySnapshot && task?.id === currentTask.id ? 'page' : undefined}
           onClick={() => {
             setInspected(-1);
-            if (page === 'release-manifest') setReleaseTask(currentTask);
             openTask();
           }} aria-label="当前任务">
-          <Activity size={16} aria-hidden="true" /><span>当前任务</span><small>{taskProgress(task!)}%</small>
+          <Activity size={16} aria-hidden="true" /><span>当前任务</span><small>{taskProgress(currentTask)}%</small>
         </button>}
         global={[
           ...nav.filter((n) => n.page !== 'deploy').map((n) => ({ ...n })),
@@ -1440,7 +1449,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 <Button
                   variant="neutral" size="compact"
                   key={t.id}
-                  disabled={isActive(task)}
+                  disabled={taskRunning}
                   onClick={() => setNativeDialog({ title: '核实中断任务 · ' + t.id, recover: t })}
                 >
                   {t.service.name} · 核实原任务
@@ -1508,7 +1517,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 <div className="service-workspace-scroll operation-scroll" hidden={viewingOperationLogs}>
                   <OperationsWorkspace api={desktop} targets={targets} servers={db.servers} target={selectedLogTarget}
                     saved={saved} onTarget={setLogTarget} onStatus={rememberRuntime} followLogs={desktopPreferences.followLogs} visible={!viewingOperationLogs}
-                    blocked={isActive(task) ? '有部署或回滚正在执行，请等待结束。' : undefined}
+                    blocked={taskRunning ? '有部署或回滚正在执行，请等待结束。' : undefined}
                     onLogs={() => setShowOperationLogs(true)}
                     onEdit={() => { if (selectedLogTarget) setDialog({ kind: 'target', value: selectedLogTarget }); }} />
                 </div>
@@ -1719,12 +1728,12 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                   <div className="deployment-footer" aria-label="部署操作">
                     <div className="deployment-count grow"><strong>已选 {chosen.length} 个目标</strong><small>{build === 'rebuild' ? '构建一次' : '使用现有 JAR'} · {chosen.filter((t) => effective(t).enabled).length} 个开启备份</small></div>
                     <DeployFailurePolicy value={failureOverride} fallback={db.settings.failurePolicy} onChange={setFailureOverride} />
-                    {desktop && <Button variant="neutral" disabled={busy || isActive(task) || !!blockReason || !chosen.length} onClick={() => void launch(chosen, undefined, true)}>试运行（远程只读）</Button>}
-                    <Button disabled={busy || (!isActive(task) && (!!blockReason || !chosen.length || (!desktop && build === 'existing' && !artifact.exists)))} onClick={() => void launch()}>
-                      <Rocket size={15} />{isActive(task) ? '查看当前任务' : '部署'}
+                    {desktop && <Button variant="neutral" disabled={busy || taskRunning || !!blockReason || !chosen.length} onClick={() => void launch(chosen, undefined, true)}>试运行（远程只读）</Button>}
+                    <Button disabled={busy || (!taskRunning && (!!blockReason || !chosen.length || (!desktop && build === 'existing' && !artifact.exists)))} onClick={() => void launch()}>
+                      <Rocket size={15} />{taskRunning ? '查看当前任务' : '部署'}
                     </Button>
                     {desktop && <MoreMenu iconOnly label="发布选项" trigger={<ChevronDown size={15} />} actions={[
-                      { label: '定时发布', disabled: busy || isActive(task) || !!blockReason || !chosen.length, onClick: () => void launch(chosen, undefined, false, true) },
+                      { label: '定时发布', disabled: busy || taskRunning || !!blockReason || !chosen.length, onClick: () => void launch(chosen, undefined, false, true) },
                       { label: '部署预设', onClick: () => setDialog({ kind: 'presets' }) },
                     ]} />}
                   </div>
@@ -1735,13 +1744,15 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
             <ReleaseSchedules
               plans={schedules}
               services={db.services}
-              busy={busy || isActive(task)}
-              onOpen={(id) =>
+              busy={busy || taskRunning}
+              initialView={scheduleView.current}
+              onViewChange={rememberScheduleView}
+              onOpen={(id, planId) =>
                 void nativeAction(async () => {
-                  const value = await desktop!.readTask(id);
-                  setTask(value);
+                  const value = currentTask?.id === id ? currentTask : await desktop!.readTask(id);
+                  if (scheduleView.current) scheduleView.current = { ...scheduleView.current, openedPlan: planId };
                   setInspected(-1);
-                  openTask('schedules');
+                  openTask('schedules', { task: value });
                 })
               }
               onCancel={(id) => void nativeAction(() => desktop!.cancelSchedule(id))}
@@ -1847,7 +1858,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
             <ReleaseManifest api={desktop} db={db} run={releaseRun} liveTask={currentTask} showRun={releaseShowRun} setShowRun={setReleaseShowRun}
               draft={releaseDraft} setDraft={setReleaseDraft} saved={saved} board={serviceScrollRef}
               policy={releasePolicy} onPolicy={setReleasePolicy}
-              blocked={busy || isActive(currentTask) || !!recovery || unfinished.length > 0}
+              blocked={busy || taskRunning || !!recovery || unfinished.length > 0}
               onCopy={(value) => void copy(value)}
               onHistory={(releaseId) => {
                 historyViews.current.set('all', releaseHistoryView(releaseId));
@@ -1856,9 +1867,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               onEditTarget={(value) => setDialog({ kind: 'target', value })}
               onTask={(id) => void nativeAction(async () => {
                 const value = currentTask?.id === id ? currentTask : await desktop!.readTask(id);
-                setReleaseTask(value);
                 setInspected(-1);
-                openTask('release-manifest');
+                openTask('release-manifest', { task: value });
               })} />
           )}
           {page === 'images' && desktop && (
@@ -1877,8 +1887,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               onSection={setSettingsSection}
               density={density}
               onDensity={setDensity}
-              migrationBlock={isActive(task) ? '任务执行或取消中，不能迁移数据目录。' : unfinished.length ? '有未处理的中断任务，请先核实结果再迁移。' : undefined}
-              busy={isActive(task)}
+              migrationBlock={taskRunning ? '任务执行或取消中，不能迁移数据目录。' : unfinished.length ? '有未处理的中断任务，请先核实结果再迁移。' : undefined}
+              busy={taskRunning}
               version={boot?.version || '2.3.3'}
               preferences={desktopPreferences}
               onPreferences={setDesktopPreferences}
@@ -2209,6 +2219,8 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 setFailureOverride(null);
                 setOverrides({});
                 setObservationOverrides({});
+                if (scheduleView.current)
+                  scheduleView.current = { ...scheduleView.current, filter: 'pending', openedPlan: undefined };
               }
               setDialog(null);
               setPage('schedules');
@@ -2486,7 +2498,6 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                 } else {
                   const recovered = await desktop!.recover(nativeDialog.recover!.id, values);
                   setTask(recovered);
-                  if (releaseTask?.id === recovered.id) setReleaseTask(recovered);
                   setInspected(-1);
                   openTask();
                   setNativeDialog(null);

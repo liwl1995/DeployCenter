@@ -107,7 +107,7 @@ it('计划提供准备日志、改期、重新准备与取消，执行中只提�
   const menu = () => screen.getByRole('button', { name: /发布计划操作/ });
   await user.click(menu());
   await user.click(screen.getByRole('menuitem', { name: '准备日志' }));
-  expect(open).toHaveBeenCalledWith(value.preparationId);
+  expect(open).toHaveBeenCalledWith(value.preparationId, value.id);
   await user.click(screen.getByRole('button', { name: '调整时间' }));
   expect(change).toHaveBeenCalledWith(value);
   await user.click(menu());
@@ -133,7 +133,7 @@ it('计划提供准备日志、改期、重新准备与取消，执行中只提�
   expect(screen.queryByRole('menuitem', { name: '取消计划' })).toBeNull();
   expect(screen.queryByRole('button', { name: '调整时间' })).toBeNull();
   await user.click(screen.getByRole('menuitem', { name: '部署任务' }));
-  expect(open).toHaveBeenCalledWith('DC-task');
+  expect(open).toHaveBeenCalledWith('DC-task', value.id);
 });
 it('需重新确认的计划不允许仅改时间绕过检查，忙时禁止重新准备', () => {
   render(

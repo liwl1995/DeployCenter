@@ -147,6 +147,8 @@ export function TaskView({
   onBackups?: () => void;
 }) {
   const task = useTaskClock(snapshot);
+  const back = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => back.current?.focus({ preventScroll: true }), []);
   const run = task.targets[inspected];
   const active = task.status === 'running' || task.status === 'cancelling';
   const result = resultFor(task, run);
@@ -355,7 +357,7 @@ export function TaskView({
           {seconds(task.elapsed)}
         </span>
         <div className="task-header-actions">
-          <Button variant="neutral" size="compact" onClick={onBack}>
+          <Button ref={back} variant="neutral" size="compact" onClick={onBack}>
             <ArrowLeft size={15} />
             {backLabel}
           </Button>
