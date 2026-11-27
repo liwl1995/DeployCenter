@@ -158,6 +158,96 @@ test('镜像紧凑列表、返回位置、输入控件与固定操作栏', async
     await expect(row).toBeFocused();
     expect(await view.evaluate((el) => el.scrollTop)).toBe(scroll);
     await page.screenshot({ path: info.outputPath('镜像包表格.png') });
+
+    const build: ImageJob = {
+      ...jobs[1],
+      status: 'success',
+      archive: {
+        name: '验收镜像.tar',
+        path: path.join(dir, '验收镜像.tar'),
+        size: 4,
+        hash: 'a'.repeat(64),
+        reference: 'fixture:latest',
+        platform: 'linux/amd64',
+        imageId: 'sha256:' + 'b'.repeat(64),
+      },
+    };
+    await app.evaluate(({ BrowserWindow, ipcMain }, { build, running }) => {
+      let job: ImageJob | undefined;
+      let checks = 0;
+      let cancelRequests = 0;
+      const handle = (channel: string, listener: Parameters<typeof ipcMain.handle>[1]) => {
+        ipcMain.removeHandler(channel);
+        ipcMain.handle(channel, listener);
+      };
+      handle('deploy:image-list', () => ({ directory: 'data/images', jobs: job ? [job, build] : [build] }));
+      handle('deploy:image-check-import', () => ({
+        token: 'test-confirmation',
+        archive: build.archive,
+        server: '界面验收服务器',
+        remoteDirectory: '/fixture/.deploy-center/image-imports',
+        uploadFile: '/fixture/.deploy-center/image-imports/task/image.tar',
+        free: 4_000_000,
+        alreadyPresent: ++checks === 1,
+      }));
+      handle('deploy:image-start-import', () => (job = running));
+      handle('deploy:image-cancel-upload', (_event, id) => {
+        if (!job || job.id !== id) throw new Error('任务编号不匹配');
+        if (++cancelRequests === 1) throw new Error('验收取消失败提示');
+        job = { ...job, status: 'cancelled', finished: Date.now() };
+        BrowserWindow.getAllWindows()[0].webContents.send('deploy:event', { kind: 'image-job', job });
+      });
+    }, { build, running: jobs[0] });
+    await button('服务管理').click();
+    await button('镜像工具').click();
+    await expect(button('构建并导出')).toBeVisible();
+    await tab('镜像包').click();
+    await filter.getByRole('button', { name: '已结束' }).click();
+    await button('导入到服务器').click();
+    await button('导入镜像').click();
+    const confirm = page.getByRole('dialog', { name: '确认导入镜像' });
+    await expect(confirm.getByText('服务器已有相同镜像，本次仅核验。')).toBeVisible();
+    await expect(confirm.getByText('上传路径', { exact: true })).toHaveCount(0);
+    await expect(button('确认核验')).toBeEnabled();
+    await button('返回').click();
+    await tab('镜像包').click();
+    await button('导入到服务器').click();
+    await button('导入镜像').click();
+    await expect(confirm.getByText('上传路径', { exact: true })).toBeVisible();
+    await expect(confirm.getByText(/上传阶段可取消/)).toBeVisible();
+    await button('确认导入').click();
+    const progress = page.getByRole('dialog', { name: '导入镜像' });
+    await expect(progress.getByRole('button', { name: '取消上传' })).toBeEnabled();
+    await page.keyboard.press('Escape');
+    await expect(progress).toBeHidden();
+
+    const quickOpen = button('查看导入任务');
+    await expect(quickOpen).toBeVisible();
+    await tab('镜像包').click();
+    await filter.getByRole('button', { name: '执行中' }).click();
+    const cancelInList = table.getByRole('button', { name: '取消上传' });
+    await cancelInList.press('Enter');
+    await expect(page.getByRole('alert')).toHaveText('验收取消失败提示');
+
+    for (const [label, theme] of [['浅色', 'light'], ['深色', 'dark']]) {
+      await button('设置').click();
+      await page.getByRole('group', { name: '界面主题' }).getByRole('button', { name: label }).click();
+      await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+      await button('返回应用').click();
+      await button('镜像工具').click();
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1.5));
+      await expectViewport(page, 600, 400);
+      await quickOpen.press('Enter');
+      await expect(button('返回镜像包')).toBeFocused();
+      await expect(button('取消上传')).toBeInViewport({ ratio: 1 });
+      if (theme === 'light') {
+        await button('返回镜像包').press('Enter');
+        await expect(table.getByRole('row', { name: /正在导入夹具/ })).toBeFocused();
+      }
+    }
+    await button('取消上传').press('Enter');
+    await expect(page.getByText('已取消', { exact: true })).toBeVisible();
+    await expect(button('取消上传')).toHaveCount(0);
   } finally {
     await app.close();
     if (path.dirname(dir) === base && path.basename(dir).startsWith('image-ui-'))

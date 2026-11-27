@@ -150,7 +150,7 @@ export function OperationsWorkspace({ api, targets, servers, target, saved, onTa
           <span>{entry.message}</span>
           {['failed', 'unknown', 'unverified'].includes(entry.result) && <Button variant="neutral" size="compact" onClick={() => { setDetail(undefined); onLogs(); }}>查看线上日志</Button>}
         </div>
-        <VirtualLogs active={entry.result === 'running'} label="运维执行日志" initialFollow={followLogs}
+        <VirtualLogs active={visible} label="运维执行日志" initialFollow={followLogs}
           entries={entry.logs.trimEnd().split('\n').filter(Boolean).map((text, index) => ({ id: entry.id + ':' + index, text }))}
           grouped={false} />
       </section> : <>

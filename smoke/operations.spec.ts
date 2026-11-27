@@ -5,10 +5,11 @@ import path from 'node:path';
 import ssh2 from 'ssh2';
 import { emptyDatabase, newService, newTargetTemplate } from '../src/defaults';
 import { Storage } from '../electron/storage';
+import { expectViewport } from './window-size';
 
 test.skip(process.platform !== 'win32', '在 Windows Electron 中验收运维及全屏日志');
 
-test('运维状态、生产重启确认、流式输出与固定目标日志', async () => {
+test('运维状态、生产重启确认、完成后翻阅与固定目标日志', async () => {
   test.setTimeout(45_000);
   const root = path.resolve('.test-data');
   await fs.mkdir(root, { recursive: true });
@@ -40,6 +41,7 @@ test('运维状态、生产重启确认、流式输出与固定目标日志', as
           const owner = input.match(/MARKER='([^']+)'/)?.[1];
           if (!owner || !input.includes("ACTION='restart'")) { stream.exit(1); stream.end(); return; }
           stream.write('回环运维输出 ' + password + '\n');
+          stream.write(Array.from({ length: 180 }, (_, index) => '验收日志行 ' + index).join('\n') + '\n');
           setTimeout(() => {
             stream.write(owner + '\tsuccess\t容器运行稳定\n');
             stream.exit(0); stream.end();
@@ -88,8 +90,19 @@ test('运维状态、生产重启确认、流式输出与固定目标日志', as
     await page.getByLabel('登录密码', { exact: true }).fill(password);
     await button('确认重启').click();
     await expect(page.getByText('容器运行稳定', { exact: true })).toBeVisible();
-    await expect(page.getByText(/回环运维输出/)).not.toContainText(password);
     expect(requests.filter((input) => input.includes("ACTION='restart'"))).toHaveLength(1);
+    await button('返回运维').click();
+    await button('日志').click();
+    const log = page.getByRole('log', { name: '运维执行日志' });
+    await expect(log.getByText('验收日志行 179', { exact: true })).toBeInViewport();
+    await log.hover();
+    await page.mouse.wheel(0, -10000);
+    const firstOutput = log.getByText(/回环运维输出/);
+    await expect(firstOutput).toBeInViewport();
+    await expect(firstOutput).not.toContainText(password);
+    await page.getByRole('textbox', { name: '搜索日志' }).fill('验收日志行 126');
+    await button('下一处').press('Enter');
+    await expect(log.getByText('验收日志行 126', { exact: true })).toBeInViewport();
     await button('返回运维').click();
     await button('查看日志').click();
     await expect(page.getByRole('region', { name: '线上应用日志' })).toBeVisible();
@@ -99,9 +112,18 @@ test('运维状态、生产重启确认、流式输出与固定目标日志', as
     expect(await page.locator('main').evaluate((node) => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1);
     await button('返回运维').click();
     await expect(page.getByRole('combobox', { name: '运维目标' })).toHaveValue('ops-target');
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1.25));
+    await app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      window.setContentSize(900, 600);
+      window.webContents.setZoomFactor(1.5);
+    });
+    await expectViewport(page, 600, 400);
     await expect(button('查看日志')).toBeVisible();
     expect(await page.locator('main').evaluate((node) => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1);
+    await button('日志').press('Enter');
+    await log.scrollIntoViewIfNeeded();
+    await expect(log.getByText('验收日志行 179', { exact: true })).toBeInViewport();
+    await button('返回运维').click();
     await button('部署目标').click();
     await expect(page.locator('.entity-list').getByText('运行中', { exact: true })).toBeVisible();
   } finally {

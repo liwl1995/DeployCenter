@@ -610,6 +610,9 @@ export class ImageJobs {
           const check = await checkImageImport(transport, server, packageFile);
           if (check.remoteDirectory !== checked.remoteDirectory)
             throw new Error('远程目录已变更，请重新检查并确认');
+          // 仅核验的确认只允许执行只读操作。
+          if (checked.alreadyPresent && !check.alreadyPresent)
+            throw new Error('服务器上的相同镜像已不存在，请重新检查并确认上传与导入');
           alreadyPresent = check.alreadyPresent;
           remoteDirectory = check.remoteDirectory;
           task.archive = packageFile;

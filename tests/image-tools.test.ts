@@ -163,8 +163,8 @@ it('预检拒绝不兼容平台或同名不同镜像，命令中没有创建或�
   expect(exec.mock.calls[0][0]).not.toMatch(/mkdir|image load|rm -/);
 });
 
-it.each(['success', 'wrong-image', 'cancel'] as const)(
-  '导入 %s 时按核验结果清理或保留现场',
+it.each(['success', 'wrong-image', 'cancel', 'verify-only', 'image-disappeared'] as const)(
+  '导入 %s 时按确认范围和核验结果执行',
   async (scenario) => {
     const file = path.join(dir, 'ready.tar'),
       id = randomUUID();
@@ -176,7 +176,7 @@ it.each(['success', 'wrong-image', 'cancel'] as const)(
       free: 100_000_000,
       remoteDirectory,
       uploadFile: remoteDirectory + '/' + id + '/image.tar',
-      alreadyPresent: false,
+      alreadyPresent: scenario === 'verify-only' || scenario === 'image-disappeared',
     };
     const calls: string[] = [];
     const transport = {
@@ -187,7 +187,10 @@ it.each(['success', 'wrong-image', 'cancel'] as const)(
         const ok = (stdout = '') => ({ code: 0, stdout, stderr: '' });
         if (command.includes('docker.sock info')) {
           calls.push('check');
-          return ok(remoteDirectory + '\nlinux/x86_64\n100000\n');
+          return ok(
+            remoteDirectory + '\nlinux/x86_64\n100000\n' +
+              (scenario === 'verify-only' ? imageId : ''),
+          );
         }
         if (command.includes('mkdir --')) {
           calls.push('mkdir');
@@ -195,6 +198,7 @@ it.each(['success', 'wrong-image', 'cancel'] as const)(
         }
         if (command.includes('actual="$(sha256sum')) {
           calls.push('hash');
+          expect(() => jobs.cancelUpload(id)).toThrow('当前已离开上传阶段');
           return ok();
         }
         if (command.includes('image inspect')) {
@@ -244,7 +248,25 @@ it.each(['success', 'wrong-image', 'cancel'] as const)(
     jobs.import(id, { file }, check.server, async () => ({ transport }), check);
     const result = await done;
     expect((await jobs.list())[0].status).toBe(result.status);
-    expect((await jobs.logs(id)).map(({ text }) => text).join('')).toContain('上传到：');
+    const logs = (await jobs.logs(id)).map(({ text }) => text).join('');
+    if (scenario === 'image-disappeared') {
+      expect(result).toMatchObject({
+        status: 'failed',
+        message: expect.stringContaining('请重新检查并确认上传与导入'),
+      });
+      expect(result.remoteFile).toBeUndefined();
+      expect(calls).toEqual(['check']);
+      expect(logs).not.toContain('上传到：');
+      return;
+    }
+    if (scenario === 'verify-only') {
+      expect(result).toMatchObject({ status: 'success', remoteImageId: imageId });
+      expect(result.remoteFile).toBeUndefined();
+      expect(calls).toEqual(['check', 'verify']);
+      expect(logs).not.toContain('上传到：');
+      return;
+    }
+    expect(logs).toContain('上传到：');
     if (scenario === 'cancel') {
       expect(result).toMatchObject({ status: 'cancelled', remoteFile: undefined });
       expect(calls).toEqual(['check', 'mkdir', 'upload', 'clean']);

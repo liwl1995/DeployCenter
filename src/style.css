@@ -2327,8 +2327,15 @@ th {
   text-align: end;
 }
 .operation-output .log-viewer {
+  display: flex;
   flex: 1;
-  min-height: 220px;
+  flex-direction: column;
+  min-height: 0;
+}
+.operation-output .log-viewport {
+  flex: 1;
+  height: auto;
+  min-height: 96px;
 }
 .operation-command {
   white-space: pre-wrap;

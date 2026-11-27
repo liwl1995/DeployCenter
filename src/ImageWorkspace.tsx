@@ -62,6 +62,8 @@ const message = (error: unknown) =>
     /^Error invoking remote method '[^']+': Error:\s*/,
     '',
   );
+const uploading = (job: ImageJob) =>
+  job.kind === 'import' && job.status === 'running' && job.stages[1]?.status === 'running';
 
 export function ImageWorkspace({
   api,
@@ -82,6 +84,7 @@ export function ImageWorkspace({
   const [packageFilter, setPackageFilter] = useState<PackageFilter>('running');
   const [jobs, setJobs] = useState<ImageJob[]>();
   const [error, setError] = useState('');
+  const [cancelError, setCancelError] = useState('');
   const [reload, setReload] = useState(0);
   const [directory, setDirectory] = useState(dataDir + '\\images');
   const [taskId, setTaskId] = useState('');
@@ -92,6 +95,7 @@ export function ImageWorkspace({
   const [selected, setSelected] = useState(serviceId);
   const service = db.services.find((entry) => entry.id === selected) || db.services[0];
   const busy = jobs?.some((job) => job.status === 'running') ?? false;
+  const activeImport = jobs?.find((job) => job.kind === 'import' && job.status === 'running');
   const task = jobs?.find((job) => job.id === taskId);
   const record = (job: ImageJob) => {
     setJobs((previous) =>
@@ -141,7 +145,12 @@ export function ImageWorkspace({
   }, [page, taskId]);
   const openTask = (id: string) => {
     packageReturn.current = { id, top: packageScroll.current?.scrollTop || 0 };
+    setCancelError('');
     setTaskId(id);
+  };
+  const cancelUpload = (id: string) => {
+    setCancelError('');
+    void api.cancelImageUpload(id).catch((error) => setCancelError(message(error)));
   };
   return (
     <section className="image-workspace">
@@ -152,8 +161,35 @@ export function ImageWorkspace({
         }
         truncateTitle
         icon={!task ? <Container size={20} strokeWidth={1.5} /> : undefined}
-        actions={task ? <ImageTaskActions job={task} onBack={() => setTaskId('')} /> : undefined}
+        actions={
+          task ? (
+            <ImageTaskActions
+              job={task}
+              onCancelUpload={cancelUpload}
+              onBack={() => {
+                setCancelError('');
+                setTaskId('');
+              }}
+            />
+          ) : activeImport ? (
+            <Button
+              variant="neutral"
+              size="compact"
+              onClick={() => {
+                setPage('packages');
+                openTask(activeImport.id);
+              }}
+            >
+              查看导入任务
+            </Button>
+          ) : undefined
+        }
       />
+      {cancelError && (
+        <p className="image-list-error warning" role="alert">
+          {cancelError}
+        </p>
+      )}
       {task ? (
         <ImageTask key={task.id} api={api} job={task} followLogs={followLogs} />
       ) : (
@@ -220,6 +256,7 @@ export function ImageWorkspace({
                 setError('');
                 void api.cancelImageBuild(id).catch((error) => setError(String(error)));
               }}
+              onCancelUpload={cancelUpload}
               onImport={(id) => {
                 setImportBuild(id);
                 setPage('import');
@@ -565,6 +602,7 @@ function ImagePackages({
   onImport,
   onBuild,
   onCancelBuild,
+  onCancelUpload,
 }: {
   jobs?: ImageJob[];
   error: string;
@@ -574,6 +612,7 @@ function ImagePackages({
   onImport: (id: string) => void;
   onBuild: () => void;
   onCancelBuild: (id: string) => void;
+  onCancelUpload: (id: string) => void;
 }) {
   const visible = (jobs || []).filter(
     (job) =>
@@ -642,11 +681,13 @@ function ImagePackages({
                   ? seconds(((job.finished || now) - job.started) / 1000)
                   : '—';
               const status =
-                job.status === 'running'
-                  ? job.kind === 'build'
-                    ? job.cancelling ? '正在取消' : '正在构建'
-                    : '正在导入'
-                  : jobStatus[job.status];
+                job.status !== 'running'
+                  ? jobStatus[job.status]
+                  : job.cancelling
+                    ? '正在取消'
+                    : job.kind === 'build'
+                      ? '正在构建'
+                      : '正在导入';
               return (
                 <Fragment key={job.id}>
                   {newDay && (
@@ -701,6 +742,7 @@ function ImagePackages({
                       </span>
                     </td>
                     <td>
+                      <ImageUploadCancel job={job} onCancel={onCancelUpload} />
                       {job.kind === 'build' && job.status === 'running' && (
                         <Button
                           variant="neutral"
@@ -775,8 +817,35 @@ function useImageTime(running: boolean) {
   }, [running]);
   return now;
 }
-function ImageTaskActions({ job, onBack }: { job: ImageJob; onBack: () => void }) {
+function ImageUploadCancel({
+  job,
+  onCancel,
+  size = 'compact',
+}: {
+  job: ImageJob;
+  onCancel: (id: string) => void;
+  size?: 'compact' | 'regular';
+}) {
+  if (!uploading(job)) return null;
+  return (
+    <Button variant="neutral" size={size} disabled={job.cancelling} onClick={() => onCancel(job.id)}>
+      {job.cancelling ? '正在取消…' : '取消上传'}
+    </Button>
+  );
+}
+
+function ImageTaskActions({
+  job,
+  onBack,
+  onCancelUpload,
+}: {
+  job: ImageJob;
+  onBack: () => void;
+  onCancelUpload: (id: string) => void;
+}) {
   const now = useImageTime(job.status === 'running');
+  const back = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => back.current?.focus({ preventScroll: true }), []);
   return (
     <>
       <Badge
@@ -793,7 +862,8 @@ function ImageTaskActions({ job, onBack }: { job: ImageJob; onBack: () => void }
         {jobStatus[job.status]}
       </Badge>
       <span className="task-duration">{seconds(((job.finished || now) - job.started) / 1000)}</span>
-      <Button variant="neutral" size="compact" onClick={onBack}>
+      <ImageUploadCancel job={job} onCancel={onCancelUpload} />
+      <Button ref={back} variant="neutral" size="compact" onClick={onBack}>
         <ArrowLeft size={16} />
         返回镜像包
       </Button>
@@ -899,8 +969,7 @@ function ImageTaskLogs({
   focus?: { name: string; nonce: number };
 }) {
   const { entries, error } = useImageLogs(api, job.id);
-  const upload =
-    job.status === 'running' && job.stages[1]?.status === 'running' ? job.upload : undefined;
+  const upload = uploading(job) ? job.upload : undefined;
   return (
     <div className="task-log-card image-logs">
       {error && (
@@ -1030,10 +1099,10 @@ function ImportImageForm({
       setWorking(false);
     }
   };
-  const cancelUpload = async () => {
-    if (!task) return;
+  const cancelUpload = async (id: string) => {
+    setError('');
     try {
-      await api.cancelImageUpload(task.id);
+      await api.cancelImageUpload(id);
     } catch (error) {
       setError(message(error));
     }
@@ -1201,20 +1270,12 @@ function ImportImageForm({
               )}
               {opened === 'confirm' && (
                 <Button disabled={working || !check || busy} onClick={() => void start()}>
-                  确认导入
+                  {check?.alreadyPresent ? '确认核验' : '确认导入'}
                 </Button>
               )}
-              {opened === 'task' &&
-                task?.status === 'running' &&
-                task.stages[1]?.status === 'running' && (
-                  <Button
-                    variant="neutral"
-                    disabled={task.cancelling}
-                    onClick={() => void cancelUpload()}
-                  >
-                    {task.cancelling ? '正在取消…' : '取消上传'}
-                  </Button>
-                )}
+              {opened === 'task' && task && (
+                <ImageUploadCancel job={task} onCancel={cancelUpload} size="regular" />
+              )}
             </>
           }
         >
@@ -1234,23 +1295,27 @@ function ImportImageForm({
             <>
               <p role="status" className="task-tone-success">
                 {check.alreadyPresent
-                  ? '服务器已有相同镜像，导入时只核验。'
+                  ? '服务器已有相同镜像，本次仅核验。'
                   : '联系到 Docker 引擎，平台匹配，未发现标签冲突。'}
               </p>
               <PackageSummary archive={check.archive} />
               <dl className="image-facts">
                 <dt>服务器</dt>
                 <dd>{check.server}</dd>
-                <dt>{opened === 'confirm' ? '上传路径' : '临时目录'}</dt>
-                <dd className="path">
-                  {opened === 'confirm' ? check.uploadFile : check.remoteDirectory}
-                </dd>
-                <dt>可用空间</dt>
-                <dd>{imageSize(check.free)}</dd>
+                {!check.alreadyPresent && (
+                  <>
+                    <dt>{opened === 'confirm' ? '上传路径' : '临时目录'}</dt>
+                    <dd className="path">
+                      {opened === 'confirm' ? check.uploadFile : check.remoteDirectory}
+                    </dd>
+                    <dt>可用空间</dt>
+                    <dd>{imageSize(check.free)}</dd>
+                  </>
+                )}
               </dl>
-              {opened === 'confirm' && (
+              {opened === 'confirm' && !check.alreadyPresent && (
                 <p className="note">
-                  上传后的 SHA-256 和加载后的镜像 ID 均通过核验，才会清理远端临时包。
+                  上传阶段可取消。SHA-256 和镜像 ID 均通过核验后清理远端临时包。
                 </p>
               )}
             </>
