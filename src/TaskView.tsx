@@ -69,7 +69,7 @@ function resultFor(task: Task, run?: RunTarget): { tone: Status; text: string } 
     run?.remote?.finalState === 'ROLLBACK_FAILED' ||
     run?.steps.some((s) => s.key === 'rollback' && s.status === 'failed')
   )
-    return { tone: 'failed', text: '自动回滚失败。当前运行版本待核实，请查看失败位置。' };
+    return { tone: 'failed', text: '回滚失败。当前运行版本待核实，请查看失败位置。' };
   if (run?.status === 'unverified')
     return { tone: 'warning', text: '已部署，但无法确认应用可用。此目标未执行健康检查。' };
   if (run?.status === 'success')
@@ -296,7 +296,7 @@ export function TaskView({
   const primary =
     task.status === 'running'
       ? {
-          label: task.dryRun ? '取消检查' : task.operation === 'rollback' ? '取消回滚' : '取消部署',
+          label: task.preparation ? '取消准备' : task.dryRun ? '取消检查' : task.operation === 'rollback' ? '取消回滚' : '取消部署',
           action: onCancel,
         }
       : onRecover && task.status === 'interrupted'

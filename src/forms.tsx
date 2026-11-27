@@ -210,7 +210,7 @@ export function ServerForm({
         </Field>
         <Field label="认证方式" wide>
           <select value={v.auth} onChange={(e) => update('auth', e.target.value)}>
-            <option value="alias">Windows SSH Config 别名</option>
+            <option value="alias">SSH 别名</option>
             <option value="password">用户名 + 密码</option>
             <option value="key">SSH 私钥</option>
           </select>
@@ -218,8 +218,7 @@ export function ServerForm({
         {v.auth === 'alias' ? (
           <>
             <Field
-              label="SSH Config 别名"
-              hint="沿用系统 OpenSSH，包括 ProxyJump、IdentityFile 和 Agent"
+              label="SSH 别名"
               wide
             >
               <input
@@ -242,7 +241,7 @@ export function ServerForm({
             {desktop && (
               <Field
                 label="SSH 配置文件（可选）"
-                hint="留空使用当前用户的默认 SSH Config；实际连接沿用系统 SSH 完整配置。"
+                hint="留空使用当前 Windows 用户的默认 SSH 配置。"
                 wide
               >
                 <input

@@ -342,7 +342,7 @@ export function ReleaseManifest({ api, db, run, liveTask, showRun, setShowRun, d
         </>}
       </div>
       <div className="deployment-footer" aria-label="发布清单操作">
-        <div className="deployment-count grow">
+        <div className="deployment-count">
           <strong>{step === 0 ? draft.length + ' 个服务 · ' + selectedTargets.length + ' 个目标' :
             step === 1 ? review.length + ' 个待发布服务' : run?.state === 'done' ? '清单已结束' : '发布进度'}</strong>
           <small>{step === 0 ? '每个服务独立生成部署任务' : step === 1 && production.length

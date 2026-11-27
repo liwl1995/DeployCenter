@@ -4,7 +4,7 @@ import { Button } from './design/ui/button';
 import { EntityDetail, EntityWorkspace } from './WorkspaceLayout';
 import { Badge } from './ui';
 import { fmtTime, type Database, type Service } from './model';
-import { deploymentTime, taskResult, toolLabels } from './presentation';
+import { lastServiceDeployments, taskResult, toolLabels } from './presentation';
 import type { TaskSummary } from './platform';
 
 export function ServicesWorkspace({
@@ -20,22 +20,9 @@ export function ServicesWorkspace({
   onPickIcon: (id: string) => void;
   renderActions: (service: Service) => ReactNode;
 }) {
-  const cardTime = (value?: string) => (deploymentTime(value) ? fmtTime(value!).slice(5, 16) : '—');
-  const serviceLastDeploy = (id: string) =>
-    db.targets
-      .filter((t) => t.serviceId === id && deploymentTime(t.lastDeploy))
-      .map((t) => t.lastDeploy)
-      .sort()
-      .at(-1) ||
-    db.history.find(
-      (h) =>
-        h.service.id === id &&
-        ['success', 'unverified', 'rolledback'].includes(h.status) &&
-        deploymentTime(h.time),
-    )?.time;
+  const deployed = lastServiceDeployments(db);
   return (
     <>
-      <p className="page-intro">项目、构建环境和产物路径独立配置。</p>
       <EntityWorkspace
         actions={
           <Button variant="default" size="compact" onClick={onAdd}>
@@ -45,13 +32,13 @@ export function ServicesWorkspace({
         }
         cardActions={serviceActions}
         cardState={(s) => ({
-          good: !!serviceLastDeploy(s.id),
-          label: serviceLastDeploy(s.id) ? '已部署' : '未部署',
+          good: deployed.has(s.id),
+          label: deployed.has(s.id) ? '已部署' : '未部署',
         })}
         cardMeta={(s) => (
           <>
             <span>{db.targets.filter((t) => t.serviceId === s.id).length} 个目标</span>
-            <time>{cardTime(serviceLastDeploy(s.id))}</time>
+            <time>{deployed.has(s.id) ? fmtTime(deployed.get(s.id)!).slice(5, 16) : '—'}</time>
           </>
         )}
         summary={(s) => (
@@ -76,10 +63,10 @@ export function ServicesWorkspace({
       >
         {(s) => (
           <EntityDetail key={s.id} title={s.name} action={serviceActions(s)}>
-            <p className="muted">{s.description}</p>
+            {s.description && <p className="muted">{s.description}</p>}
             <p className="path">{s.root}</p>
             <div className="tags">
-              <Badge>{s.jdk}</Badge>
+              <Badge>{s.jdk || '未选择 JDK'}</Badge>
               <Badge>{toolLabels[s.tool]}</Badge>
               {s.workDir && s.workDir !== '.' && <Badge>工作目录：{s.workDir}</Badge>}
             </div>

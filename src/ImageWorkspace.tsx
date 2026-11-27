@@ -95,7 +95,7 @@ export function ImageWorkspace({
   const [selected, setSelected] = useState(serviceId);
   const service = db.services.find((entry) => entry.id === selected) || db.services[0];
   const busy = jobs?.some((job) => job.status === 'running') ?? false;
-  const activeImport = jobs?.find((job) => job.kind === 'import' && job.status === 'running');
+  const activeJob = jobs?.find((job) => job.status === 'running');
   const task = jobs?.find((job) => job.id === taskId);
   const record = (job: ImageJob) => {
     setJobs((previous) =>
@@ -171,16 +171,16 @@ export function ImageWorkspace({
                 setTaskId('');
               }}
             />
-          ) : activeImport ? (
+          ) : activeJob ? (
             <Button
               variant="neutral"
               size="compact"
               onClick={() => {
                 setPage('packages');
-                openTask(activeImport.id);
+                openTask(activeJob.id);
               }}
             >
-              查看导入任务
+              {activeJob.kind === 'import' ? '查看导入任务' : '查看构建任务'}
             </Button>
           ) : undefined
         }
@@ -1110,9 +1110,6 @@ function ImportImageForm({
   return (
     <section className="image-panel" aria-label="导入到服务器">
       <div className="image-content image-config">
-        <div className="card-head">
-          <h2>导入到服务器</h2>
-        </div>
         <div className="form-grid">
           <div className="field wide">
             <span className="field-label">镜像来源</span>
@@ -1282,7 +1279,7 @@ function ImportImageForm({
           {working && (
             <p role="status" className="row">
               <Loader2 size={16} className="spin" />
-              正在检查，请稍候…
+              {opened === 'inspect' ? '正在校验镜像包…' : check ? '正在提交导入…' : '正在检查服务器…'}
             </p>
           )}
           {error && (

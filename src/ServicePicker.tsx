@@ -6,6 +6,10 @@ import { EntityIcon } from './entity-icons';
 
 export function ServicePicker({ db, onChoose }: { db: Database; onChoose: (id: string) => void }) {
   const [query, setQuery] = useState('');
+  const keyword = query.trim().toLowerCase();
+  const results = db.services.filter((service) =>
+    [service.name, service.code, service.root].join(' ').toLowerCase().includes(keyword),
+  );
   return (
     <>
       <Field label="搜索服务">
@@ -17,11 +21,8 @@ export function ServicePicker({ db, onChoose }: { db: Database; onChoose: (id: s
         />
       </Field>
       <div className="stack">
-        {db.services
-          .filter((s) =>
-            [s.name, s.code, s.root].join(' ').toLowerCase().includes(query.toLowerCase()),
-          )
-          .map((s) => {
+        {!results.length && <p className="empty" role="status">没有匹配的服务，请换个关键词。</p>}
+        {results.map((s) => {
             const h = db.history.find((h) => h.service.id === s.id);
             return (
               <button className="service-result" key={s.id} onClick={() => onChoose(s.id)}>

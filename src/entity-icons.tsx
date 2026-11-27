@@ -441,7 +441,7 @@ export const ICON_COLORS: { value: string; label: string }[] = [
   { value: '#8b5cf6', label: '紫色' },
 ];
 
-/** 统一实体图标：按 icon 渲染，缺省回落实体默认，颜色随预设。未知图标名（含对象继承属性）回退默认，避免渲染失败。 */
+/** 实体列表按主题调整显示对比度，选择器保留用户选定的色值。 */
 export function EntityIcon({
   kind,
   icon,
@@ -459,5 +459,7 @@ export function EntityIcon({
       ? requested
       : DEFAULT_ENTITY_ICON[kind];
   const Cmp = ENTITY_ICONS[name];
-  return <Cmp size={size} strokeWidth={strokeWidth} color={icon?.color || undefined} />;
+  const color = icon?.color || undefined;
+  return <Cmp size={size} strokeWidth={strokeWidth} color={color}
+    style={color ? { stroke: 'color-mix(in srgb, ' + color + ' 66%, var(--text-1))' } : undefined} />;
 }

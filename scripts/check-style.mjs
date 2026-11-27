@@ -7,7 +7,7 @@ const rules = {
   'font-weight': /^(?:400|600|inherit)$/,
 };
 
-for (const file of ['style.css', 'design/tokens.css']) {
+for (const file of ['style.css', 'design/tokens.css', 'design/controls.css', 'tray/panel.css']) {
   const source = (await fs.readFile(new URL(file, root), 'utf8')).replace(/\/\*[\s\S]*?\*\//g, '');
   for (const [, property, value] of source.matchAll(
     /(?:^|[;{])\s*((?:(?:row|column)-)?gap|border-radius|font-weight)\s*:\s*([^;}]+)/gm,

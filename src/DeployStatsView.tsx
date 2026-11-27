@@ -140,7 +140,7 @@ export function DeployStatsView({
   onService: (id: string) => void;
 }) {
   const stats = useMemo(() => deployStats(history, tasks, scope), [history, tasks, scope]);
-  const excluded = [
+  const excluded = ([
     ['回滚目标', stats.excluded.rollback],
     ['试运行', stats.excluded.dryRun],
     ['中断任务', stats.excluded.interrupted],
@@ -148,7 +148,7 @@ export function DeployStatsView({
     ['已取消目标', stats.excluded.cancelled],
     ['已跳过目标', stats.excluded.skipped],
     ['构建失败任务', stats.excluded.buildFailed],
-  ] as const;
+  ] as const).filter(([, count]) => count > 0);
   return (
     <div className="deploy-stats">
       <div className="deploy-stats-metrics">
@@ -171,14 +171,12 @@ export function DeployStatsView({
           <p className="note">按已得出结果的目标计算，含失败</p>
         </Card>
       </div>
-      <div className="deploy-stats-excluded note">
-        <strong>未计入统计</strong>
-        {excluded.map(([label, count]) => (
-          <span key={label}>
-            {label} {count}
-          </span>
-        ))}
-      </div>
+      {excluded.length > 0 && (
+        <div className="deploy-stats-excluded note">
+          <strong>未计入统计</strong>
+          {excluded.map(([label, count]) => <span key={label}>{label} {count}</span>)}
+        </div>
+      )}
       {stats.total === 0 ? (
         <Card className="deploy-stats-empty">
           <ChartNoAxesCombined size={24} aria-hidden="true" />

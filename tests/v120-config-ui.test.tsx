@@ -87,7 +87,7 @@ it('服务器表单显示别名候选且标签关联输入；草稿测试不保�
     <ServerForm initial={initial} db={db} onSave={save} onClose={() => {}} onTestResult={tested} />,
   );
   await waitFor(() => expect(container.querySelectorAll('datalist option')).toHaveLength(2));
-  expect(screen.getByLabelText('SSH Config 别名').tagName).toBe('INPUT');
+  expect(screen.getByLabelText('SSH 别名').tagName).toBe('INPUT');
   await user.selectOptions(screen.getByLabelText('认证方式'), 'password');
   await user.click(screen.getByText('测试当前表单的连接（无需先保存）'));
   await user.type(screen.getByLabelText('测试使用的密码'), 'not-for-storage');

@@ -190,7 +190,7 @@ export function OperationsWorkspace({ api, targets, servers, target, saved, onTa
                     .catch((error) => setError(errorText(error))).finally(() => setPending(false));
                 }}><Icon size={15} />{operationLabels[action]}</Button>;
             })}
-            <Button className="operation-push" size="compact" onClick={onLogs}><ScrollText size={15} />查看日志</Button>
+            <Button className="operation-push" size="compact" onClick={onLogs}><ScrollText size={15} />查看线上日志</Button>
           </div>
           {actionBlock && <p className="warning" role="status">{actionBlock}</p>}
           {target.mode === 'jar' && (!target.start.trim() || !target.stop.trim()) && <div className="row">
@@ -206,7 +206,7 @@ export function OperationsWorkspace({ api, targets, servers, target, saved, onTa
               <td>{operationLabels[item.action]}</td>
               <td><Badge kind={statusTone(item.result)}>{operationResultLabels[item.result]}</Badge>{item.settled && <small>已人工核实</small>}</td>
               <td>{elapsed(item)}</td>
-              <td><Button variant="quiet" size="compact" onClick={() => setDetail(item.id)}>日志</Button>
+              <td><Button variant="quiet" size="compact" onClick={() => setDetail(item.id)}>运维日志</Button>
                 {item.result === 'unknown' && !item.settled && <Button variant="neutral" size="compact" onClick={() => showDialog({ record: item })}>核实结果</Button>}</td>
             </tr>)}</tbody>
           </table>}

@@ -73,7 +73,7 @@ export function ReleaseSchedules({
   return (
     <>
       <p className="notice">
-        准备阶段只构建、校验和保存产物。到点上传部署；电脑须保持开机、应用运行、网络可用。休眠或退出错过时间不补发。
+        定时发布需保持开机、应用运行且网络畅通。错过不补发。
       </p>
       <div className="schedule-filter" ref={filterGroup}>
         <SegmentedControl
@@ -97,7 +97,10 @@ export function ReleaseSchedules({
       )}
       <div className="schedule-list">
         {visible
-          .sort((a, b) => b.createdAt - a.createdAt)
+          .sort((a, b) =>
+            (filter === 'pending' ? a.scheduledAt - b.scheduledAt : b.scheduledAt - a.scheduledAt) ||
+            b.createdAt - a.createdAt,
+          )
           .map((plan) => {
             const service = services.find((s) => s.id === plan.task.service.id);
             const canPrepare = !['executing', 'preparing'].includes(plan.state);

@@ -92,7 +92,7 @@ test('运维状态、生产重启确认、完成后翻阅与固定目标日志',
     await expect(page.getByText('容器运行稳定', { exact: true })).toBeVisible();
     expect(requests.filter((input) => input.includes("ACTION='restart'"))).toHaveLength(1);
     await button('返回运维').click();
-    await button('日志').click();
+    await button('运维日志').click();
     const log = page.getByRole('log', { name: '运维执行日志' });
     await expect(log.getByText('验收日志行 179', { exact: true })).toBeInViewport();
     await log.hover();
@@ -104,7 +104,7 @@ test('运维状态、生产重启确认、完成后翻阅与固定目标日志',
     await button('下一处').press('Enter');
     await expect(log.getByText('验收日志行 126', { exact: true })).toBeInViewport();
     await button('返回运维').click();
-    await button('查看日志').click();
+    await button('查看线上日志').click();
     await expect(page.getByRole('region', { name: '线上应用日志' })).toBeVisible();
     await expect(button('连接日志')).toBeVisible();
     await expect(page.getByRole('combobox', { name: '日志目标' })).toHaveCount(0);
@@ -118,9 +118,9 @@ test('运维状态、生产重启确认、完成后翻阅与固定目标日志',
       window.webContents.setZoomFactor(1.5);
     });
     await expectViewport(page, 600, 400);
-    await expect(button('查看日志')).toBeVisible();
+    await expect(button('查看线上日志')).toBeVisible();
     expect(await page.locator('main').evaluate((node) => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1);
-    await button('日志').press('Enter');
+    await button('运维日志').press('Enter');
     await log.scrollIntoViewIfNeeded();
     await expect(log.getByText('验收日志行 179', { exact: true })).toBeInViewport();
     await button('返回运维').click();

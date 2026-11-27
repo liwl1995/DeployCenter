@@ -14,6 +14,7 @@ export function TargetsWorkspace({
   serviceId,
   onService: selectService,
   onAdd,
+  onConfigure,
   onPickIcon,
   renderActions: targetActions,
   runtime,
@@ -22,25 +23,28 @@ export function TargetsWorkspace({
   serviceId: string;
   onService: (id: string) => void;
   onAdd: () => void;
+  onConfigure: (page: 'services' | 'servers') => void;
   onPickIcon: (id: string) => void;
   renderActions: (target: Target, detail?: boolean) => ReactNode;
   runtime?: Record<string, OperationStatus>;
 }) {
   const targets = db.targets.filter((target) => target.serviceId === serviceId);
+  const prerequisite = !db.services.length ? 'services' : !db.servers.length ? 'servers' : undefined;
   const cardTime = (value: string) => (deploymentTime(value) ? fmtTime(value).slice(5, 16) : '—');
   return (
     <>
-      <p className="page-intro">每个服务与服务器的部署关系，都有独立的运行规则。</p>
+      {prerequisite && (
+        <p className="page-intro">{prerequisite === 'services' ? '先添加服务，再配置部署目标。' : '先添加服务器，再配置部署目标。'}</p>
+      )}
       <EntityWorkspace
         actions={
           <Button
             variant="default"
             size="compact"
-            disabled={!db.servers.length || !db.services.length}
-            onClick={onAdd}
+            onClick={prerequisite ? () => onConfigure(prerequisite) : onAdd}
           >
             <Plus size={17} />
-            添加部署目标
+            {prerequisite === 'services' ? '去添加服务' : prerequisite === 'servers' ? '去添加服务器' : '添加部署目标'}
           </Button>
         }
         filters={
@@ -102,9 +106,10 @@ export function TargetsWorkspace({
           <EntityDetail
             key={t.id}
             title={
-              <span className="row">
+              <span className="row wrap">
                 {t.name}
-                <Badge kind={t.production ? 'warn' : ''}>{modeLabel(t.mode)}</Badge>
+                <Badge kind={t.production ? 'warn' : ''}>{t.production ? '正式' : '非正式'}</Badge>
+                <Badge>{modeLabel(t.mode)}</Badge>
               </span>
             }
             action={targetActions(t, true)}

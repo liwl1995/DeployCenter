@@ -36,7 +36,7 @@ it('空计划显示入口与桌面运行条件', () => {
     />,
   );
   expect(screen.getByText('暂无发布计划')).toBeTruthy();
-  expect(screen.getByText(/电脑须保持开机/)).toBeTruthy();
+  expect(screen.getByText(/定时发布需保持开机/)).toBeTruthy();
 });
 it('发布计划跟随当前服务图标，服务删除后使用计划快照', () => {
   const value = plan();
@@ -58,16 +58,24 @@ it('发布计划跟随当前服务图标，服务删除后使用计划快照', (
   rerender(<ReleaseSchedules {...props} services={[]} />);
   expect(container.querySelector('.record-icon .lucide-rocket')).toBeTruthy();
 });
-it('默认只显示未执行计划，可以筛出执行中和已结束计划', () => {
+it('未执行计划按发布时间从近到远，已结束计划从近到远回看', () => {
   const value = plan();
+  const at = (id: string, name: string, offset: number, state: ReleaseScheduleView['state'] = 'ready') => ({
+    ...value,
+    id,
+    state,
+    scheduledAt: value.scheduledAt + offset,
+    task: { ...value.task, service: { ...value.task.service, name } },
+  });
   render(
     <ReleaseSchedules
       services={[]}
       plans={[
-        value,
+        at('SP-later', '较晚发布', 60000),
+        at('SP-sooner', '即将发布', 0),
         { ...value, id: 'SP-executing', state: 'executing' },
-        { ...value, id: 'SP-completed', state: 'completed' },
-        { ...value, id: 'SP-cancelled', state: 'cancelled' },
+        at('SP-completed', '较早结束', -120000, 'completed'),
+        at('SP-cancelled', '最近结束', -60000, 'cancelled'),
       ]}
       busy={false}
       onOpen={vi.fn()}
@@ -76,16 +84,17 @@ it('默认只显示未执行计划，可以筛出执行中和已结束计划', (
       onPrepare={vi.fn()}
     />,
   );
+  const names = () => screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent);
   expect(screen.getByRole('button', { name: '未执行' }).getAttribute('aria-pressed')).toBe('true');
-  expect(screen.getAllByRole('article')).toHaveLength(1);
+  expect(names()).toEqual(['即将发布', '较晚发布']);
   expect(screen.queryByText('已完成')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: '执行中' }));
   expect(screen.getAllByRole('article')).toHaveLength(1);
   expect(screen.getAllByText('执行中')).toHaveLength(2);
   fireEvent.click(screen.getByRole('button', { name: '已结束' }));
-  expect(screen.getAllByRole('article')).toHaveLength(2);
+  expect(names()).toEqual(['最近结束', '较早结束']);
   fireEvent.click(screen.getByRole('button', { name: '全部' }));
-  expect(screen.getAllByRole('article')).toHaveLength(4);
+  expect(screen.getAllByRole('article')).toHaveLength(5);
 });
 it('计划提供准备日志、改期、重新准备与取消，执行中只提供任务查看', async () => {
   const value = plan(),

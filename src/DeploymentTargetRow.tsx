@@ -28,14 +28,18 @@ export function DeploymentTargetRow({ target, server, checked, onChecked, open, 
   children?: ReactNode;
 }) {
   const t = target;
+  const environment = t.production ? '正式环境' : '非正式环境';
   return (
     <article className={'deployment-target' + (checked ? ' checked' : '')}>
       <div className="target-compact deployment-target-main">
-        <Checkbox aria-label={'选择' + t.name} checked={checked} onCheckedChange={onChecked} />
+        <Checkbox aria-label={'选择' + t.name} aria-description={environment} checked={checked} onCheckedChange={onChecked} />
         <span className="record-icon"><EntityIcon kind="target" icon={t.icon} size={18} strokeWidth={1.5} /></span>
         <button className="target-identity" aria-expanded={open}
-          aria-label={(open ? '收起' : '展开') + t.name + '详情'} onClick={onOpen}>
-          <strong>{t.name} {t.production && <Badge kind="warn">正式</Badge>}</strong>
+          aria-label={(open ? '收起' : '展开') + t.name + '详情'} aria-description={environment} onClick={onOpen}>
+          <strong>
+            <span className="target-identity-name" title={t.name}>{t.name}</span>
+            {t.production && <Badge kind="warn">正式</Badge>}
+          </strong>
           <small>{server ? serverAddress(server) + ' · ' + server.name : '未关联服务器'}</small>
         </button>
         <div className="target-artifact">

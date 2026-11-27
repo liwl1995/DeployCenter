@@ -41,7 +41,7 @@ export const healthLabels: Record<import('./model').Health['type'], string> = {
   command: '自定义命令',
 };
 export const authLabels: Record<import('./model').Server['auth'], string> = {
-  alias: '系统 SSH 别名',
+  alias: 'SSH 别名',
   password: '用户名和密码',
   key: '私钥认证',
 };
@@ -235,4 +235,19 @@ export function taskNotice(task: Task, redact: (text: string) => string = (text)
 /** 老配置用「未记录」表示无部署时间，不能把这类占位文案当作已部署。 */
 export function deploymentTime(value?: string) {
   return value && Number.isFinite(Date.parse(value)) ? value : undefined;
+}
+
+/** 有部署时间的目标和已部署的历史记录使用同一口径。 */
+export function lastServiceDeployments({ targets, history }: Pick<Database, 'targets' | 'history'>) {
+  const last = new Map<string, string>();
+  const record = (id: string, value: string) => {
+    const time = deploymentTime(value);
+    const previous = last.get(id);
+    if (time && (!previous || Date.parse(time) > Date.parse(previous))) last.set(id, time);
+  };
+  for (const target of targets) record(target.serviceId, target.lastDeploy);
+  for (const entry of history)
+    if (['success', 'unverified', 'rolledback'].includes(entry.status))
+      record(entry.service.id, entry.time);
+  return last;
 }

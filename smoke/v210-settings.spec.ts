@@ -46,9 +46,9 @@ for (const scale of [1, 1.25, 1.5]) {
       }
       if (scale !== 1) return;
       await page.getByRole('tab', { name: '软件更新', exact: true }).click();
-      await expect(option('更新检查方式', '手动检查')).toHaveAttribute('aria-pressed', 'true');
-      await option('更新检查方式', '自动检查并下载').click();
-      await expect(option('更新检查方式', '自动检查并下载')).toHaveAttribute('aria-pressed', 'true');
+      await expect(option('定期检查更新', '手动检查')).toHaveAttribute('aria-pressed', 'true');
+      await option('定期检查更新', '自动检查并下载').click();
+      await expect(option('定期检查更新', '自动检查并下载')).toHaveAttribute('aria-pressed', 'true');
       await page.getByRole('tab', { name: '通用', exact: true }).click();
       await option('界面缩放', '125%').click();
       await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.getZoomFactor())).toBeCloseTo(1.25);
@@ -127,6 +127,9 @@ test('托盘实际窗口可切换任务与服务，操作按钮和 Esc 可用', 
     }, edge);
     await open('bottom');
     const page = await app.firstWindow();
+    const heading = page.getByRole('heading', { name: 'YOTOO 部署中心', level: 1 });
+    await expect(heading).toHaveCSS('font-size', '15px');
+    await expect(heading).toHaveCSS('line-height', '22px');
     await expect(page.getByText('当前任务 · 60%')).toBeVisible();
     await expect(page.getByText('下一项', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: '服务', exact: true }).click();

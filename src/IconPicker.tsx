@@ -21,6 +21,7 @@ export function IconPicker({
   const [name, setName] = useState<string | undefined>(current?.name);
   const [color, setColor] = useState<string>(current?.color ?? '');
   const [query, setQuery] = useState('');
+  const [focusedName, setFocusedName] = useState(current?.name);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const apply = (nextName: string | undefined, nextColor: string) => {
@@ -47,6 +48,9 @@ export function IconPicker({
   }, [query]);
 
   const hasCustom = !!name;
+  const gridFocus = icons.some((icon) => icon.name === focusedName)
+    ? focusedName
+    : icons.some((icon) => icon.name === name) ? name : icons[0]?.name;
   const kindLabel = kind === 'service' ? '服务' : kind === 'server' ? '服务器' : '部署目标';
 
   return (
@@ -94,7 +98,21 @@ export function IconPicker({
         </div>
 
         <div className="icon-picker-grid-wrap">
-          <div className="icon-picker-grid">
+          <div className="icon-picker-grid" role="group" aria-label="图标列表"
+            onKeyDown={(event) => {
+              const key = event.key;
+              if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(key)) return;
+              const grid = event.currentTarget;
+              const cells = Array.from(grid.querySelectorAll('button'));
+              const index = cells.indexOf(event.target as HTMLButtonElement);
+              if (index < 0) return;
+              const columns = getComputedStyle(grid).gridTemplateColumns.trim().split(/\s+/).length;
+              const offsets = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns };
+              const next = key === 'Home' ? 0 : key === 'End' ? cells.length - 1
+                : index + offsets[key as keyof typeof offsets];
+              event.preventDefault();
+              cells[Math.max(0, Math.min(cells.length - 1, next))]?.focus();
+            }}>
             {icons.map((icon) => {
               const active = name === icon.name;
               return (
@@ -105,6 +123,8 @@ export function IconPicker({
                   aria-pressed={active}
                   title={icon.label}
                   aria-label={icon.label}
+                  tabIndex={icon.name === gridFocus ? 0 : -1}
+                  onFocus={() => setFocusedName(icon.name)}
                   onClick={() => active ? apply(undefined, '') : apply(icon.name, color)}
                 >
                   <icon.Icon size={20} strokeWidth={1.75} color={color || undefined} />

@@ -154,9 +154,15 @@ test('服务工作台与目标详情共享日志界面，通过回环 SSH 跟随
     ]);
     await button('查看线上日志 · 正式日志目标').click();
     await expect(page.getByText('正式环境 · 只读', { exact: true })).toBeVisible();
-    await expect(page.getByRole('region', { name: '线上应用日志' }).getByText(/回环夹具 · 127\.0\.0\.1/)).toBeVisible();
+    const source = page.locator('.online-log-source');
+    await expect(source).toContainText(/回环夹具 · 127\.0\.0\.1/);
+    await page.keyboard.press('Tab');
+    await source.focus();
+    await expect(page.getByRole('tooltip')).toHaveText((await source.textContent())!);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('tooltip')).toBeHidden();
     await expect(button('连接日志')).toHaveCSS('background-color', 'rgb(234, 88, 12)');
-    await expect(button('连接日志')).toHaveCSS('color', 'rgb(255, 255, 255)');
+    await expect(button('连接日志')).toHaveCSS('color', 'rgb(24, 24, 27)');
     await button('连接日志').click();
     await page.getByLabel('登录密码', { exact: true }).fill(secret);
     await page
@@ -231,7 +237,7 @@ test('服务工作台与目标详情共享日志界面，通过回环 SSH 跟随
     await page.keyboard.press('Enter');
     const download = page.getByRole('dialog', { name: '下载完整日志' });
     await expect(download.getByText('服务器日志大小', { exact: false })).toBeVisible();
-    await expect(download.getByText('日志按服务器原文保存。')).toBeVisible();
+    await expect(download.getByText('按服务器原文保存，内容未脱敏。')).toBeVisible();
     await download.getByRole('button', { name: '选择保存位置' }).click();
     await expect(page.getByText('完整日志已保存。')).toBeVisible();
     expect(await readFile(destination, 'utf8')).toBe(text);
@@ -243,7 +249,7 @@ test('服务工作台与目标详情共享日志界面，通过回环 SSH 跟随
     await expect(page.getByRole('combobox', { name: '日志目标' })).toHaveCount(0);
     await button('返回运维').click();
     await page.getByRole('combobox', { name: '运维目标' }).selectOption('unconfigured-log');
-    await button('查看日志').click();
+    await button('查看线上日志').click();
     await expect(button('配置日志路径')).toBeVisible();
     await button('配置日志路径').click();
     await expect(

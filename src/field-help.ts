@@ -27,8 +27,8 @@ export const fieldHelp: Record<string, string> = {
     '仅控制构建日志解码。乱码时可选择 GBK/GB18030；自动模式兼容 UTF-8 与常见中文 Windows 输出。',
   认证方式:
     'SSH 别名交给 Windows OpenSSH，保留跳板机等配置；密码和私钥通过内置 SSH/SFTP 客户端连接。',
-  SSHConfig别名:
-    '填写本机 %USERPROFILE%/.ssh/config 中 Host 后的别名，例如 cordys-19。不是配置文件路径。',
+  SSH别名:
+    '填写 SSH 配置中 Host 后的别名，例如 cordys-19。连接沿用 Windows OpenSSH 的跳板机、密钥和主机信任配置。',
   SSH私钥路径: '选择本机私钥文件，例如 id_ed25519；不要选 .pub 公钥。私钥有口令时会在部署前询问。',
   凭据保存方式:
     '每次询问只在任务内存中使用；Windows 加密保存使用当前用户 DPAPI，不能保证换机器或换用户后仍能解密。口令不导出。',

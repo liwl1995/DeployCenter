@@ -37,7 +37,6 @@ export function ServersWorkspace({
   const cardTime = (value: string) => (deploymentTime(value) ? fmtTime(value).slice(5, 16) : '—');
   return (
     <>
-      <p className="page-intro">认证信息集中维护，同一台服务器可关联多个服务。</p>
       <EntityWorkspace
         actions={
           <Button
@@ -99,7 +98,7 @@ export function ServersWorkspace({
                   <p className="muted">
                     {serverAddress(s)} ·{' '}
                     {s.auth === 'alias'
-                      ? 'SSH Config'
+                      ? 'SSH 别名'
                       : s.auth === 'password'
                         ? '密码认证'
                         : '私钥认证'}

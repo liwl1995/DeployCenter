@@ -176,7 +176,7 @@ export function SettingsWorkspace({
                 onChange={(rememberWindow) => void changePreferences({ rememberWindow })} />
               <Switch label="开机启动" checked={preferences.launchAtLogin} disabled={saving}
                 onChange={(launchAtLogin) => void changePreferences({ launchAtLogin })} />
-              <Switch label="关闭时最小化到托盘" description="点击窗口关闭按钮后隐藏到系统托盘，部署和发布计划继续运行。"
+              <Switch label="关闭时最小化到托盘" description="关闭窗口后留在托盘，部署和发布计划继续运行。"
                 checked={preferences.closeToTray} disabled={saving}
                 onChange={(closeToTray) => void changePreferences({ closeToTray })} />
             </Card>
@@ -334,12 +334,12 @@ export function SettingsWorkspace({
         <div className="stack">
           <AppUpdateSettings api={desktop} version={version} active={busy} />
           {desktop && <Card title="检查方式" className="preference-list">
-            <Switch label="启动时检查更新" description="每次打开应用时检查新版本，并在设置入口显示提醒。"
+            <Switch label="启动时检查更新" description="打开应用时检查新版本。"
               checked={preferences.checkUpdatesOnStartup} disabled={saving}
               onChange={(checkUpdatesOnStartup) => void changePreferences({ checkUpdatesOnStartup })} />
             <PreferenceChoice
-              label="更新检查方式"
-              hint="自动模式每 6 小时检查一次。启动检查关闭时，自动模式首次检查在启动 1 分钟后。"
+              label="定期检查更新"
+              hint="自动模式每 6 小时检查一次。关闭启动检查时，首次检查在启动 1 分钟后。"
               value={preferences.updatePolicy}
               disabled={saving}
               onValueChange={(updatePolicy) => void changePreferences({ updatePolicy })}
@@ -397,7 +397,7 @@ export function SettingsWorkspace({
                   </span>
                   <span className="help-resource-copy">
                     <strong>版本与源码</strong>
-                    <span>发布记录、安装包与项目源码</span>
+                    <span>在浏览器查看发布记录和安装包</span>
                   </span>
                   <ChevronRight size={16} aria-hidden="true" />
                 </a>

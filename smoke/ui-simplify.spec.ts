@@ -12,6 +12,7 @@ import { BlobWriter, ZipWriter, TextReader } from '@zip.js/zip.js';
 import { emptyDatabase, newService, newTargetTemplate } from '../src/defaults';
 test.skip(process.platform !== 'win32', 'Windows 桌面及 .exe 验收仅在 Windows 运行');
 let app: ElectronApplication, dir: string;
+const longProductionName = '正式发布环境 · Production east cluster ' + '业务组'.repeat(16);
 test.beforeEach(async ({}, info) => {
   const base = path.resolve('.test-data');
   await fs.mkdir(base, { recursive: true });
@@ -78,6 +79,11 @@ test.beforeEach(async ({}, info) => {
   }
   if (info.title.startsWith('部署统计')) db.targets[1].serverId = db.servers[1].id;
   if (info.title.startsWith('部署历史全文搜索')) db.targets[1].serviceId = db.services[1].id;
+  if (info.title.startsWith('界面收尾')) {
+    db.targets[3].name = longProductionName;
+    db.targets[3].icon = { name: 'Target', color: '#eab308' };
+    db.targets[0].lastDeploy = new Date().toISOString();
+  }
   const store = new Storage(dir, {
     encrypt: async () => {
       throw new Error('界面夹具不写入凭据');
@@ -326,6 +332,110 @@ test('部署设置的锁阈值草稿与健康检查回滚说明在最小窗口�
   await help.press('Escape');
   await expect(tooltip).toBeHidden();
   await expect(dialog).toBeVisible();
+});
+
+test('界面收尾统一各主页面标题、卡片间距和正式环境标记', async ({}, info) => {
+  const page = await app.firstWindow();
+  const button = (name: string) => page.getByRole('button', { name, exact: true });
+  const option = (label: string, name: string) => page.getByRole('group', { name: label, exact: true })
+    .getByRole('button', { name, exact: true });
+  const zoom = (factor: number) => app.evaluate(({ BrowserWindow }, value) =>
+    BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(value), factor);
+  const contrast = (foreground: string, background: string) => {
+    const luminance = (color: string) => color.match(/[\d.]+/g)!.slice(0, 3).map((channel, index) => {
+      const value = Number(channel) / 255;
+      return [.2126, .7152, .0722][index] * (value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4);
+    }).reduce((sum, value) => sum + value, 0);
+    const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+    return (values[0] + .05) / (values[1] + .05);
+  };
+  for (const layout of [
+    { theme: 'light', themeLabel: '浅色', density: '紧凑', width: 1000, height: 620, zoom: 1.25, body: '13px' },
+    { theme: 'dark', themeLabel: '深色', density: '舒适', width: 900, height: 600, zoom: 1.5, body: '14px' },
+  ]) {
+    await zoom(1);
+    await size(layout.width, layout.height);
+    await button('设置').click();
+    await option('界面主题', layout.themeLabel).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', layout.theme);
+    await option('界面密度', layout.density).click();
+    await zoom(layout.zoom);
+    await expectViewport(page, layout.width / layout.zoom, layout.height / layout.zoom);
+    await expect(page.getByRole('heading', { name: '通用', level: 1 })).toBeVisible();
+    await boundaries();
+    await button('返回应用').click();
+
+    const checkbox = page.getByRole('checkbox', { name: '选择' + longProductionName });
+    await expect(checkbox).toHaveAttribute('aria-description', '正式环境');
+    await expect(checkbox).not.toBeChecked();
+    const target = page.locator('.deployment-target').filter({ has: checkbox });
+    const formal = target.getByText('正式', { exact: true });
+    await formal.scrollIntoViewIfNeeded();
+    await expect(formal).toBeInViewport({ ratio: 1 });
+    const targetLayout = await target.evaluate((row) => {
+      const identity = row.querySelector('.target-identity-name')!;
+      const badge = row.querySelector('.target-identity .badge')!;
+      const bounds = row.getBoundingClientRect();
+      return {
+        clipped: identity.scrollWidth > identity.clientWidth,
+        badgeFits: badge.getBoundingClientRect().right <= bounds.right,
+        padding: getComputedStyle(row.querySelector('.deployment-target-main')!).paddingLeft,
+      };
+    });
+    expect(targetLayout).toEqual({ clipped: true, badgeFits: true, padding: '12px' });
+    await expect(button('中文空格项目0')).toHaveAttribute('aria-description', '已部署');
+    await expect(button('添加部署目标')).toBeInViewport({ ratio: 1 });
+    await expect(button('部署')).toBeInViewport({ ratio: 1 });
+    await expect(button('发布选项')).toBeInViewport({ ratio: 1 });
+    const count = page.locator('.deployment-count strong');
+    expect(await count.evaluate((node) => node.clientHeight)).toBeLessThanOrEqual(24);
+    await boundaries();
+    // 页面缩放后，Electron 截图仍覆盖完整窗口。
+    const png = await app.evaluate(async ({ BrowserWindow }) =>
+      (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64'),
+    );
+    await fs.writeFile(info.outputPath('工作台-' + layout.theme + '.png'), Buffer.from(png, 'base64'));
+
+    for (const name of ['服务管理', '部署目标', '服务器', '构建环境', '发布计划', '发布清单', '部署历史', '镜像工具']) {
+      await button(name).click();
+      await expect(page.getByRole('heading', { name, level: 1, exact: true })).toBeVisible();
+      const typography = await page.evaluate(() => {
+        const style = getComputedStyle(document.querySelector('#content-area h1')!);
+        return { size: style.fontSize, line: style.lineHeight, weight: style.fontWeight, body: getComputedStyle(document.body).fontSize };
+      });
+      expect(typography).toEqual({ size: '20px', line: '28px', weight: '600', body: layout.body });
+      await boundaries();
+      if (name === '服务管理') {
+        const primary = button('添加服务');
+        const ratio = async () => {
+          const colors = await primary.evaluate((node) => {
+            const style = getComputedStyle(node);
+            return [style.color, style.backgroundColor];
+          });
+          return contrast(colors[0], colors[1]);
+        };
+        await expect.poll(ratio).toBeGreaterThanOrEqual(4.5);
+        await primary.hover();
+        await primary.evaluate(async (node) => {
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+          await Promise.allSettled(node.getAnimations().map((transition) => transition.finished));
+        });
+        await expect.poll(ratio).toBeGreaterThanOrEqual(4.5);
+        expect(await page.locator('.entity-record').first().evaluate((row) => getComputedStyle(row).paddingLeft)).toBe('12px');
+      }
+    }
+  }
+  await button('服务管理').click();
+  await page.getByRole('button', { name: /更换服务.*图标/ }).first().click();
+  const iconList = page.getByRole('group', { name: '图标列表' });
+  const first = iconList.getByRole('button').nth(0);
+  const second = iconList.getByRole('button').nth(1);
+  await first.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(second).toBeFocused();
+  await expect(iconList.locator('[tabindex="0"]')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await expect(iconList).toBeHidden();
 });
 
 test('历史默认优先记录，筛选弹层支持应用取消与日期嵌套弹窗', async () => {
@@ -708,7 +818,7 @@ test('日志优先任务页的八种状态与连续输出在三个尺寸下可�
     ['success', 'success', '已部署成功', ''],
     ['unverified', 'unverified', '已部署，但无法确认应用可用', ''],
     ['rolledback', 'rolledback', '已自动恢复旧版本', '重试失败目标'],
-    ['rollback-failed', 'failed', '自动回滚失败', '重试失败目标'],
+    ['rollback-failed', 'failed', '回滚失败', '重试失败目标'],
     ['cancelled', 'cancelled', '任务已取消', ''],
     ['dry-run', 'success', '试运行通过', '正式部署'],
     ['mixed', 'failed', '失败', '重试失败目标'],
@@ -962,11 +1072,10 @@ test('关于与帮助展示仓库并使用系统浏览器打开，其他外链�
     .toBe('https://github.com/liwl1995/DeployCenter/releases');
   expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
   for (const [width, height] of sizes) {
-    await app.evaluate(({ BrowserWindow }, bounds) =>
-      BrowserWindow.getAllWindows()[0].setContentSize(bounds.width, bounds.height), { width, height });
+    await size(width, height);
     expect(await page.locator('.help-resource-row').evaluateAll((elements) => {
       const bounds = elements.map((element) => element.getBoundingClientRect());
-      return bounds.length === 3 && bounds.every((item, index) =>
+      return bounds.length === 4 && bounds.every((item, index) =>
         index === 0 || item.top >= bounds[index - 1].bottom - 1);
     })).toBe(true);
   }
@@ -1384,11 +1493,17 @@ test('设置外观支持两种主题、跟随系统和重新启动后的偏好�
   await settings.click();
   await page.getByRole('tab', { name: '通用', exact: true }).click();
   await themeOptions.getByRole('button', { name: '跟随系统' }).click();
-  for (const theme of ['light', 'dark'] as const) {
-    await page.emulateMedia({ colorScheme: theme });
-    await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(colors[theme]);
+  await expect.poll(() => page.evaluate(async () =>
+    (await window.deployCenter!.load()).database.settings.theme)).toBe('system');
+  try {
+    for (const theme of ['light', 'dark'] as const) {
+      // Electron 通过原生主题事件更新界面，页面媒体查询只用于浏览器预览。
+      await app.evaluate(({ nativeTheme }, value) => { nativeTheme.themeSource = value; }, theme);
+      await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(colors[theme]);
+    }
+  } finally {
+    await app.evaluate(({ nativeTheme }) => { nativeTheme.themeSource = 'system'; });
   }
-  await page.emulateMedia({ colorScheme: null });
 });
 
 test('正式包包含独立更新助手，无效参数在就绪前被拒绝且不启动安装', async () => {

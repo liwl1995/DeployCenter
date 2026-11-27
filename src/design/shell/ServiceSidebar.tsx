@@ -21,7 +21,6 @@ export function ServiceSidebar({
   services,
   onReorder,
   savingOrder,
-  deployedServices,
   current,
   page,
   onPage,
@@ -33,10 +32,9 @@ export function ServiceSidebar({
   updateAvailable,
   development,
 }: {
-  services: { id: string; name: string; tone: number; icon?: EntityIconType }[];
+  services: { id: string; name: string; tone: number; deployed: boolean; icon?: EntityIconType }[];
   onReorder: (ids: string[]) => Promise<void>;
   savingOrder: boolean;
-  deployedServices: ReadonlySet<string>;
   current: string;
   page: WorkspacePage;
   onPage: (page: WorkspacePage) => void;
@@ -107,7 +105,8 @@ export function ServiceSidebar({
           <>
             <div className="sidebar-service-heading">
               <span>服务</span>
-              <Button variant="ghost" size="icon-compact" aria-label="搜索服务" onClick={onSearch}>
+              <Button variant="ghost" size="icon-compact" aria-label="搜索服务" onClick={onSearch}
+                disabled={!services.length} aria-description={!services.length ? '添加或导入服务后可搜索' : undefined}>
                 <Search size={14} />
               </Button>
             </div>
@@ -115,7 +114,7 @@ export function ServiceSidebar({
               {services.map((service, index) => (
                 <HoverTip
                   key={service.id}
-                  content={collapsed ? service.name : undefined}
+                  content={collapsed ? service.name + ' · ' + (service.deployed ? '已部署' : '未部署') : undefined}
                   side="right"
                 >
                   <button
@@ -123,6 +122,7 @@ export function ServiceSidebar({
                     data-service-tone={service.tone}
                     data-drop-position={drop?.id === service.id ? drop.position : undefined}
                     aria-label={service.name}
+                    aria-description={service.deployed ? '已部署' : '未部署'}
                     aria-keyshortcuts={services.length > 1 ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}
                     aria-current={page === 'deploy' && current === service.id ? 'page' : undefined}
                     draggable={services.length > 1 && !savingOrder}
@@ -164,8 +164,8 @@ export function ServiceSidebar({
                     <span>{service.name}</span>
                     <i
                       className="sidebar-service-status"
-                      data-deployed={deployedServices.has(service.id)}
-                      title={deployedServices.has(service.id) ? '已部署' : '未部署'}
+                      data-deployed={service.deployed}
+                      title={service.deployed ? '已部署' : '未部署'}
                     />
                   </button>
                 </HoverTip>

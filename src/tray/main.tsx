@@ -37,7 +37,7 @@ function TrayMenu() {
   return (
     <main className={state?.dark ? 'dark' : ''} aria-label="部署中心托盘">
       <header>
-        <strong>YOTOO 部署中心</strong>
+        <h1>YOTOO 部署中心</h1>
         <button onClick={() => open('settings')} aria-label="设置" title="设置"><Settings size={16} /></button>
       </header>
       <nav aria-label="托盘分类">
@@ -46,16 +46,16 @@ function TrayMenu() {
       </nav>
       <section className="items">
         {section === 'tasks' ? <>
-          {state?.task ? <button className="entry" onClick={() => open('task')}>
+          {state?.task ? <button className="entry" title={state.task.name} onClick={() => open('task')}>
             <span><strong>{state.task.name}</strong><small>当前任务 · {state.task.progress}%</small></span>
             <ChevronRight size={16} />
           </button> : <p>暂无运行中的任务</p>}
-          {state?.schedule && <button className="entry" onClick={() => open('schedules')}>
+          {state?.schedule && <button className="entry" title={state.schedule.name} onClick={() => open('schedules')}>
             <span><strong>{state.schedule.name}</strong><small>下一条计划 · {new Date(state.schedule.at).toLocaleString('zh-CN', { hour12: false })}</small></span>
             <ChevronRight size={16} />
           </button>}
         </> : state?.services.length ? state.services.map((service) =>
-          <button key={service.id} className="entry service" onClick={() => open('service', service.id)}>
+          <button key={service.id} className="entry service" title={service.name} onClick={() => open('service', service.id)}>
             <EntityIcon kind="service" icon={service.icon} size={16} strokeWidth={1.75} /><span>{service.name}</span><ChevronRight size={16} />
           </button>
         ) : <p>暂无最近使用的服务</p>}

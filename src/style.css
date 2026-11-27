@@ -1,10 +1,8 @@
 @import './design/tokens.css';
+@import './design/controls.css';
 
 :root {
-  font-family:
-    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Hiragino Sans GB',
-    'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', Roboto,
-    'Helvetica Neue', Arial, system-ui, sans-serif;
+  font-family: var(--font-app);
   color-scheme: light;
   --line: var(--border);
   --mono: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace;
@@ -237,7 +235,6 @@ hr {
   flex: none;
 }
 .desktop-page-header h1 {
-  flex-shrink: 0;
   max-width: min(30vw, 360px);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -552,7 +549,7 @@ hr {
   align-items: center;
   gap: var(--space-2);
   min-height: var(--h-card);
-  padding: var(--card-py) 10px;
+  padding: var(--card-py) var(--space-3);
 }
 .deployment-target-actions {
   display: flex;
@@ -562,16 +559,23 @@ hr {
   min-width: 0;
   text-align: left;
 }
-.target-identity > :is(strong, small) {
+.target-identity-name,
+.target-identity > small {
   display: block;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 .target-identity strong {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
   font-size: var(--fs-strong);
+  line-height: var(--lh-strong);
   font-weight: 600;
 }
+.target-identity-name { min-width: 0; }
+.target-identity strong > .badge { flex: none; }
 .target-artifact,
 .target-health {
   display: grid;
@@ -794,6 +798,7 @@ button.release-run-row:hover { border-color: var(--border-strong); }
   background: var(--bg-subtle);
 }
 .deployment-count {
+  flex: 1;
   min-width: 116px;
   display: grid;
 }
@@ -1551,7 +1556,7 @@ p.code,
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
-  padding: var(--card-py) 12px;
+  padding: var(--card-py) var(--space-3);
   min-height: var(--h-card);
 }
 .entity-list {
@@ -1564,7 +1569,7 @@ p.code,
   align-items: center;
   column-gap: var(--space-3);
   min-height: var(--h-card);
-  padding: var(--card-py) 12px;
+  padding: var(--card-py) var(--space-3);
 }
 .entity-record-main {
   grid-column: 1;
@@ -1592,6 +1597,7 @@ p.code,
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--fs-strong);
+  line-height: var(--lh-strong);
   font-weight: 600;
   text-align: left;
 }
@@ -1690,6 +1696,9 @@ p.code,
 }
 .schedule-identity h2 {
   margin-bottom: 3px;
+  font-size: var(--fs-strong);
+  line-height: var(--lh-strong);
+  overflow-wrap: anywhere;
 }
 
 .table-wrap {
@@ -2412,6 +2421,11 @@ th {
   color: var(--text-3);
   font-size: var(--fs-caption);
 }
+.online-log-source-tip {
+  max-width: min(440px, 80vw);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .online-log-actions {
   margin-inline-start: auto;
 }
@@ -3007,7 +3021,7 @@ th {
 }
 .icon-cell span {
   font-size: var(--fs-xs);
-  line-height: 1.2;
+  line-height: var(--lh-xs);
   color: var(--text-2);
   max-width: 100%;
   overflow: hidden;

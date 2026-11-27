@@ -67,7 +67,7 @@ export function AppPageHeader({
       </div>
       {!truncateTitle && <div className="flex-1" />}
       {actions && (
-        <div className="flex min-w-0 shrink items-center justify-end gap-2" style={NO_DRAG}>
+        <div className="flex shrink-0 items-center justify-end gap-2" style={NO_DRAG}>
           {actions}
         </div>
       )}

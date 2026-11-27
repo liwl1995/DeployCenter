@@ -75,7 +75,6 @@ import { LogWrapContext } from './log-wrap';
 import type { SnapshotAvailability } from './features';
 import {
   knownCommit,
-  deploymentTime,
   cloneService,
   cloneTarget,
   deletionReason,
@@ -1102,7 +1101,6 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       />
     </div>
   );
-  const cardTime = (value?: string) => (deploymentTime(value) ? fmtTime(value!).slice(5, 16) : '—');
   const header = (_title: string, description: string, action?: ReactNode) => (
     <div className="page-intro">{description}{action}</div>
   );
@@ -1368,7 +1366,6 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         services={sidebarEntries}
         onReorder={saveSidebarOrder}
         savingOrder={savingSidebarOrder}
-        deployedServices={new Set(db.targets.filter((target) => cardTime(target.lastDeploy) !== '—').map((target) => target.serviceId))}
         current={serviceId}
         page={page}
         onPage={(next) => {
@@ -1713,8 +1710,9 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                             })} />}
                         </DeploymentTargetRow>;
                       })}
-                      {!targets.length && <div className="empty service-empty"><Box size={25} strokeWidth={1.4} /><strong>还没有部署目标</strong><span>关联服务器后，配置这个服务的远程部署位置。</span>
-                        <Button variant="neutral" onClick={() => db.servers.length ? setDialog({kind:'target',value:newTarget()}) : setPage('servers')}>{db.servers.length ? '添加部署目标' : '配置服务器'}</Button></div>}
+                      {!targets.length && <div className="empty service-empty"><Box size={25} strokeWidth={1.4} /><strong>还没有部署目标</strong>
+                        {!db.servers.length && <span>先添加服务器，再创建部署目标。</span>}
+                        <Button variant="neutral" onClick={() => db.servers.length ? setDialog({kind:'target',value:newTarget()}) : setPage('servers')}>{db.servers.length ? '添加部署目标' : '去添加服务器'}</Button></div>}
                       {!!targets.length && !targets.some((t) => environment === 'all' || t.production === (environment === 'production')) && <p className="empty">没有匹配的部署目标。</p>}
                     </div>
                     <Disclosure title="部署预检明细">
@@ -1723,11 +1721,11 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                     {desktop && (
                       <details className="deployment-note">
                         <summary>
-                          本次备注<span>默认参考最近提交说明</span>
+                          本次备注
                         </summary>{' '}
                         <Field
                           label="本次内容"
-                          hint="默认参考最近一次提交说明，可修改；会写入历史。"
+                          hint="默认使用最近一次提交说明，修改后会随任务保存。"
                         >
                           <textarea
                             maxLength={2000}
@@ -1743,7 +1741,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                   </div>
                   {blockReason && <p className="deployment-block" role="status">{blockReason}</p>}
                   <div className="deployment-footer" aria-label="部署操作">
-                    <div className="deployment-count grow"><strong>已选 {chosen.length} 个目标</strong><small>{build === 'rebuild' ? '构建一次' : '使用现有 JAR'} · {chosen.filter((t) => effective(t).enabled).length} 个开启备份</small></div>
+                    <div className="deployment-count"><strong>已选 {chosen.length} 个目标</strong><small>{build === 'rebuild' ? '构建一次' : '使用现有 JAR'} · {chosen.filter((t) => effective(t).enabled).length} 个开启备份</small></div>
                     <DeployFailurePolicy value={failureOverride} fallback={db.settings.failurePolicy} onChange={setFailureOverride} />
                     {desktop && <Button variant="neutral" disabled={busy || taskRunning || !!blockReason || !chosen.length} onClick={() => void launch(chosen, undefined, true)}>试运行（远程只读）</Button>}
                     <Button disabled={busy || (!taskRunning && (!!blockReason || !chosen.length || (!desktop && build === 'existing' && !artifact.exists)))} onClick={() => void launch()}>
@@ -1816,7 +1814,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
             />
           )}
           {page === 'services' && <ServicesWorkspace db={db} taskRows={taskRows} onAdd={() => setDialog({ kind: 'service', value: { ...newService(), id: uid() } })} onPickIcon={(id) => pickIcon('service', id)} renderActions={serviceActions} />}
-          {page === 'targets' && <TargetsWorkspace db={db} serviceId={serviceId} runtime={runtime} onService={selectService} onAdd={() => setDialog({ kind: 'target', value: newTarget() })} onPickIcon={(id) => pickIcon('target', id)} renderActions={targetActions} />}
+          {page === 'targets' && <TargetsWorkspace db={db} serviceId={serviceId} runtime={runtime} onService={selectService} onConfigure={setPage} onAdd={() => setDialog({ kind: 'target', value: newTarget() })} onPickIcon={(id) => pickIcon('target', id)} renderActions={targetActions} />}
           {page === 'servers' && (
             <ServersWorkspace
               db={db}
@@ -1844,7 +1842,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           )}
           {page === 'tools' && (
             <>
-              {header('构建环境', '服务分别选择 JDK、工作目录、Maven、Profiles 和构建参数。')}
+              {header('构建环境', '管理本机 JDK，查看各服务的构建工具检测结果。')}
                 <BuildEnvironment
                   api={desktop}
                   db={db}
@@ -2289,7 +2287,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           </p>
           <footer className="modal-actions">
             <Button variant="neutral" size="compact" onClick={() => setDialog(null)}>
-              继续部署
+              继续任务
             </Button>
             <Button
               variant="danger" size="compact"

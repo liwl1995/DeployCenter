@@ -273,7 +273,7 @@ export function DirectorySettings({
                 <>
                   <Field
                     label="选择上级目录"
-                    hint="只选择上级目录。应用会自动创建 DeployCenter 子目录，不会把数据直接放在上级目录中。"
+                    hint="应用会在所选目录下创建 DeployCenter 子目录。"
                   >
                     <ParentDirectoryInput
                       value={parent}

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Ellipsis, Pause, Play, Search } from 'lucide-react';
 import { Button } from './design/ui/button';
+import { HoverTip } from './design/ui/hover-tip';
 import { SegmentedControl } from './design/ui/segmented-control';
 import { VirtualLogs } from './LogViewer';
 import { LogAccumulator, logLevel, type LogLine } from './log-model';
@@ -22,7 +23,7 @@ import { MoreMenu } from './EntityActions';
 
 type LogEvent = Extract<DesktopEvent, { kind: 'container-log' }>;
 const encoder = new TextEncoder();
-const downloadNote = '日志按服务器原文保存。';
+const downloadNote = '按服务器原文保存，内容未脱敏。';
 const message = (error: unknown) => {
   const detail = String(error)
     .replace(/^Error invoking remote method '[^']+':\s*/, '')
@@ -344,9 +345,9 @@ function OnlineLogPanel({
             {log.source?.production ? '正式环境 · 只读' : '只读'}
           </Badge>
           {sourceDescription && (
-            <span className="online-log-source" title={sourceDescription}>
-              {sourceDescription}
-            </span>
+            <HoverTip content={<span>{sourceDescription}</span>} align="start" contentClassName="online-log-source-tip">
+              <span className="online-log-source" tabIndex={0}>{sourceDescription}</span>
+            </HoverTip>
           )}
         </div>
         <div className="online-log-actions">
