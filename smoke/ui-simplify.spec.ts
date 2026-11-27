@@ -341,14 +341,6 @@ test('界面收尾统一各主页面标题、卡片间距和正式环境标记',
     .getByRole('button', { name, exact: true });
   const zoom = (factor: number) => app.evaluate(({ BrowserWindow }, value) =>
     BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(value), factor);
-  const contrast = (foreground: string, background: string) => {
-    const luminance = (color: string) => color.match(/[\d.]+/g)!.slice(0, 3).map((channel, index) => {
-      const value = Number(channel) / 255;
-      return [.2126, .7152, .0722][index] * (value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4);
-    }).reduce((sum, value) => sum + value, 0);
-    const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
-    return (values[0] + .05) / (values[1] + .05);
-  };
   for (const layout of [
     { theme: 'light', themeLabel: '浅色', density: '紧凑', width: 1000, height: 620, zoom: 1.25, body: '13px' },
     { theme: 'dark', themeLabel: '深色', density: '舒适', width: 900, height: 600, zoom: 1.5, body: '14px' },
@@ -405,22 +397,24 @@ test('界面收尾统一各主页面标题、卡片间距和正式环境标记',
       });
       expect(typography).toEqual({ size: '20px', line: '28px', weight: '600', body: layout.body });
       await boundaries();
-      if (name === '服务管理') {
-        const primary = button('添加服务');
-        const ratio = async () => {
-          const colors = await primary.evaluate((node) => {
-            const style = getComputedStyle(node);
-            return [style.color, style.backgroundColor];
-          });
-          return contrast(colors[0], colors[1]);
-        };
-        await expect.poll(ratio).toBeGreaterThanOrEqual(4.5);
-        await primary.hover();
-        await primary.evaluate(async (node) => {
-          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-          await Promise.allSettled(node.getAnimations().map((transition) => transition.finished));
-        });
-        await expect.poll(ratio).toBeGreaterThanOrEqual(4.5);
+      if (name === '服务管理' || name === '服务器') {
+        const primary = button(name === '服务器' ? '添加服务器' : '添加服务');
+        const dark = layout.theme === 'dark';
+        const foreground = dark ? 'rgb(255, 255, 255)' : 'rgb(24, 24, 27)';
+        await expect(primary).toHaveCSS('color', foreground);
+        await expect(primary).toHaveCSS('background-color', dark ? 'rgb(234, 88, 12)' : 'rgb(249, 115, 22)');
+        if (name === '服务管理') {
+          await primary.hover();
+          await expect(primary).toHaveCSS('background-color', dark ? 'rgb(240, 109, 31)' : 'rgb(234, 98, 10)');
+          await expect(primary).toHaveCSS('color', foreground);
+        } else {
+          await expect(primary).toBeInViewport({ ratio: 1 });
+          await primary.click();
+          const dialog = page.getByRole('dialog', { name: '服务器配置' });
+          await expect(dialog).toBeVisible();
+          await page.keyboard.press('Escape');
+          await expect(dialog).toBeHidden();
+        }
         expect(await page.locator('.entity-record').first().evaluate((row) => getComputedStyle(row).paddingLeft)).toBe('12px');
       }
     }

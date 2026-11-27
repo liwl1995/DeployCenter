@@ -162,7 +162,7 @@ test('服务工作台与目标详情共享日志界面，通过回环 SSH 跟随
     await page.keyboard.press('Escape');
     await expect(page.getByRole('tooltip')).toBeHidden();
     await expect(button('连接日志')).toHaveCSS('background-color', 'rgb(234, 88, 12)');
-    await expect(button('连接日志')).toHaveCSS('color', 'rgb(24, 24, 27)');
+    await expect(button('连接日志')).toHaveCSS('color', 'rgb(255, 255, 255)');
     await button('连接日志').click();
     await page.getByLabel('登录密码', { exact: true }).fill(secret);
     await page

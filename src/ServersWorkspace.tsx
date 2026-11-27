@@ -39,11 +39,7 @@ export function ServersWorkspace({
     <>
       <EntityWorkspace
         actions={
-          <Button
-            variant={db.servers.length ? 'neutral' : 'default'}
-            size="compact"
-            onClick={onAdd}
-          >
+          <Button variant="default" size="compact" onClick={onAdd}>
             <Plus size={17} />
             添加服务器
           </Button>
