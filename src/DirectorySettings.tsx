@@ -58,9 +58,11 @@ export function DirectorySettings({
   const [error, setError] = useState('');
   const [suggestion, setSuggestion] = useState<number>();
   const [oldConfirm, setOldConfirm] = useState(false);
+  const [oldCleanupNotice, setOldCleanupNotice] = useState('');
   const [typed, setTyped] = useState('');
   const cancelRequested = useRef(false);
   const cancelButton = useRef<HTMLButtonElement>(null);
+  const currentDirectory = useRef<HTMLInputElement>(null);
   const refresh = async () => {
     const [location, state] = await Promise.all([api.directoryInfo(), api.migrationState()]);
     setInfo(location);
@@ -171,7 +173,7 @@ export function DirectorySettings({
         }
       >
         <Field label="当前目录">
-          <input readOnly value={info?.path || '读取中…'} />
+          <input ref={currentDirectory} readOnly value={info?.path || '读取中…'} />
         </Field>
         <p className="note">
           当前占用 {info ? storageSize(info.bytes) : '读取中…'}
@@ -218,6 +220,8 @@ export function DirectorySettings({
                 disabled={busy || !!blocked}
                 onClick={() => {
                   setTyped('');
+                  setError('');
+                  setOldCleanupNotice('');
                   setOldConfirm(true);
                 }}
               >
@@ -226,7 +230,8 @@ export function DirectorySettings({
             </div>
           </div>
         )}
-        {!wizard && error && (
+        {oldCleanupNotice && <p className="notice" role="status">{oldCleanupNotice}</p>}
+        {!wizard && !oldConfirm && error && (
           <p role="alert" className="warning">
             {error}
           </p>
@@ -468,19 +473,22 @@ export function DirectorySettings({
       {oldConfirm && info?.previous && (
         <Modal
           title="确认删除旧数据副本"
+          returnFocus={currentDirectory.current ?? undefined}
+          closeDisabled={busy}
           onClose={() => {
             if (!busy) setOldConfirm(false);
           }}
         >
           <p className="warning">
-            将永久删除以下旧副本中的全部文件，约{' '}
+            将永久删除旧目录中与迁移清单一致的文件，约{' '}
             {info.previousBytes === undefined ? '无法读取' : storageSize(info.previousBytes)}
-            。只有路径与原副本内容都未改变时才执行；新目录不受影响。
+            。未核对的控制记录、运行缓存和其他内容会留在原目录。
           </p>
           <p className="path">{info.previous}</p>
           <Field label="输入完整旧目录路径确认">
             <input data-autofocus value={typed} onChange={(e) => setTyped(e.target.value)} />
           </Field>
+          {error && <p className="warning" role="alert">{error}</p>}
           <footer className="modal-actions">
             <Button variant="neutral" size="compact" disabled={busy} onClick={() => setOldConfirm(false)}>
               保留
@@ -490,7 +498,11 @@ export function DirectorySettings({
               disabled={busy || typed !== info.previous}
               onClick={() =>
                 void action(async () => {
-                  await api.removeOldData(typed);
+                  const removed = await api.removeOldData(typed);
+                  setInfo((value) => value && { ...value, previous: undefined, previousBytes: undefined });
+                  setOldCleanupNotice(removed
+                    ? '已清理旧数据副本。'
+                    : '已清理迁移清单中的文件。未核对内容保留在：' + typed);
                   setOldConfirm(false);
                   await refresh();
                 })

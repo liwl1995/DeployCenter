@@ -150,6 +150,7 @@ export class DataDirectory {
   journalFile: string;
   private pointer: Pointer;
   private controller?: AbortController;
+  private cleaningPrevious = false;
   progress: MigrationProgress = {
     state: 'idle',
     copied: 0,
@@ -393,6 +394,7 @@ export class DataDirectory {
     return { ...this.pointer };
   }
   keepPrevious() {
+    if (this.cleaningPrevious) throw new Error('正在清理旧数据副本');
     this.savePointer({ ...this.pointer, previousKept: true });
   }
   cancel() {
@@ -405,7 +407,8 @@ export class DataDirectory {
     resume: () => void,
     emit: (value: MigrationProgress) => void,
   ) {
-    if (this.controller || this.pointer.pending) throw new Error('已有迁移或待重启切换');
+    if (this.controller || this.pointer.pending || this.cleaningPrevious)
+      throw new Error('已有迁移、待重启切换或旧副本清理');
     const blocked = guard();
     if (blocked) throw new Error(blocked);
     this.controller = new AbortController();
@@ -625,6 +628,15 @@ export class DataDirectory {
   }
   /** 只有新目录已激活且旧副本未被改动时才允许清理；调用方必须再次核对完整路径。 */
   async removePrevious(confirmedPath: string) {
+    if (this.controller || this.cleaningPrevious) throw new Error('正在迁移或清理旧数据副本');
+    this.cleaningPrevious = true;
+    try {
+      return await this.cleanPrevious(confirmedPath);
+    } finally {
+      this.cleaningPrevious = false;
+    }
+  }
+  private async cleanPrevious(confirmedPath: string) {
     const previous = this.pointer.previous,
       journal = this.journal();
     if (
@@ -638,41 +650,77 @@ export class DataDirectory {
       throw new Error('旧目录确认或迁移记录不匹配');
     const old = path.resolve(previous),
       current = path.resolve(this.pointer.active);
-    if (inside(old, current) || inside(current, old) || path.parse(old).root === old)
+    if (inside(old, current) || inside(current, old) || path.parse(old).root === old ||
+        inside(path.resolve(this.journalFile), old))
       throw new Error('旧目录清理范围无效');
     checkDatabase(path.join(current, 'deploy-center.sqlite'));
-    // 持久标记来自应用；旧版默认目录无标记时仅允许迁移时记录的精确文件集。
-    if (
-      journal.directories &&
-      JSON.stringify(await directoryList(old, this.managedLayout)) !==
-        JSON.stringify(journal.directories)
-    )
-      throw new Error('旧目录结构已改变，保留并人工检查');
-    const entries = await inventory(old, this.managedLayout);
-    const allowed = new Set(journal.files);
-    if (entries.some((e) => !allowed.has(e.relative)))
-      throw new Error('旧目录出现新增文件，请保留并人工检查');
-    if (!journal.manifest || entries.length !== journal.manifest.length)
-      throw new Error('旧目录文件数量已变化，请保留并人工核对');
-    for (const entry of journal.manifest) {
-      const file = path.resolve(old, entry.relative);
-      if (
-        !inside(file, old) ||
-        (await fsp.stat(file)).size !== entry.size ||
-        (await digest(file)) !== entry.hash
-      )
-        throw new Error('旧目录文件已改变，未清理：' + entry.relative);
+    plainPath(old);
+    if (!fs.existsSync(old)) {
+      this.savePointer({ ...this.pointer, previous: undefined });
+      return true;
     }
     if ((await fsp.realpath(old)) !== old) throw new Error('旧目录已变成链接');
-    // 已逐项确认根路径与文件集，禁止使用未经检查的计算路径执行递归删除。
-    plainPath(old);
-    if (this.managedLayout) {
-      await inventory(old);
-      await directoryList(old);
+    const directories = await directoryList(old, this.managedLayout);
+    if (journal.directories) {
+      const known = new Set(journal.directories);
+      if (directories.some((dir) => !known.has(dir)))
+        throw new Error('旧目录结构已改变，保留并人工检查');
     }
-    await fsp.rm(old, { recursive: true, force: false });
+    if (!journal.manifest) throw new Error('缺少旧目录文件清单，请保留并人工核对');
+    const entries = await inventory(old, this.managedLayout);
+    const allowed = new Set(journal.manifest.map((entry) => entry.relative));
+    if (entries.some((e) => !allowed.has(e.relative)))
+      throw new Error('旧目录出现新增文件，请保留并人工检查');
+    const present = new Set(entries.map((entry) => entry.relative));
+    const files: { path: string; stat: fs.Stats }[] = [];
+    for (const entry of journal.manifest) {
+      if (!present.has(entry.relative)) continue;
+      const file = path.resolve(old, entry.relative);
+      if (!inside(file, old) || file === old) throw new Error('旧目录清理范围无效');
+      const stat = await fsp.lstat(plainPath(file));
+      if (!stat.isFile() || stat.size !== entry.size || (await digest(file)) !== entry.hash)
+        throw new Error('旧目录文件已改变，未清理：' + entry.relative);
+      files.push({ path: file, stat });
+    }
+    // 只删除经过迁移清单核对的文件。中途失败后可继续核对剩余项，未迁移的目录不递归删除。
+    for (const file of files) {
+      const current = await fsp.lstat(plainPath(file.path));
+      if (!current.isFile() || current.dev !== file.stat.dev || current.ino !== file.stat.ino ||
+          current.size !== file.stat.size || current.mtimeMs !== file.stat.mtimeMs || current.ctimeMs !== file.stat.ctimeMs)
+        throw new Error('旧目录文件在清理期间发生变化，已保留：' + path.relative(old, file.path));
+      await fsp.unlink(file.path);
+    }
+    const removeEmpty = async (directory: string) => {
+      try {
+        await fsp.rmdir(plainPath(directory));
+        return true;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT') return true;
+        if (code === 'ENOTEMPTY' || code === 'EEXIST') return false;
+        throw error;
+      }
+    };
+    const presentDirectories = new Set(directories);
+    for (const relative of [...(journal.directories ?? [])].sort((a, b) => b.length - a.length)) {
+      if (!presentDirectories.has(relative)) continue;
+      const directory = path.resolve(old, relative);
+      if (directory === old || !inside(directory, old)) throw new Error('旧目录清理范围无效');
+      await removeEmpty(directory);
+    }
+    const remaining = await fsp.readdir(old);
+    if (remaining.every((name) => name === markerFile || name === ownerFile))
+      for (const name of remaining) {
+        const file = path.join(old, name);
+        const stat = await fsp.lstat(file);
+        if (!stat.isFile() || stat.size > 256) continue;
+        const contents = await fsp.readFile(plainPath(file), 'utf8');
+        if (name === ownerFile ? contents === ownerText : z.uuid().safeParse(contents).success)
+          await fsp.unlink(file);
+      }
+    const removed = await removeEmpty(old);
     this.savePointer({ ...this.pointer, previous: undefined });
-    return true;
+    return removed;
   }
 }
 

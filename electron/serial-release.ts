@@ -27,7 +27,8 @@ const journalSchema = z.object({
 
 type DeploymentAccess = {
   prepare(request: ReleaseRequest, owned: boolean): Promise<{ task: Task; token: string }>;
-  start(token: string, credentials: Record<string, string>, approval: Approval, releaseId: string): Promise<Task>;
+  start(token: string, credentials: Record<string, string>, approval: Approval, releaseId: string,
+    beforeLaunch: (task: Task) => void): Promise<Task>;
   cancel(id: string): void | Promise<void>;
   readTask(id: string): Task | undefined | Promise<Task | undefined>;
   active(): boolean;
@@ -73,14 +74,17 @@ export class SerialRelease {
   }
 
   private restore(saved: ReleaseRun) {
+    const requiresCheck = saved.rows.some(inFlight);
     this.cancelRequested = saved.state === 'cancelling' || saved.cancelRequested === true;
     this.run = saved.state === 'done' || saved.state === 'paused' ? saved : {
       ...saved,
       state: 'paused',
       cancelRequested: this.cancelRequested ? true : undefined,
-      message: '应用已重新打开。请先核实已启动的任务，再重新确认未执行的服务。',
+      message: requiresCheck
+        ? '应用已重新打开。请先核实已启动的任务，再重新确认未执行的服务。'
+        : '应用已重新打开。请重新确认未执行的服务。',
     };
-    if (this.cancelRequested && this.run.state !== 'done' && !saved.rows.some(inFlight))
+    if (this.cancelRequested && this.run.state !== 'done' && !requiresCheck)
       this.run = { ...this.run, state: 'done', message: '已取消',
         rows: saved.rows.map((row) => row.state === 'queued' ? { ...row, state: 'skipped' } : row) };
   }
@@ -218,7 +222,7 @@ export class SerialRelease {
     const preview = authorization.previews.find((item) => item.request.serviceId === row.request.serviceId);
     if (!preview) { this.pause('请重新核对待执行服务。'); return; }
     this.dispatching = true;
-    let dispatch: ReleaseRow | undefined;
+    let launchCommitted = false;
     let started: Task | undefined;
     try {
       if (this.api.unfinished()) throw new Error('仍有部署任务待核实。');
@@ -228,21 +232,37 @@ export class SerialRelease {
       if (this.cancelRequested) return;
       if (reviewedDetails(prepared.task) !== reviewedDetails(preview.task))
         throw new Error('服务配置或产物已变化，请重新核对后续服务。');
-      dispatch = { ...row, taskId: prepared.task.id, state: 'starting' };
-      this.replace(dispatch, 'running', '', true);
+      const dispatch: ReleaseRow = { ...row, taskId: prepared.task.id, state: 'starting' };
       const serverIds = new Set(prepared.task.targets.map((item) => item.server.id));
       started = await this.api.start(prepared.token,
         Object.fromEntries(Object.entries(authorization.credentials).filter(([id]) => serverIds.has(id))),
-        authorization.approval, this.run.id!);
-      if (started.id !== dispatch.taskId) throw new Error('执行任务与清单记录不一致。');
+        authorization.approval, this.run.id!, (task) => {
+          if (this.cancelRequested) throw new Error('已取消，未启动当前服务。');
+          if (task.id !== dispatch.taskId) throw new Error('执行任务与清单记录不一致。');
+          this.replace(dispatch, 'running', '', true);
+          launchCommitted = true;
+        });
+      if (!launchCommitted || started.id !== dispatch.taskId)
+        throw new Error('执行任务与清单记录不一致。');
       this.replace({ ...dispatch, state: 'running' }, this.cancelRequested ? 'cancelling' : 'running');
       if (this.cancelRequested && running(started)) await this.api.cancel(started.id);
     } catch (error) {
       const explanation = error instanceof Error ? error.message : String(error);
-      this.pause(row.name + ' · ' + explanation);
+      const fenced = this.run?.rows.find((item) => item.request.serviceId === row.request.serviceId && inFlight(item));
+      if (fenced || started) {
+        this.authorization = undefined;
+        const uncertain = fenced ?? { ...row, taskId: started!.id };
+        this.replace({ ...uncertain, state: 'unknown', detail: explanation }, 'paused',
+          row.name + ' 启动结果待核实。请先核实原任务。');
+      } else if (this.cancelRequested) this.finish('已取消');
+      else {
+        this.authorization = undefined;
+        this.replace({ ...row, detail: '尚未启动 · ' + explanation }, 'paused',
+          row.name + ' 尚未启动 · ' + explanation + ' 请处理原因后重新确认未执行的服务。');
+      }
     } finally {
       this.dispatching = false;
-      if (this.cancelRequested && this.get()?.state === 'cancelling' && !dispatch) this.finish('已取消');
+      if (this.cancelRequested && this.get()?.state === 'cancelling' && !launchCommitted) this.finish('已取消');
     }
     if (started && this.terminalEvent === started.id) await this.check(started.id, true);
   }
@@ -269,7 +289,12 @@ export class SerialRelease {
         return;
       }
       const task = await this.api.readTask(row.taskId);
-      if (!task || task.service.id !== row.request.serviceId) throw new Error('没有对应的本机任务记录。');
+      if (!task || task.service.id !== row.request.serviceId) {
+        this.authorization = undefined;
+        this.replace({ ...row, state: 'unknown' }, 'paused',
+          '本机暂时无法读取原任务。请核实原任务后再处理后续服务。');
+        return;
+      }
       if (task.status === 'running' || task.status === 'cancelling') {
         if (!automatic) this.pause('当前任务仍在执行，请等待结束后再核实。');
         return;

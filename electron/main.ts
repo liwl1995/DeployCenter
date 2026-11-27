@@ -503,7 +503,8 @@ async function boot() {
     };
     release = new SerialRelease({
       prepare: prepareDeployment,
-      start: (token, credentials, approval, releaseId) => controller.start(token, credentials, approval, undefined, releaseId),
+      start: (token, credentials, approval, releaseId, beforeLaunch) =>
+        controller.start(token, credentials, approval, undefined, releaseId, beforeLaunch),
       cancel: (taskId) => controller.cancel(taskId),
       readTask: (taskId) => storage.task(taskId),
       active: () => controller.active(),
@@ -1820,7 +1821,7 @@ async function boot() {
     handle('remove-old-data', async (value) => {
       if (controller.active() || storage.unfinished().length)
         throw new Error('任务未处理完，不能清理旧目录');
-      await directories.removePrevious(text(value));
+      return directories.removePrevious(text(value));
     });
     if (app.isPackaged)
       win.webContents.on('before-input-event', (event, input) => {

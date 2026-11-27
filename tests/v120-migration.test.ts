@@ -239,6 +239,19 @@ describe('1.2.0 数据目录迁移（隔离真实文件与 SQLite）', () => {
     expect(check.pragma('quick_check', { simple: true })).toBe('ok');
     check.close();
   });
+  it('旧目录清理中断后，再次确认只处理清单中仍存在的文件', async () => {
+    const f = await fixture();
+    await fs.writeFile(path.join(f.source, '已核对.txt'), '迁移资料');
+    await f.manager.migrate(f.target, () => undefined, () => f.store.pause(), () => f.store.resume(), () => {});
+    f.store.close();
+    const next = new DataDirectory(f.settings, f.source);
+    await next.locate();
+    await fs.unlink(path.join(f.source, '已核对.txt'));
+    const restarted = new DataDirectory(f.settings, f.source);
+    await restarted.locate();
+    await expect(restarted.removePrevious(f.source)).resolves.toBe(true);
+    await expect(fs.access(path.join(f.target, '已核对.txt'))).resolves.toBeUndefined();
+  });
 });
 it('复制后目录被换成联接时，取消不会跟随联接删除外部文件', async () => {
   const f = await fixture(),
@@ -272,6 +285,32 @@ it('复制后目录被换成联接时，取消不会跟随联接删除外部文�
   expect(changed).toBe(true);
   expect(await fs.readFile(path.join(outside, 'keep.txt'), 'utf8')).toBe('outside');
   expect(await fs.readFile(path.join(nested, 'keep.txt'), 'utf8')).toBe('source');
+});
+
+it('托管旧副本只清理迁移清单，保留迁移后新增的控制文件和变化的运行缓存', async () => {
+  const f = await fixture();
+  const control = path.join(f.source, 'Control');
+  const runtime = path.join(f.source, 'Runtime');
+  const manager = new DataDirectory(control, f.source, [], true);
+  await manager.locate();
+  manager.markOwned(f.source);
+  await fs.mkdir(runtime, { recursive: true });
+  const cache = path.join(runtime, 'cache');
+  await fs.writeFile(cache, '迁移前');
+  await manager.migrate(f.target, () => undefined, () => f.store.pause(), () => f.store.resume(), () => {});
+  f.store.close();
+  const reboot = new DataDirectory(control, f.source, [], true);
+  expect((await reboot.locate()).directory).toBe(f.target);
+  reboot.rehome(f.target);
+  const added = path.join(control, 'operator-note.txt');
+  await fs.writeFile(added, '迁移后新增');
+  await fs.writeFile(cache, '迁移后改写');
+  await expect(reboot.removePrevious(f.source)).resolves.toBe(false);
+  expect(await fs.readFile(added, 'utf8')).toBe('迁移后新增');
+  expect(await fs.readFile(cache, 'utf8')).toBe('迁移后改写');
+  await expect(fs.access(path.join(f.source, 'deploy-center.sqlite'))).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(fs.access(path.join(f.target, 'deploy-center.sqlite'))).resolves.toBeUndefined();
+  expect(reboot.state().previous).toBeUndefined();
 });
 
 it('托管布局复制更新缓存，运行与控制目录不破坏校验；重启后从新目录复用安装包', async () => {

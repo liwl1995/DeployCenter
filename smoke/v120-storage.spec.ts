@@ -100,6 +100,11 @@ test('1.2.0 空间策略实际 IPC、三个宽度无横向溢出', async () => {
 });
 test('1.2.0 从设置迁移全部数据，重启激活且默认保留旧目录', async () => {
   let page = await app.firstWindow();
+  const dark = Number(process.env.DEPLOY_CENTER_TEST_SCALE || 1) > 1;
+  await page.getByRole('tab', { name: '通用', exact: true }).click();
+  await page.getByRole('group', { name: '界面主题' }).getByRole('button', { name: dark ? '深色' : '浅色' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', dark ? 'dark' : 'light');
+  await page.getByRole('tab', { name: '数据与备份', exact: true }).click();
   await page.getByRole('button', { name: '更换数据目录' }).click();
   await page.getByLabel('选择上级目录', { exact: true }).fill(target);
   await expect(page.getByTestId('migration-final-path')).toHaveText(
@@ -113,6 +118,7 @@ test('1.2.0 从设置迁移全部数据，重启激活且默认保留旧目录',
   await app.close();
   app = await launch();
   page = await app.firstWindow();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', dark ? 'dark' : 'light');
   await expect
     .poll(async () => (await page.evaluate(() => window.deployCenter!.load())).dataDir)
     .toBe(path.join(target, 'DeployCenter'));
@@ -141,6 +147,24 @@ test('1.2.0 从设置迁移全部数据，重启激活且默认保留旧目录',
         (await page.evaluate(() => window.deployCenter!.load())).dataLocation?.previousKept,
     )
     .toBe(true);
+  const retained = path.join(source, 'Control', 'operator-note.txt');
+  await fs.mkdir(path.dirname(retained), { recursive: true });
+  await fs.writeFile(retained, '迁移后新增的操作备注');
+  const openCleanup = page.getByRole('button', { name: '查看旧目录清理确认' });
+  await expect(openCleanup).toBeEnabled();
+  await openCleanup.press('Enter');
+  const cleanup = page.getByRole('dialog', { name: '确认删除旧数据副本' });
+  const confirm = cleanup.getByRole('button', { name: '删除已核对的旧副本' });
+  await expect(confirm).toBeDisabled();
+  await expect(cleanup).toContainText('未核对的控制记录');
+  await cleanup.getByRole('textbox', { name: '输入完整旧目录路径确认' }).fill(source);
+  await expect(confirm).toBeEnabled();
+  await confirm.press('Enter');
+  await expect(page.getByText('已清理迁移清单中的文件。未核对内容保留在：' + source)).toBeVisible();
+  await expect(page.getByRole('textbox', { name: '当前目录' })).toBeFocused();
+  expect(await fs.readFile(retained, 'utf8')).toBe('迁移后新增的操作备注');
+  await expect(fs.access(path.join(source, 'deploy-center.sqlite'))).rejects.toMatchObject({ code: 'ENOENT' });
+  expect((await page.evaluate(() => window.deployCenter!.load())).dataDir).toBe(path.join(target, 'DeployCenter'));
 });
 test('迁移后实际解密Windows保存凭据并认证回环SSH；导出不含凭据', async () => {
   const { private: key } = ssh2.utils.generateKeyPairSync('ed25519'),

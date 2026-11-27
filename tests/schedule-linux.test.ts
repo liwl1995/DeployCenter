@@ -236,7 +236,8 @@ it.skipIf(process.platform !== 'win32' || !distro).each(['定时计划', '串行
       if (mode === '串行发布清单') {
         release = new SerialRelease({
           prepare: (request, owned) => controller.prepare(request, owned),
-          start: (token, credentials, approval, releaseId) => controller.start(token, credentials, approval, undefined, releaseId),
+          start: (token, credentials, approval, releaseId, beforeLaunch) =>
+            controller.start(token, credentials, approval, undefined, releaseId, beforeLaunch),
           cancel: (id) => controller.cancel(id),
           readTask: (id) => store.task(id),
           active: () => controller.active(),

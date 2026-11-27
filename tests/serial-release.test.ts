@@ -60,8 +60,10 @@ function fixture() {
     snapshots.set(token, task);
     return { task, token };
   });
-  const start = vi.fn<DesktopAPI['start']>(async (token) => {
+  const start = vi.fn(async (token: string, _credentials: Record<string, string>,
+    _approval: Approval, _releaseId: string, beforeLaunch: (task: Task) => void) => {
     const task = structuredClone(snapshots.get(token)!);
+    beforeLaunch(task);
     tasks.set(task.id, task);
     return task;
   });
@@ -90,6 +92,41 @@ function fixture() {
 }
 
 describe('串行发布清单', () => {
+  it('主进程在提交派发前拒绝启动时，保留可重新确认的服务且不自动继续', async () => {
+    const f = fixture();
+    f.start.mockRejectedValueOnce(new Error('无法解密保存的凭据'));
+    await f.begin('continue');
+    await vi.waitFor(() => expect(f.release.get()?.state).toBe('paused'));
+    expect(f.store.releaseRun()?.rows[0]).toMatchObject({ state: 'queued', detail: expect.stringContaining('尚未启动') });
+    expect(f.store.releaseRun()?.rows[0].taskId).toBeUndefined();
+    expect(f.start).toHaveBeenCalledTimes(1);
+    const restored = f.make();
+    expect(restored.get()?.state).toBe('paused');
+    const review = await restored.preview(f.requests);
+    restored.begin(review.token, {}, approval, 'continue', true);
+    await vi.waitFor(() => expect(restored.get()?.rows[0].state).toBe('running'));
+    expect(f.start).toHaveBeenCalledTimes(2);
+  });
+
+  it('提交派发后发生异常且无法读取任务时，保留任务引用并阻止重新发起', async () => {
+    const f = fixture();
+    f.start.mockImplementationOnce(async (_token, _credentials, _approval, _id, beforeLaunch) => {
+      const { task } = await f.prepare.mock.results.at(-1)!.value;
+      beforeLaunch(task);
+      throw new Error('工作进程交接结果未知');
+    });
+    await f.begin('continue');
+    await vi.waitFor(() => expect(f.store.releaseRun()).toMatchObject({
+      state: 'paused', rows: [{ state: 'unknown', taskId: expect.any(String) }, { state: 'queued' }],
+    }));
+    const restored = f.make();
+    await restored.check();
+    expect(restored.get()?.rows[0].state).toBe('unknown');
+    const review = await restored.preview(f.requests);
+    expect(() => restored.begin(review.token, {}, approval, 'continue', true)).toThrow('核实当前服务');
+    expect(f.start).toHaveBeenCalledTimes(1);
+  });
+
   it('旧窗口记录只导入一次，数据目录切换后从 SQLite 打开暂停状态', async () => {
     const f = fixture();
     const legacy = {
@@ -157,7 +194,8 @@ describe('串行发布清单', () => {
         if (owned && request.serviceId === f.requests[1].serviceId) await between;
         return controller.prepare(request, owned);
       },
-      start: (token, credentials, value, releaseId) => controller.start(token, credentials, value, undefined, releaseId),
+      start: (token, credentials, value, releaseId, beforeLaunch) =>
+        controller.start(token, credentials, value, undefined, releaseId, beforeLaunch),
       cancel: (id) => controller.cancel(id),
       readTask: (id) => f.store.task(id),
       active: () => controller.active(),

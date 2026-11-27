@@ -295,6 +295,7 @@ export class Controller {
     rawApproval: unknown,
     schedule?: { at: number; replaces?: string },
     releaseId?: string,
+    beforeLaunch?: (task: Task) => void,
   ) {
     this.assertRelease(!!releaseId);
     if (schedule) validScheduleTime(schedule.at);
@@ -359,10 +360,12 @@ export class Controller {
     this.assertOperations(task);
     if (schedule && scheduleConfiguration(this.storage.database(), task) !== pending.configuration)
       throw new Error('确认期间关键配置已变化，请重新准备');
-    this.activeCredentials = credentials;
-    this.prepared.delete(token);
     const started = startTask(task);
     started.releaseId = releaseId;
+    // 启动校验结束后才提交清单派发记录，记录保存失败时不能进入工作进程。
+    beforeLaunch?.(started);
+    this.activeCredentials = credentials;
+    this.prepared.delete(token);
     if (schedule) {
       started.preparation = true;
       for (const run of started.targets)

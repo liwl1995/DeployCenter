@@ -371,7 +371,7 @@ export function ReleaseManifest({ api, db, run, liveTask, showRun, setShowRun, d
         {step === 2 && run?.state === 'paused' && <>
           <Button variant="danger" disabled={busy} onClick={() => setModal('end')}>结束清单</Button>
           {unresolved ? <Button disabled={busy} onClick={() => void action(() => api.checkRelease())}>刷新核实结果</Button>
-            : <Button disabled={!pending.length || busy || blocked} onClick={() => prepare(true)}>复核后续服务</Button>}
+            : <Button disabled={!pending.length || busy || blocked} onClick={() => prepare(true)}>复核未执行服务</Button>}
         </>}
         {step === 2 && run?.state === 'done' && run.id && run.rows.some((row) => row.taskId) &&
           <Button variant="neutral" onClick={() => onHistory(run.id!)}>查看清单历史</Button>}

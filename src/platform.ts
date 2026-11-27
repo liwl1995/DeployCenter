@@ -282,7 +282,7 @@ export interface DesktopAPI {
   migrationState(): Promise<MigrationProgress>;
   restart(): Promise<void>;
   keepOldData(): Promise<void>;
-  removeOldData(path: string): Promise<void>;
+  removeOldData(path: string): Promise<boolean>;
   help(): Promise<void>;
   about(): Promise<void>;
   onEvent(callback: (event: DesktopEvent) => void): () => void;

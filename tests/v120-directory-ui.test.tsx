@@ -83,6 +83,7 @@ it('旧副本默认保留，删除必须输入完整路径', async () => {
     files: 2,
     previous: 'E:\\原数据',
   });
+  vi.mocked(client.removeOldData).mockResolvedValue(false);
   render(<DirectorySettings api={client} onManage={() => {}} />);
   await screen.findByText('原数据副本仍保留');
   expect(client.removeOldData).not.toHaveBeenCalled();
@@ -92,4 +93,5 @@ it('旧副本默认保留，删除必须输入完整路径', async () => {
   await user.type(d.getByLabelText('输入完整旧目录路径确认'), 'E:\\原数据');
   await user.click(d.getByRole('button', { name: '删除已核对的旧副本' }));
   await waitFor(() => expect(client.removeOldData).toHaveBeenCalledWith('E:\\原数据'));
+  await screen.findByText(/已清理迁移清单中的文件。未核对内容保留在/);
 });
