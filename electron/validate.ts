@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { z } from 'zod';
 import { validDatabase, type Database, type Server } from '../src/model';
-import { emptyDatabase } from '../src/defaults';
+import { emptyDatabase, staleLockMinutesRange } from '../src/defaults';
 import type { Approval, PrepareRequest } from '../src/platform';
 import { artifactPolicy } from './artifact-store';
 
@@ -122,7 +122,8 @@ export function validateDatabase(v: unknown): Database {
   if (v.settings.historyDays !== undefined)
     z.number().int().min(0).max(3650).parse(v.settings.historyDays);
   if (v.settings.staleLockMinutes !== undefined)
-    z.number().int().min(1).max(10080).parse(v.settings.staleLockMinutes);
+    z.number().int().min(staleLockMinutesRange.min).max(staleLockMinutesRange.max)
+      .parse(v.settings.staleLockMinutes);
   return v;
 }
 export function validateBackup(value: unknown) {

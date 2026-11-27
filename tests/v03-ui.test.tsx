@@ -68,6 +68,44 @@ describe('v0.3 组件回归', () => {
     expect(screen.queryByRole('button', { name: '恢复默认' })).toBeNull();
     expect((screen.getByRole('combobox', { name: '某个目标失败后' }) as HTMLSelectElement).value).toBe('stop');
   });
+  it('陈旧锁阈值只在确认有效整数时写入配置，非法草稿不影响其他设置', async () => {
+    const user = userEvent.setup();
+    const db = seed();
+    delete db.settings.staleLockMinutes;
+    localStorage.setItem('deploy-center-v2', safeConfigJson(db));
+    const settings = () => JSON.parse(localStorage.getItem('deploy-center-v2')!).settings;
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: '设置' }));
+    await user.click(screen.getByRole('tab', { name: '部署与构建' }));
+    const field = screen.getByRole<HTMLInputElement>('spinbutton', { name: '陈旧锁阈值（分钟）' });
+    expect(field.value).toBe('120');
+    field.focus();
+    for (const value of ['', '0', '-1', '12.5', '10081', '1e3']) {
+      fireEvent.change(field, { target: { value } });
+      fireEvent.keyDown(field, { key: 'Enter' });
+      expect(field.getAttribute('aria-invalid')).toBe('true');
+      expect(settings().staleLockMinutes).toBeUndefined();
+    }
+    await user.click(screen.getByRole('switch', { name: '兼容 Maven 异常非零退出码' }));
+    expect(settings().allowMavenNonzero).toBe(!db.settings.allowMavenNonzero);
+    expect(settings().staleLockMinutes).toBeUndefined();
+    expect(field.value).toBe('1e3');
+
+    field.focus();
+    await user.keyboard('{Escape}');
+    expect(field.value).toBe('120');
+    expect(field.hasAttribute('aria-invalid')).toBe(false);
+    fireEvent.change(field, { target: { value: '10080' } });
+    expect(settings().staleLockMinutes).toBeUndefined();
+    await user.tab();
+    expect(settings().staleLockMinutes).toBe(10080);
+
+    field.focus();
+    fireEvent.change(field, { target: { value: '1' } });
+    expect(settings().staleLockMinutes).toBe(10080);
+    await user.keyboard('{Enter}');
+    expect(settings().staleLockMinutes).toBe(1);
+  });
   it('A4/B7 步骤和上传显示真实耗时，历史拆开构建日志与目标日志', async () => {
     vi.useFakeTimers();
     render(<App />);

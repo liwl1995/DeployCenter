@@ -1,5 +1,7 @@
 import type { Database, Service, Target } from './model';
 export const prototype = typeof __PROTOTYPE__ !== 'undefined' && __PROTOTYPE__;
+export const staleLockMinutesRange = { min: 1, max: 10080 } as const;
+
 export function newService(): Service {
   return {
     id: crypto.randomUUID(),

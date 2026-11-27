@@ -1078,6 +1078,9 @@ p.code,
 .preference-list > .field > small {
   grid-column: 1 / -1;
 }
+.preference-list > .field > input[aria-invalid='true'] + small {
+  color: var(--danger);
+}
 .wide {
   grid-column: 1 / -1;
 }

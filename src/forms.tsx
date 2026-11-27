@@ -738,7 +738,7 @@ export function TargetForm({ initial, db, onSave, onClose, initialTab }: SavePro
           <p className="note">
             启动命令和容器校验通过后先等待 {v.health.startDelay} 秒，再在 {v.health.maxWait}{' '}
             秒内每隔 {v.health.interval}{' '}
-            秒探测。首次通过即继续，超时仍未就绪才判失败；回滚后的旧版本也使用此规则。
+            秒探测。通过即继续，窗口结束仍未通过则判失败。有可用备份时，可在任务详情发起回滚并确认。
           </p>
         )}
         <p className="note">

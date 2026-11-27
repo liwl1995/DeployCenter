@@ -63,22 +63,37 @@ export function FieldHelp({ label, text }: { label: string; text: string }) {
   };
   useEffect(() => () => clear(), []);
   useLayoutEffect(() => {
-    if (!open || !trigger.current || !tooltip.current) return;
-    const anchor = trigger.current.getBoundingClientRect();
-    const tip = tooltip.current.getBoundingClientRect();
-    const left = Math.max(12, Math.min(anchor.left, window.innerWidth - tip.width - 12));
-    const below = anchor.bottom + 8;
-    const top =
-      below + tip.height <= window.innerHeight - 12
+    const button = trigger.current;
+    const tooltipNode = tooltip.current;
+    if (!open || !button || !tooltipNode) return;
+    const place = (anchor = button.getBoundingClientRect()) => {
+      const tip = tooltipNode.getBoundingClientRect();
+      const left = Math.max(12, Math.min(anchor.left, window.innerWidth - tip.width - 12));
+      const below = anchor.bottom + 8;
+      const top = below + tip.height <= window.innerHeight - 12
         ? below
         : Math.max(12, anchor.top - tip.height - 8);
-    setPosition({ left, top });
+      setPosition({ left, top });
+    };
     const close = () => setOpen(false);
+    const onScroll = (event: Event) => {
+      if (document.activeElement !== button) return close();
+      const anchor = button.getBoundingClientRect();
+      const scroller = event.target;
+      if (scroller instanceof Element && scroller.contains(button)) {
+        const bounds = scroller.getBoundingClientRect();
+        if (anchor.bottom <= bounds.top || anchor.top >= bounds.bottom) return close();
+      }
+      if (anchor.bottom <= 0 || anchor.top >= window.innerHeight) return close();
+      // Tab 聚焦说明按钮时，浏览器会滚动弹窗以露出焦点。
+      place(anchor);
+    };
+    place();
     window.addEventListener('resize', close);
-    document.addEventListener('scroll', close, true);
+    document.addEventListener('scroll', onScroll, true);
     return () => {
       window.removeEventListener('resize', close);
-      document.removeEventListener('scroll', close, true);
+      document.removeEventListener('scroll', onScroll, true);
     };
   }, [open]);
   return (

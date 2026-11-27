@@ -264,6 +264,70 @@ test('启动直接部署，三个配置页列表与详情在三种尺寸下可�
     }
   }
 });
+test('部署设置的锁阈值草稿与健康检查回滚说明在最小窗口可用', async () => {
+  const page = await app.firstWindow();
+  const button = (name: string) => page.getByRole('button', { name, exact: true });
+  const tab = (name: string) => page.getByRole('tab', { name, exact: true });
+  const settings = () => page.evaluate(async () => (await window.deployCenter!.load()).database.settings);
+  const original = await settings();
+  await size(900, 600);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1.5));
+  await expectViewport(page, 600, 400);
+  await button('设置').click();
+  const theme = async (label: string, value: string) => {
+    await tab('通用').click();
+    await page.getByRole('group', { name: '界面主题' }).getByRole('button', { name: label, exact: true }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', value);
+    await tab('部署与构建').click();
+    await boundaries();
+  };
+  await theme('浅色', 'light');
+  const threshold = page.getByRole('spinbutton', { name: '陈旧锁阈值（分钟）' });
+  const validation = page.getByText('请输入 1–10080 之间的整数。按 Esc 恢复原值。');
+  for (const value of ['12.5', '10081', '']) {
+    await threshold.fill(value);
+    await threshold.press('Enter');
+    await expect(threshold).toHaveAttribute('aria-invalid', 'true');
+    await expect(validation).toBeVisible();
+    expect((await settings()).staleLockMinutes).toBe(original.staleLockMinutes);
+  }
+  await page.getByRole('switch', { name: '兼容 Maven 异常非零退出码' }).click();
+  await expect.poll(async () => (await settings()).allowMavenNonzero).toBe(!original.allowMavenNonzero);
+  expect((await settings()).staleLockMinutes).toBe(original.staleLockMinutes);
+  await expect(threshold).toHaveValue('');
+  await threshold.press('Escape');
+  await expect(threshold).toHaveValue(String(original.staleLockMinutes));
+  await expect(validation).toBeHidden();
+
+  await theme('深色', 'dark');
+  await threshold.fill('10080');
+  await threshold.press('Tab');
+  await expect.poll(async () => (await settings()).staleLockMinutes).toBe(10080);
+  await threshold.fill('1');
+  await threshold.press('Enter');
+  await expect.poll(async () => (await settings()).staleLockMinutes).toBe(1);
+  await button('返回应用').click();
+  await button('部署目标').click();
+  await page.locator('.entity-list').getByRole('button', { name: '编辑', exact: true }).first().click();
+  const dialog = page.getByRole('dialog', { name: '部署目标配置' });
+  await dialog.getByRole('tab', { name: '健康检查' }).click();
+  await dialog.getByLabel('检查方式', { exact: true }).selectOption('http');
+  await expect(dialog.getByText(/有可用备份时，可在任务详情发起回滚并确认/)).toBeVisible();
+  const help = dialog.getByRole('button', { name: '最长等待窗口（秒）说明' });
+  const startupWait = dialog.getByRole('spinbutton', { name: '启动等待（秒）' });
+  await startupWait.scrollIntoViewIfNeeded();
+  await startupWait.focus();
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await page.keyboard.press('Tab');
+  await expect(help).toBeFocused();
+  const tooltip = page.getByRole('tooltip');
+  await expect(tooltip).toContainText('在任务详情手动发起并确认回滚');
+  await expect(tooltip).toBeInViewport({ ratio: 1 });
+  await help.press('Escape');
+  await expect(tooltip).toBeHidden();
+  await expect(dialog).toBeVisible();
+});
+
 test('历史默认优先记录，筛选弹层支持应用取消与日期嵌套弹窗', async () => {
   const page = await app.firstWindow();
   const config = (await page.evaluate(() => window.deployCenter!.load())).database;

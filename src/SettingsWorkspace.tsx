@@ -6,6 +6,7 @@ import { DataSettings } from './DataSettings';
 import { DirectorySettings } from './DirectorySettings';
 import { PreferenceChoice } from './PreferenceChoice';
 import { HistoryRetention } from './HistoryRetention';
+import { staleLockMinutesRange } from './defaults';
 import type { Database } from './model';
 import type { DesktopAPI } from './platform';
 import { pruneHistory } from './records';
@@ -63,6 +64,24 @@ export function SettingsWorkspace({
   const usageRef = useRef<HTMLDListElement>(null);
   const [saving, setSaving] = useState(false);
   const [preferenceError, setPreferenceError] = useState('');
+  const [lockMinutesDraft, setLockMinutesDraft] = useState<string>();
+  const lockMinutesValue = lockMinutesDraft ?? String(db.settings.staleLockMinutes ?? 120);
+  const lockMinutes = Number(lockMinutesValue);
+  const { min, max } = staleLockMinutesRange;
+  const validLockMinutes = /^[0-9]+$/.test(lockMinutesValue) && lockMinutes >= min && lockMinutes <= max;
+  const lockMinutesHint = validLockMinutes
+    ? '范围 ' + min + '–' + max + ' 分钟。按回车或离开输入框保存。'
+    : '请输入 ' + min + '–' + max + ' 之间的整数。按 Esc 恢复原值。';
+  const commitLockMinutes = () => {
+    // 清空或继续输入时的中间值不能进入自动保存的配置。
+    if (lockMinutesDraft === undefined || !validLockMinutes) return;
+    setLockMinutesDraft(undefined);
+    setDb((old) =>
+      lockMinutes === (old.settings.staleLockMinutes ?? 120)
+        ? old
+        : { ...old, settings: { ...old.settings, staleLockMinutes: lockMinutes } },
+    );
+  };
   async function changePreferences(changes: Partial<DesktopPreferences>) {
     if (!desktop || saving) return;
     setSaving(true);
@@ -226,21 +245,26 @@ export function SettingsWorkspace({
                   { value: 'continue', label: '继续其他目标' },
                 ]}
               />
-              <Field label="陈旧锁阈值（分钟）">
+              <Field label="陈旧锁阈值（分钟）" hint={lockMinutesHint}>
                 <input
                   type="number"
-                  min="1"
-                  max="10080"
-                  value={db.settings.staleLockMinutes ?? 120}
-                  onChange={(e) =>
-                    setDb((old) => ({
-                      ...old,
-                      settings: {
-                        ...old.settings,
-                        staleLockMinutes: Math.max(1, Number(e.target.value)),
-                      },
-                    }))
-                  }
+                  min={min}
+                  max={max}
+                  step={1}
+                  value={lockMinutesValue}
+                  aria-invalid={!validLockMinutes || undefined}
+                  aria-description={lockMinutesHint}
+                  onChange={(event) => setLockMinutesDraft(event.target.value)}
+                  onBlur={commitLockMinutes}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      commitLockMinutes();
+                    } else if (event.key === 'Escape' && lockMinutesDraft !== undefined) {
+                      event.preventDefault();
+                      setLockMinutesDraft(undefined);
+                    }
+                  }}
                 />
               </Field>
           </Card>

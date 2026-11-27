@@ -36,6 +36,11 @@ it('健康检查可保存启动等待和分钟级窗口，原配置编辑时使�
   render(<TargetForm initial={db.targets[3]} db={db} onSave={onSave} onClose={() => {}} />);
   await user.click(screen.getByRole('tab', { name: '健康检查' }));
   await user.selectOptions(screen.getByLabelText('检查方式'), 'http');
+  expect(screen.getByText(/有可用备份时，可在任务详情发起回滚并确认/)).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: '最长等待窗口（秒）说明' }));
+  expect(screen.getByRole('tooltip').textContent).toContain('在任务详情手动发起并确认回滚');
+  await user.keyboard('{Escape}');
+  expect(screen.queryByRole('tooltip')).toBeNull();
   await user.type(screen.getByLabelText('HTTP 健康地址'), 'http://127.0.0.1:8080/health');
   await user.clear(screen.getByLabelText('启动等待（秒）'));
   await user.type(screen.getByLabelText('启动等待（秒）'), '30');
