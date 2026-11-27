@@ -4,7 +4,7 @@ import { Badge } from './ui';
 import { EntityIcon } from './entity-icons';
 
 /** 单次部署和批量发布共用目标摘要与可展开的细节。 */
-export function ConfirmTargets({ task: initial }: { task: Task }) {
+export function ConfirmTargets({ task: initial, showObservation = false }: { task: Task; showObservation?: boolean }) {
   return (
     <div className="confirm-targets">
       {initial.targets.map((r) => {
@@ -34,6 +34,13 @@ export function ConfirmTargets({ task: initial }: { task: Task }) {
             )}
             {r.target.health.type === 'none' && (
               <p className="muted">未配置健康检查，结果将标记健康未验证</p>
+            )}
+            {showObservation && (
+              <p className="muted">
+                日志观察：{r.target.observation?.enabled
+                  ? '健康未验证时观察 ' + r.target.observation.duration + ' 秒'
+                  : '关闭'}
+              </p>
             )}
             {(canCreate || sameJar || r.target.mode === 'docker' || r.target.health.type !== 'none' || backupPreview) && (
               <details className="confirm-target-details">

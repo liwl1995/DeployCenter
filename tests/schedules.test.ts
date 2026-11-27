@@ -14,6 +14,7 @@ import {
   validScheduleTime,
 } from '../electron/scheduler';
 import { Storage } from '../electron/storage';
+import { reschedulePlan, scheduleViews } from '../electron/schedule-adjustment';
 import { Controller } from '../electron/controller';
 import { Deployment } from '../electron/deployment';
 import { snapshotJar } from '../electron/files';
@@ -94,6 +95,68 @@ function scheduler(store: Storage, now = 1000000) {
     ),
   };
 }
+
+it.each(['failed', 'cancelled'] as const)(
+  '关联的部署任务结束为 %s 后不能用改期再次执行',
+  async (status) => {
+    const { store, task, plan } = await fixture();
+    const execution = { ...task, id: 'DC-already-executed', preparation: false, status };
+    store.saveTask(execution);
+    store.saveSchedule({ ...plan, state: status, taskId: execution.id });
+    expect(scheduleViews(store, store.schedules())[0].rescheduleBlock).toContain('此计划已执行');
+    await expect(reschedulePlan(store, plan.id, Date.now() + 60_000, plan.approval))
+      .rejects.toThrow('此计划已执行');
+    expect(store.schedules()[0]).toMatchObject({ state: status, taskId: execution.id });
+  },
+);
+
+it('改期保留只读任务身份，并在读取凭据期间计划变化时终止改期', async () => {
+  const { store, dir, task, plan } = await fixture();
+  const db = store.database();
+  const server = db.servers.find((entry) => entry.id === task.targets[0].server.id)!;
+  Object.assign(server, { auth: 'password', credentialMode: 'windows' });
+  Object.assign(task.targets[0].server, server);
+  store.saveConfig(db);
+  const file = path.join(dir, 'fixture.jar');
+  const zip = new ZipWriter(new BlobWriter(), { useWebWorkers: false });
+  await zip.add('META-INF/MANIFEST.MF', new TextReader('Manifest-Version: 1.0\r\n'));
+  await fs.writeFile(file, Buffer.from(await (await zip.close()).arrayBuffer()));
+  task.artifact = await snapshotJar(file, task.id, dir);
+  task.scheduleBaselines = { [task.targets[0].target.id]: 'absent' };
+  const preflight = { ...task, id: 'DC-read-only-attempt', status: 'failed' as const };
+  store.saveTask(preflight);
+  store.saveSchedule({
+    ...plan, state: 'missed', taskId: preflight.id, configuration: scheduleConfiguration(store.database(), task),
+    pins: schedulePins(task, {}),
+  });
+  const next = Date.now() + 60_000;
+  expect(scheduleViews(store, store.schedules())[0].rescheduleBlock).toContain('尚未保存登录密码');
+  await expect(reschedulePlan(store, plan.id, next, plan.approval)).rejects.toThrow('尚未保存登录密码');
+  await store.saveCredential(server.id, 'local-fixture-only');
+  expect(scheduleViews(store, store.schedules())[0].rescheduleBlock).toBeNull();
+
+  const check = vi.spyOn(store, 'credential').mockRejectedValueOnce(new Error('fixture decrypt failed'));
+  await expect(reschedulePlan(store, plan.id, next, plan.approval)).rejects.toThrow('无法读取');
+  expect(store.schedules()[0].scheduledAt).toBe(plan.scheduledAt);
+  await reschedulePlan(store, plan.id, next, plan.approval);
+  expect(store.schedules()[0]).toMatchObject({ scheduledAt: next, state: 'ready', taskId: preflight.id });
+  expect(JSON.stringify(store.schedules()[0])).not.toContain('local-fixture-only');
+  await expect(reschedulePlan(store, plan.id, next + 60_000, plan.approval, () => true))
+    .rejects.toThrow('定时发布正在启动');
+  expect(store.schedules()[0].scheduledAt).toBe(next);
+
+  let finishRead!: (value: string) => void;
+  const delayedRead = new Promise<string>((resolve) => { finishRead = resolve; });
+  check.mockClear().mockReturnValueOnce(delayedRead);
+  const update = reschedulePlan(store, plan.id, next + 60_000, plan.approval);
+  const rejected = expect(update).rejects.toThrow('计划状态已变化');
+  await vi.waitFor(() => expect(check).toHaveBeenCalledWith(server.id));
+  store.saveSchedule({ ...store.schedules()[0], state: 'cancelled' });
+  finishRead('local-fixture-only');
+  await rejected;
+  expect(store.schedules()[0]).toMatchObject({ scheduledAt: next, state: 'cancelled' });
+});
+
 describe('定时调度与持久化', () => {
   it('时间校验拒绝过去、非整数与超过一年，按时间及创建顺序逐个认领', async () => {
     expect(() => validScheduleTime(100, 100)).toThrow();

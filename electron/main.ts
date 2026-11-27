@@ -41,11 +41,11 @@ import { migrationDestination, DataDirectory } from './data-directory';
 import { BackupManager } from './backup-manager';
 import { WorkbenchRecovery } from './workbench-recovery';
 import { workbenchHeader, workbenchPath, workbenchScope } from './workbench';
-import { ReleaseScheduler, validScheduleTime, scheduleConfiguration, schedulePins } from './scheduler';
+import { ReleaseScheduler } from './scheduler';
+import { reschedulePlan, scheduleViews } from './schedule-adjustment';
 import { SerialRelease } from './serial-release';
 import { pendingSchedule } from '../src/schedules';
 import { ServiceOperations } from './service-operations';
-import { confirmProduction } from '../src/presentation';
 import { parseApproval } from './validate';
 import { Controller } from './controller';
 import { detectJdks, inspectJar, checkJdk, resolveBuild, serviceInfo } from './files';
@@ -274,6 +274,11 @@ const mainWindowTitle = (title = 'YOTOO 部署中心') =>
 const emit = (event: DesktopEvent) => {
   if (event.kind === 'schedules') {
     try { onSchedulesChanged?.(); } catch { /* 系统通知失败不能改变已保存的计划或部署结果。 */ }
+    try {
+      event = { ...event, schedules: scheduleViews(storage, event.schedules) };
+    } catch {
+      // 资格暂不可用时仍发布计划状态，界面等待下一次资格刷新。
+    }
   }
   if (win && !win.isDestroyed()) {
     if (event.kind === 'task') {
@@ -976,7 +981,7 @@ async function boot() {
     handle('start', (token, values, approval) =>
       controller.start(text(token, 100), values, approval),
     );
-    handle('list-schedules', () => storage.schedules());
+    handle('list-schedules', () => scheduleViews(storage, storage.schedules()));
     handle('create-schedule', async (token, values, approval, at, replaces) => {
       const task = await controller.start(text(token, 100), values, approval, {
         at: z.number().int().parse(at),
@@ -995,39 +1000,13 @@ async function boot() {
       publishSchedules();
     });
     handle('reschedule', async (value, at, rawApproval) => {
-      const scheduledAt = z.number().int().parse(at);
-      validScheduleTime(scheduledAt);
-      const plan = storage.schedules().find((p) => p.id === id(value));
-      if (!plan || ['executing', 'preparing'].includes(plan.state))
-        throw new Error('请等待当前准备或部署结束');
-      const approval = parseApproval(rawApproval);
-      if (
-        !confirmProduction(plan.task, approval.productionNames || {}) ||
-        (plan.task.targets.some((r) => r.target.hashPolicy === 'size-confirm') &&
-          !approval.allowWeak)
-      )
-        throw new Error('请重新确认正式环境及弱校验策略');
-      if (
-        scheduleConfiguration(storage.database(), plan.task) !== plan.configuration ||
-        schedulePins(plan.task, storage.pins()) !== plan.pins ||
-        plan.state === 'confirmation'
-      )
-        throw new Error('配置、信任或线上基线需要重新核实，请使用重新准备并确认');
-      const artifact = await inspectJar(plan.task.artifact.path);
-      if (artifact.sha256 !== plan.task.artifact.sha256 || !plan.task.scheduleBaselines)
-        throw new Error('没有有效的准备产物，请重新准备');
-      // 校验期间计划可能已被触发或取消，禁止覆盖新的状态。
-      const current = storage.schedules().find((p) => p.id === plan.id);
-      if (!current || JSON.stringify(current) !== JSON.stringify(plan))
-        throw new Error('计划状态已变化，请刷新后重试');
-      plan.scheduledAt = scheduledAt;
-      plan.approval = approval;
-      plan.state = 'ready';
-      plan.reason = '已重新确认发布时间';
-      // 已有真实部署结果不能重用任务身份，再次发布请创建新计划。
-      if (plan.taskId && !storage.task(plan.taskId)?.preparation)
-        throw new Error('此计划已执行，请重新创建计划');
-      storage.saveSchedule(plan);
+      await reschedulePlan(
+        storage,
+        id(value),
+        z.number().int().parse(at),
+        parseApproval(rawApproval),
+        () => scheduler?.isDispatching() === true,
+      );
       publishSchedules();
     });
     handle('cancel', (value) => {

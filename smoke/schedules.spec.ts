@@ -44,7 +44,8 @@ test.beforeEach(async ({}, info) => {
     },
   ];
   const trayDispatch = info.title.startsWith('关闭到托盘');
-  if (info.title.startsWith('创建计划通过') || trayDispatch) {
+  const credentialAdjustment = info.title.startsWith('改期读取');
+  if (info.title.startsWith('创建计划通过') || trayDispatch || credentialAdjustment) {
     const probe = createServer();
     await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
     const port = (probe.address() as AddressInfo).port;
@@ -63,6 +64,12 @@ test.beforeEach(async ({}, info) => {
   target.name = '验收环境';
   target.directory = '/tmp/never-connect';
   target.start = 'true';
+  if (credentialAdjustment) target.production = true;
+  const reprepare = info.title.startsWith('计划页面在三个尺寸');
+  if (reprepare) {
+    target.appLogPath = '/tmp/fixture-only.log';
+    target.observation = { enabled: false, duration: 60 };
+  }
   db.targets = [target];
   db.lastService = service.id;
   db.lastTargets = [target.id];
@@ -76,6 +83,7 @@ test.beforeEach(async ({}, info) => {
   });
   store.saveConfig(db);
   const task = createTask(db, service, [target], {}, 'existing');
+  if (reprepare) task.targets[0].target.observation = { enabled: true, duration: 120 };
   task.artifact = await snapshotJar(path.join(dir, 'test.jar'), task.id, dir);
   task.preparation = true;
   task.status = 'success';
@@ -167,7 +175,7 @@ test('定时发布入口、确认时间、计划改期取消与日志返回', as
     .toISOString()
     .slice(0, 16);
   await page.getByLabel('发布时间', { exact: true }).fill(local);
-  await page.getByRole('button', { name: '确认计划', exact: true }).click();
+  await page.getByRole('button', { name: '确认改期', exact: true }).click();
   await page.getByText('产物与计划详情', { exact: true }).click();
   await expect(page.getByText('已重新确认发布时间', { exact: false })).toBeVisible();
   expect((await page.evaluate(() => window.deployCenter!.listSchedules()))[0].scheduledAt).toBe(
@@ -204,9 +212,70 @@ test('计划页面在三个尺寸下可用，重新准备仍需确认', async ()
     ).toBeLessThanOrEqual(1);
   }
   await page.getByRole('button', { name: /发布计划操作/ }).click();
-  await page.getByRole('menuitem', { name: '重新构建' }).click();
-  await expect(page.getByRole('heading', { name: '确认定时发布', exact: true })).toBeVisible();
+  await page.getByRole('menuitem', { name: '重新准备' }).click();
+  await expect(page.getByRole('heading', { name: '重新准备发布计划', exact: true })).toBeVisible();
+  await expect(page.getByText('日志观察：健康未验证时观察 120 秒')).toBeVisible();
   await page.getByRole('button', { name: '返回检查' }).click();
+  expect(await page.evaluate(() => window.deployCenter!.listTasks())).toEqual([]);
+  expect(await page.evaluate(async () => (await window.deployCenter!.load()).database.targets[0].observation)).toEqual({
+    enabled: false,
+    duration: 60,
+  });
+});
+
+test('改期读取已保存的 Windows 凭据，正式环境仍需确认', async () => {
+  const page = await app.firstWindow();
+  const button = (name: string) => page.getByRole('button', { name, exact: true });
+  const theme = async (label: string, value: string) => {
+    await button('设置').click();
+    await page.getByRole('group', { name: '界面主题' }).getByRole('button', { name: label }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', value);
+    await button('返回应用').click();
+  };
+  const openPlans = () => button('发布计划').click();
+  const fixtureSecret = 'schedule-adjustment-fixture';
+  const plans = () => page.evaluate(() => window.deployCenter!.listSchedules());
+  const save = () => page.evaluate((value) => window.deployCenter!.saveCredential('offline', value), fixtureSecret);
+  const [original] = await plans();
+  await theme('浅色', 'light');
+  await app.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    window.setContentSize(900, 600);
+    window.webContents.setZoomFactor(1.5);
+  });
+  await expectViewport(page, 600, 400);
+  await openPlans();
+  await expect(page.getByText(/尚未保存登录密码/)).toBeVisible();
+  await expect(button('调整时间')).toHaveCount(0);
+
+  await save();
+  await theme('深色', 'dark');
+  await openPlans();
+  await expectViewport(page, 600, 400);
+  await expect(button('调整时间')).toBeInViewport({ ratio: 1 });
+  await button('调整时间').press('Enter');
+  const dialog = page.getByRole('dialog', { name: '调整发布时间' });
+  const submit = dialog.getByRole('button', { name: '确认改期' });
+  await expect(dialog.locator('input[type=password]')).toHaveCount(0);
+  await expect(dialog.getByText(/Windows 已保存的凭据/)).toBeVisible();
+  await expect(submit).toBeDisabled();
+  await dialog.getByLabel('输入环境名称：验收环境').fill('验收环境');
+  const date = new Date(Date.now() + 7_200_000);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+  await dialog.getByLabel('发布时间', { exact: true }).fill(local);
+  await page.evaluate(() => window.deployCenter!.deleteCredential('offline'));
+  await submit.press('Enter');
+  await expect(dialog.getByRole('alert')).toContainText('尚未保存登录密码');
+  expect((await plans())[0].scheduledAt).toBe(original.scheduledAt);
+
+  await save();
+  await expect(submit).toBeInViewport({ ratio: 1 });
+  await submit.press('Enter');
+  await expect(dialog).toBeHidden();
+  const [adjusted] = await plans();
+  expect(adjusted.scheduledAt).toBe(new Date(local).getTime());
+  expect(adjusted.preparationId).toBe(original.preparationId);
+  expect(JSON.stringify(adjusted)).not.toContain(fixtureSecret);
   expect(await page.evaluate(() => window.deployCenter!.listTasks())).toEqual([]);
 });
 

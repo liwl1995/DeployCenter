@@ -111,7 +111,7 @@ export type DesktopEvent =
   | { kind: 'open-settings' }
   | { kind: 'open-service'; serviceId: string }
   | { kind: 'open-schedules' }
-  | { kind: 'schedules'; schedules: import('./schedules').ReleaseSchedule[] }
+  | { kind: 'schedules'; schedules: import('./schedules').ReleaseScheduleView[] }
   | { kind: 'release-run'; run: ReleaseRun }
   | {
       kind: 'log';
@@ -174,7 +174,7 @@ export interface DesktopAPI {
   cancelImageBuild(id: string): Promise<void>;
   desktopPreferences(): Promise<import('./desktop-preferences').DesktopPreferences>;
   saveDesktopPreferences(value: Partial<import('./desktop-preferences').DesktopPreferences>): Promise<import('./desktop-preferences').DesktopPreferences>;
-  listSchedules(): Promise<import('./schedules').ReleaseSchedule[]>;
+  listSchedules(): Promise<import('./schedules').ReleaseScheduleView[]>;
   createSchedule(token: string, credentials: Record<string, string>, approval: Approval, scheduledAt: number, replaces?: string): Promise<import('./schedules').ReleaseSchedule>;
   cancelSchedule(id: string): Promise<void>;
   reschedule(id: string, scheduledAt: number, approval: Approval): Promise<void>;

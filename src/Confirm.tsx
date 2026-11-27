@@ -13,6 +13,7 @@ import { desktop, type Approval } from './platform';
 import { confirmProduction, productionNames } from './presentation';
 import { Badge, Card, Field, Modal, Switch } from './ui';
 import { Disclosure } from './WorkspaceLayout';
+import { shortReason } from './compact-list';
 
 const fixture = prototype && !desktop;
 
@@ -23,10 +24,10 @@ export function Confirm({
   onClose,
   returnFocus,
   saved = [],
-  schedule = false,
+  schedule,
   scheduledAt,
 }: {
-  schedule?: boolean;
+  schedule?: 'create' | 'reprepare' | 'reschedule';
   scheduledAt?: number;
   onCopy: (value: string) => void;
   saved?: string[];
@@ -53,15 +54,17 @@ export function Confirm({
   const [credentials, setCredentials] = useState<Record<string, string>>({});
   const [starting, setStarting] = useState(false),
     [error, setError] = useState('');
+  const changingTime = schedule === 'reschedule';
   const servers = credentialServers(initial.targets.map((r) => r.server));
   const production = !initial.dryRun && initial.targets.some((r) => r.target.production),
     degraded =
       !initial.dryRun && initial.targets.some((r) => r.target.hashPolicy === 'size-confirm');
   const needsPassword = (s: (typeof servers)[number]) =>
-    s.auth === 'password' && !(desktop && s.credentialMode === 'windows' && saved.includes(s.id));
+    !changingTime && s.auth === 'password' &&
+    !(desktop && s.credentialMode === 'windows' && saved.includes(s.id));
   const firstPassword = servers.find(needsPassword);
   const title = schedule
-    ? '确认定时发布'
+    ? { create: '确认定时发布', reprepare: '重新准备发布计划', reschedule: '调整发布时间' }[schedule]
     : initial.dryRun
       ? '确认试运行（远程只读）'
       : initial.operation === 'rollback'
@@ -77,11 +80,11 @@ export function Confirm({
       <div className="row wrap end">
         <Button
           variant="neutral" size="compact"
-          data-autofocus={(!production && !firstPassword && !degraded) || undefined}
+          data-autofocus={(!changingTime && !production && !firstPassword && !degraded) || undefined}
           disabled={starting}
           onClick={onClose}
         >
-          返回检查
+          {changingTime ? '取消' : '返回检查'}
         </Button>
         <Button
           data-confirm
@@ -124,7 +127,7 @@ export function Confirm({
               );
               setCredentials({});
             } catch (e) {
-              setError(String(e));
+              setError(shortReason(String(e)));
             } finally {
               setStarting(false);
             }
@@ -132,7 +135,7 @@ export function Confirm({
         >
           {starting ? <Loader2 className="spin" size={17} /> : <Rocket size={17} />}
           {starting ? '正在提交…' : schedule
-            ? '确认计划'
+            ? changingTime ? '确认改期' : '确认计划'
             : initial.dryRun
               ? '开始试运行'
               : initial.operation === 'rollback'
@@ -150,24 +153,31 @@ export function Confirm({
             <input
               aria-label="发布时间"
               type="datetime-local"
+              data-autofocus={(changingTime && !production && !degraded) || undefined}
               value={scheduleTime}
               onChange={(e) => setScheduleTime(e.target.value)}
             />
           </Field>
           <p className="note">
-            时区：{Intl.DateTimeFormat().resolvedOptions().timeZone}
-            。现在完成构建、连接测试和产物校验，到点上传部署；最晚延后 15
-            分钟开始。电脑须开机且应用保持运行，退出或休眠错过时间不补发。
+            时区：{Intl.DateTimeFormat().resolvedOptions().timeZone}。
+            {changingTime
+              ? '保存新时间后复用原产物，发布前会重新检查远端连接和版本。'
+              : '现在准备产物并检查连接，到点上传部署，最晚延后 15 分钟开始。'}
+            电脑须开机且应用保持运行，退出或休眠错过时间不补发。
           </p>
-          <p className="note">
-            口令认证须配置 Windows 加密保存。配置、信任或线上版本变化后需要重新确认。
-          </p>
+          {!!servers.length && (
+            <p className="note">
+              {changingTime
+                ? '需要登录密码或私钥口令时，使用本机 Windows 已保存的凭据。改期会检查本机凭据能否读取。'
+                : '定时发布的密码和私钥口令通过 Windows 加密保存。'}
+            </p>
+          )}
         </>
       )}
       <div className="confirm-header">
         <h3 className="confirm-target-name"><EntityIcon kind="service" icon={initial.service.icon} size={17} strokeWidth={1.75} />{initial.service.name}</h3>
         <Badge>
-          {initial.dryRun
+          {changingTime ? '复用原计划产物' : initial.dryRun
             ? '试运行 · 不构建、不上传、不修改远端'
             : initial.operation === 'rollback'
               ? '回滚历史备份，不构建'
@@ -195,14 +205,14 @@ export function Confirm({
           />
         </>
       )}
-      <ConfirmTargets task={initial} />
-      <p className="note">
+      <ConfirmTargets task={initial} showObservation={!!schedule} />
+      {!schedule && <p className="note">
         {fixture
           ? '所有执行均为本地模拟。'
           : initial.dryRun
             ? '本次仅执行只读检查，不上传或修改远程文件。'
             : '确认后将执行真实部署。'}
-      </p>
+      </p>}
       {degraded && (
         <label className="check-row warning">
           <input
@@ -215,7 +225,7 @@ export function Confirm({
           确认允许缺少 SHA-256 工具时仅校验字节数（较弱校验）
         </label>
       )}
-      {servers.map((s) => (
+      {!changingTime && servers.map((s) => (
         <div className="confirm-target mt" key={s.id}>
           <h3>{s.name} · 本次认证</h3>
           <Field
@@ -240,7 +250,7 @@ export function Confirm({
       {production && !fixture && (
         <div className="production-confirm">
           <strong>正式环境确认</strong>
-          <p>逐个输入环境名称，确认本次会修改的位置；回滚也需要同样核对。</p>
+          <p>{changingTime ? '逐个输入环境名称，确认改期后的发布目标。' : '逐个输入环境名称，确认本次会修改的位置；回滚也需要同样核对。'}</p>
           {productionNames(initial).map((target) => (
             <Field key={target.id} label={'输入环境名称：' + target.name}>
               <input
@@ -269,8 +279,8 @@ export function Confirm({
           </label>
         </div>
       )}
-      <Disclosure title={initial.build === 'rebuild' ? '构建、产物与 Git 详情' : '产物与 Git 详情'}>
-        {initial.build === 'rebuild' && (
+      <Disclosure title={!changingTime && initial.build === 'rebuild' ? '构建、产物与 Git 详情' : '产物与 Git 详情'}>
+        {!changingTime && initial.build === 'rebuild' && (
           <Card title="构建配置">
             <dl className="detail-list">
               <dt>构建工具</dt>

@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { Button } from './design/ui/button';
 import { SegmentedControl, type SegmentedItem } from './design/ui/segmented-control';
-import type { ReleaseSchedule } from './schedules';
+import type { ReleaseSchedule, ReleaseScheduleView } from './schedules';
 import { scheduleLabels, pendingSchedule, scheduleWindow } from './schedules';
 import { CalendarClock } from 'lucide-react';
 import { Badge } from './ui';
@@ -34,7 +34,7 @@ export function ReleaseSchedules({
   onChange,
   onPrepare,
 }: {
-  plans: ReleaseSchedule[];
+  plans: ReleaseScheduleView[];
   services: Service[];
   busy: boolean;
   initialView?: ScheduleViewState;
@@ -101,14 +101,13 @@ export function ReleaseSchedules({
           .map((plan) => {
             const service = services.find((s) => s.id === plan.task.service.id);
             const canPrepare = !['executing', 'preparing'].includes(plan.state);
-            const canReschedule = canPrepare && !['completed', 'confirmation'].includes(plan.state);
             const actions: MenuAction[] = [
               { label: '准备日志', onClick: () => onOpen(plan.preparationId, plan.id) },
             ];
             const taskId = plan.taskId;
             if (taskId) actions.push({ label: '部署任务', onClick: () => onOpen(taskId, plan.id) });
             if (canPrepare)
-              actions.push({ label: '重新构建', disabled: busy, onClick: () => onPrepare(plan) });
+              actions.push({ label: '重新准备', disabled: busy, onClick: () => onPrepare(plan) });
             if (pendingSchedule(plan))
               actions.push({
                 label: '取消计划',
@@ -133,6 +132,9 @@ export function ReleaseSchedules({
                     {plan.task.targets.map((r) => r.target.name).join('、')} ·{' '}
                     {fmtTime(new Date(plan.scheduledAt).toISOString())}
                   </p>
+                  {canPrepare && plan.state !== 'completed' && plan.rescheduleBlock && (
+                    <p className="note">{plan.rescheduleBlock}</p>
+                  )}
                   <details
                     open={expanded.has(plan.id)}
                     onToggle={(event) => {
@@ -158,7 +160,7 @@ export function ReleaseSchedules({
                     </p>
                   </details>
                 </div>
-                {canReschedule && (
+                {canPrepare && plan.rescheduleBlock === null && (
                   <Button variant="neutral" size="compact" disabled={busy} onClick={() => onChange(plan)}>
                     调整时间
                   </Button>

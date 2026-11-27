@@ -8,7 +8,7 @@ import { ServicePicker } from './ServicePicker';
 import { ReleaseSchedules, type ScheduleViewState } from './ReleaseSchedules';
 import { ReleaseManifest, type ReleaseDraft } from './ReleaseManifest';
 import type { ReleaseRun } from './serial-release';
-import type { ReleaseSchedule } from './schedules';
+import type { ReleaseSchedule, ReleaseScheduleView } from './schedules';
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Rocket,
@@ -252,7 +252,17 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
   const [infoRefresh, setInfoRefresh] = useState(0);
   const [preflight, setPreflight] = useState<LocalPrecheck | null>(null);
   const [preflightBusy, setPreflightBusy] = useState(false);
-  const [schedules, setSchedules] = useState<ReleaseSchedule[]>([]);
+  const [schedules, setSchedules] = useState<ReleaseScheduleView[]>([]);
+  const scheduleRevision = useRef(0);
+  const refreshSchedules = useCallback(async () => {
+    if (!desktop) return;
+    const revision = ++scheduleRevision.current;
+    const plans = await desktop.listSchedules();
+    if (revision === scheduleRevision.current) setSchedules(plans);
+  }, []);
+  useEffect(() => {
+    if (page === 'schedules') void refreshSchedules().catch(() => {});
+  }, [page, refreshSchedules]);
   const [deployNote, setDeployNote] = useState<string>();
   const [dialog, setDialog] = useState<Dialog>(null);
   const [iconPicker, setIconPicker] = useState<{ kind: EntityIconKind; id: string } | null>(null);
@@ -409,7 +419,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
     const refresh = () => {
       const revision = updateRevision;
       void desktop!.listTasks().then(setTaskRows);
-      void desktop!.listSchedules().then(setSchedules);
+      void refreshSchedules().catch(() => {});
       void desktop!.load().then((value) => {
         showInstalledTutorial(value.tutorialInstallId);
         if (revision === updateRevision) setUpdate(value.update);
@@ -428,7 +438,10 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         updateRevision++;
         setUpdate(event.update);
       }
-      if (event.kind === 'schedules') setSchedules(event.schedules);
+      if (event.kind === 'schedules') {
+        scheduleRevision.current++;
+        setSchedules(event.schedules);
+      }
       if (event.kind === 'release-run') {
         sawReleaseEvent = true;
         setReleaseRun(event.run);
@@ -1790,6 +1803,12 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                     ),
                     failurePolicy: plan.task.failurePolicy,
                     note: plan.task.note,
+                    observationOverrides: Object.fromEntries(
+                      plan.task.targets.map(({ target }) => [
+                        target.id,
+                        target.observation ?? { enabled: false, duration: 60 },
+                      ]),
+                    ),
                   });
                   setDialog({ kind: 'confirm', ...prepared, schedule: true, plan });
                 })
@@ -2200,7 +2219,9 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
       {dialog?.kind === 'confirm' && (
         <Confirm
           task={dialog.task}
-          schedule={dialog.schedule}
+          schedule={dialog.schedule
+            ? dialog.reschedule ? 'reschedule' : dialog.plan ? 'reprepare' : 'create'
+            : undefined}
           scheduledAt={dialog.plan?.scheduledAt}
           onCopy={(value) => void copy(value)}
           returnFocus={dialog.returnFocus}
@@ -2228,7 +2249,7 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               }
               setDialog(null);
               setPage('schedules');
-              void desktop.listSchedules().then(setSchedules).catch(() => {
+              void refreshSchedules().catch(() => {
                 notify('计划已保存，列表刷新失败。');
               });
               return;

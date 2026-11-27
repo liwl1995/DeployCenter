@@ -26,6 +26,10 @@ export type ReleaseSchedule = {
   configuration: string;
   pins: string;
 };
+
+/** 主进程提供的改期资格。null 表示可改期，未提供时列表等待资格结果。 */
+export type ReleaseScheduleView = ReleaseSchedule & { rescheduleBlock?: string | null };
+
 export const scheduleLabels: Record<ScheduleState, string> = {
   preparing: '准备中',
   ready: '就绪',
