@@ -97,14 +97,26 @@ describe('v0.3 组件回归', () => {
     ).toBe('stop');
     expect(screen.queryByRole('button', { name: '恢复默认' })).toBeNull();
   });
-  it('B7 设置保留条数立即清理最旧历史与孤立任务日志', () => {
+  it('B7 历史保留规则只在预览确认后清理', async () => {
+    const user = userEvent.setup();
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: '设置' }));
     fireEvent.click(screen.getByRole('tab', { name: '数据与备份' }));
-    fireEvent.change(screen.getByRole('spinbutton', { name: /历史保留条数/ }), {
+    const limit = screen.getByRole('spinbutton', { name: /历史保留条数/ });
+    fireEvent.change(limit, {
       target: { value: '1' },
     });
-    const db = JSON.parse(localStorage.getItem('deploy-center-v2')!);
+    const saved = () => JSON.parse(localStorage.getItem('deploy-center-v2')!);
+    expect(saved().history).toHaveLength(2);
+    await user.click(screen.getByRole('button', { name: '预览历史保留变更' }));
+    const preview = screen.getByRole('dialog', { name: '确认应用历史保留规则' });
+    expect(within(preview).getByText(/预计移除 1 条目标记录/)).toBeTruthy();
+    await user.click(within(preview).getByRole('button', { name: '返回' }));
+    expect(document.activeElement).toBe(limit);
+    expect(saved().history).toHaveLength(2);
+    await user.click(screen.getByRole('button', { name: '预览历史保留变更' }));
+    await user.click(screen.getByRole('button', { name: '应用历史保留规则' }));
+    const db = saved();
     expect(db.history).toHaveLength(1);
     expect(Object.keys(db.taskHistory)).toHaveLength(1);
   });

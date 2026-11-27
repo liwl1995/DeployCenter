@@ -778,7 +778,8 @@ async function boot() {
       'prepare', 'start', 'recover', 'create-schedule', 'reschedule',
       'resolve-workbench', 'apply-backups', 'reconcile-backup', 'takeover-lock',
       'operations-run', 'operations-settle', 'image-start-build', 'image-start-import',
-      'import-config', 'preview-cleanup', 'apply-cleanup', 'migrate-directory', 'restart', 'remove-old-data',
+      'import-config', 'preview-cleanup', 'apply-cleanup', 'preview-history-retention', 'apply-history-retention',
+      'migrate-directory', 'restart', 'remove-old-data',
     ]);
     const handle = (name: string, fn: (...args: unknown[]) => unknown) =>
       ipcMain.handle('deploy:' + name, (event, ...args) => {
@@ -805,7 +806,7 @@ async function boot() {
         if (
           workbench?.isBusy() &&
           ['save', 'prepare', 'start', 'recover', 'takeover-lock', 'import-config',
-            'migrate-directory', 'restart', 'remove-old-data', 'apply-cleanup',
+            'migrate-directory', 'restart', 'remove-old-data', 'apply-cleanup', 'apply-history-retention',
             'apply-backups', 'reconcile-backup', 'create-schedule', 'reschedule'].includes(name)
         )
           throw new Error('正在核实远程工作台，请等待结果后再操作');
@@ -824,6 +825,7 @@ async function boot() {
             'restart',
             'remove-old-data',
             'apply-cleanup',
+            'apply-history-retention',
           ].includes(name)
         )
           throw new Error('正在处理远程备份，请等待结果后再操作');
@@ -1722,6 +1724,18 @@ async function boot() {
       if (result.policy) storage.applyArtifactPolicy(result.policy);
       emit({ kind: 'database', database: storage.database() });
       return result;
+    });
+    handle('preview-history-retention', (value) => {
+      if (controller.active()) throw new Error('请等待当前任务结束后再预览清理');
+      return storage.previewHistoryRetention(z.object({
+        historyLimit: z.number().int().min(1).max(10000),
+        historyDays: z.number().int().min(0).max(3650),
+      }).parse(value));
+    });
+    handle('apply-history-retention', (value, confirmed) => {
+      if (controller.active()) throw new Error('任务执行中不能清理');
+      storage.applyHistoryRetention(text(value, 100), z.boolean().parse(confirmed));
+      emit({ kind: 'database', database: storage.database() });
     });
     handle('data-directory', () => directories.info());
     handle('inspect-directory', (value) => directories.inspect(migrationDestination(text(value))));

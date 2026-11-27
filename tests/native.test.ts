@@ -60,6 +60,44 @@ function input(count = 1): WorkerInput {
   };
 }
 describe('真实引擎的假能力测试（不访问文件、进程或网络）', () => {
+  it.each([true, false])('容器运行=%s 且无法校验时在创建工作台与上传之前停止', async (running) => {
+    const db = seed();
+    const target = {
+      ...db.targets[0],
+      mode: 'docker' as const,
+      container: 'fixture',
+      directory: '/fixture',
+      fileName: 'app.jar',
+      containerJar: '/app/app.jar',
+    };
+    const value = { ...input(), task: createTask(db, db.services[0], [target], {}, 'existing') };
+    const fake = fakeCapabilities(value);
+    const createRemote = fake.deps.remote;
+    const commands: string[] = [];
+    fake.deps.remote = (...args) => {
+      const session = createRemote(...args);
+      const exec = session.exec;
+      session.exec = async (command, options) => {
+        commands.push(command);
+        if (command.startsWith('docker inspect'))
+          return { code: 0, stderr: '', stdout: JSON.stringify([{
+            Id: 'container-id',
+            State: { Running: running },
+            Mounts: [{ Type: 'bind', Source: '/fixture', Destination: '/app' }],
+          }]) };
+        if (command.startsWith('if [ -e')) return { code: 0, stdout: '/fixture/app.jar', stderr: '' };
+        if (command.startsWith('docker exec')) return { code: 127, stdout: '', stderr: 'sh: not found' };
+        return exec(command, options);
+      };
+      return session;
+    };
+    const engine = new Deployment(value, () => {}, async () => false, fake.deps, async () => {});
+    await engine.run();
+    expect(engine.task.targets[0].error).toContain(running ? 'sha256sum' : '稳定运行');
+    expect(commands.some((command) => command.startsWith('docker exec'))).toBe(running);
+    expect(commands).not.toContain('bash -s');
+    expect(fake.uploads).toHaveLength(0);
+  });
   it('顺序执行多个目标，只构建一次；增量日志脱敏', async () => {
     const value = input(3);
     value.task.build = 'rebuild';

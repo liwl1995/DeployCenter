@@ -46,6 +46,24 @@ function clock() {
   };
 }
 describe('1.1.0 启动就绪窗口', () => {
+  it('本机 HTTP 只按配置地址的直接响应判定健康', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, options) =>
+      options?.redirect === 'manual'
+        ? new Response(null, { status: 302, headers: { Location: '/login' } })
+        : new Response('登录', { status: 200 }),
+    );
+    const signal = new AbortController().signal;
+    try {
+      const oneAttempt = health({ maxWait: undefined });
+      expect(await localHealth(oneAttempt, clock(), signal, vi.fn())).toBe(false);
+      fetch.mockResolvedValue(new Response(null, { status: 204 }));
+      expect(await localHealth(oneAttempt, clock(), signal, vi.fn())).toBe(true);
+      fetch.mockResolvedValue(new Response(null, { status: 405 }));
+      expect(await localHealth(oneAttempt, clock(), signal, vi.fn())).toBe(false);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
   it.each([[204, true], [405, false]] as const)(
     '本机 HTTP 健康检查以 GET 返回的 %i 判断，并记录状态码',
     async (code, expected) => {

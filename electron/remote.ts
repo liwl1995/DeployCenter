@@ -55,6 +55,16 @@ export async function inspectDocker(t: Transport, r: RunTarget): Promise<DockerI
     throw new Error(
       `容器内路径与实际挂载不符：检测到 ${containerJar}，配置为 ${r.target.containerJar}`,
     );
+  // 只读预检不启动容器。用标准输入核对最终校验所需的实际命令，不依赖容器里已有 JAR。
+  if (!value.State?.Running || value.State?.Paused || value.State?.Restarting)
+    throw new Error('容器当前无法执行只读校验，请先让容器稳定运行，再重新部署');
+  const probe =
+    'result="$(printf %s "" | sha256sum --)" && [ "${result%% *}" = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 ]';
+  const checked = await t.exec('docker exec ' + q(r.target.container) + ' sh -c ' + q(probe), {
+    timeout: Math.min((r.target.commandTimeout || 120) * 1000, 15_000),
+  });
+  if (checked.code)
+    throw new Error('容器无法运行 sh 或 sha256sum -- 校验。请检查容器工具和运行状态。');
   return {
     id: value.Id,
     running: !!value.State?.Running,

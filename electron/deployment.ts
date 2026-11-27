@@ -617,6 +617,15 @@ export class Deployment {
         if (!Number.isSafeInteger(size) || size <= 0 || size !== this.task.artifact.size)
           throw new Error('远端备份文件无效或大小与历史记录不一致');
       }
+      if (r.target.mode === 'docker')
+        await this.phase(r, 'mount', async () => {
+          docker = await inspectDocker(this.transport!, r);
+          r.target.mount = docker.mount;
+          this.log(
+            `检测到${docker.mount === 'file' ? '单文件' : '目录'}绑定：${docker.containerJar}。容器停止后原子替换。\n`,
+            r,
+          );
+        });
       await this.retryWorkbenchCleanup(r);
       r.remote = remotePaths(this.task, r);
       this.emit(true);
@@ -644,15 +653,6 @@ export class Deployment {
           throw new Error('取得部署锁后发现线上版本已变化，已阻止上传和切换');
         }
       }
-      if (r.target.mode === 'docker')
-        await this.phase(r, 'mount', async () => {
-          docker = await inspectDocker(this.transport!, r);
-          r.target.mount = docker.mount;
-          this.log(
-            `检测到${docker.mount === 'file' ? '单文件' : '目录'}绑定：${docker.containerJar}。容器停止后原子替换。\n`,
-            r,
-          );
-        });
       if (r.target.hasOldJar)
         r.backupVersion =
           fields.old_hash && fields.old_hash === r.target.currentHash

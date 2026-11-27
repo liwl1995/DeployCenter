@@ -5,6 +5,7 @@ import { AppUpdateSettings } from './AppUpdateSettings';
 import { DataSettings } from './DataSettings';
 import { DirectorySettings } from './DirectorySettings';
 import { PreferenceChoice } from './PreferenceChoice';
+import { HistoryRetention } from './HistoryRetention';
 import type { Database } from './model';
 import type { DesktopAPI } from './platform';
 import { pruneHistory } from './records';
@@ -83,49 +84,14 @@ export function SettingsWorkspace({
       block: 'center',
     });
   const historyFields = (
-    <div className="retention-history">
-      <h3>部署历史</h3>
-      <div className="settings-fields">
-        <Field
-          label="历史保留条数"
-          hint="按目标记录计数（1–10000），同时清理不再引用的本机任务日志和产物；远程备份不会删除"
-        >
-          <input
-            type="number"
-            min="1"
-            max="10000"
-            value={db.settings.historyLimit}
-            onChange={(e) => {
-              const value = Number(e.target.value);
-              if (Number.isInteger(value) && value >= 1 && value <= 10000)
-                setDb((old) =>
-                  pruneHistory({
-                    ...old,
-                    settings: { ...old.settings, historyLimit: value },
-                  }),
-                );
-            }}
-          />
-        </Field>
-        <Field label="历史保留天数（0 为不按天清理）">
-          <input
-            type="number"
-            min="0"
-            max="3650"
-            value={db.settings.historyDays ?? 90}
-            onChange={(e) =>
-              setDb((old) => ({
-                ...old,
-                settings: {
-                  ...old.settings,
-                  historyDays: Math.max(0, Math.min(3650, Number(e.target.value))),
-                },
-              }))
-            }
-          />
-        </Field>
-      </div>
-    </div>
+    <HistoryRetention api={desktop} db={db} disabled={busy} onApplyLocal={(policy) => {
+      const cutoff = policy.historyDays ? Date.now() - policy.historyDays * 86400000 : -Infinity;
+      setDb((old) => pruneHistory({
+        ...old,
+        settings: { ...old.settings, ...policy },
+        history: old.history.filter((item) => Date.parse(item.time) >= cutoff),
+      }));
+    }} />
   );
   const configurationBackup = (
     <Card className="help-settings-section">

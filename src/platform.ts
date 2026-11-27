@@ -272,6 +272,8 @@ export interface DesktopAPI {
     policy?: import('./model').ArtifactPolicy,
   ): Promise<CleanupPlan>;
   applyCleanup(token: string, confirmed: boolean): Promise<CleanupResult>;
+  previewHistoryRetention(policy: import('./features').HistoryRetentionPolicy): Promise<import('./features').HistoryRetentionPreview>;
+  applyHistoryRetention(token: string, confirmed: boolean): Promise<void>;
   snapshotAvailability(taskId: string): Promise<SnapshotAvailability>;
   directoryInfo(): Promise<DirectoryInfo>;
   inspectDirectory(path: string): Promise<DirectoryCheck>;
@@ -307,6 +309,11 @@ export function mergedDatabase(current: Database, incoming: Database): Database 
     ...current,
     history: incoming.history,
     taskHistory: incoming.taskHistory,
+    settings: {
+      ...current.settings,
+      historyLimit: incoming.settings.historyLimit,
+      historyDays: incoming.settings.historyDays,
+    },
     targets: current.targets.map((t) => {
       const updated = incoming.targets.find((x) => x.id === t.id);
       return updated

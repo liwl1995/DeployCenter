@@ -89,6 +89,13 @@ export type SearchHit = {
 };
 
 export type CleanupKind = 'policy' | 'artifacts' | 'temporary' | 'legacy-success';
+export type HistoryRetentionPolicy = { historyLimit: number; historyDays: number };
+export type HistoryRetentionPreview = {
+  token: string;
+  records: number;
+  tasks: number;
+  logBytes: number;
+};
 export type CleanupPlan = {
   token: string;
   kind: CleanupKind;

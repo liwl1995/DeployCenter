@@ -459,8 +459,10 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
           setTask(value);
           openTask('history');
         });
-      } else if (event.kind === 'database') setDb((old) => mergedDatabase(old, event.database));
-      else if (event.kind === 'trust') setTrust(event.request);
+      } else if (event.kind === 'database') {
+        setDb((old) => mergedDatabase(old, event.database));
+        void desktop!.listTasks().then(setTaskRows).catch(() => {});
+      } else if (event.kind === 'trust') setTrust(event.request);
       else if (event.kind === 'trust-closed')
         setTrust((old) => (old?.id === event.id ? undefined : old));
     });
@@ -937,7 +939,9 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
         variant="default" size="compact"
         onClick={() => {
           selectService(t.serviceId);
-          setSelected([t.id]);
+          setSelected(t.production ? [] : [t.id]);
+          setEnvironment('all');
+          setExpanded((old) => old.includes(t.id) ? old : [...old, t.id]);
           setPage('deploy');
         }}
       >
@@ -2201,9 +2205,16 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
                   scheduledAt,
                   dialog.plan?.id,
                 );
-              setSchedules(await desktop.listSchedules());
+              if (!dialog.plan) {
+                setFailureOverride(null);
+                setOverrides({});
+                setObservationOverrides({});
+              }
               setDialog(null);
               setPage('schedules');
+              void desktop.listSchedules().then(setSchedules).catch(() => {
+                notify('计划已保存，列表刷新失败。');
+              });
               return;
             }
             if (desktop) {
@@ -2213,7 +2224,11 @@ function Workspace({ boot, initialPage }: { boot?: Startup; initialPage?: Page }
               credentials.current.set(values);
               setTask(startTask(t));
             }
-            setFailureOverride(null);
+            if (!t.dryRun && t.operation === 'deploy') {
+              setFailureOverride(null);
+              setOverrides({});
+              setObservationOverrides({});
+            }
             setInspected(-1);
             openTask();
             setDialog(null);

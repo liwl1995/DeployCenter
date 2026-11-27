@@ -1,4 +1,5 @@
 import Sqlite from 'better-sqlite3';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -16,7 +17,7 @@ import type { TaskSummary } from '../src/platform';
 import { summarizeTask, importedSummaries } from '../src/history-model';
 import { emptyDatabase } from '../src/defaults';
 import { ArtifactStore, artifactPolicy } from './artifact-store';
-import type { LogContext } from '../src/features';
+import type { HistoryRetentionPolicy, HistoryRetentionPreview, LogContext } from '../src/features';
 import { plainPath } from './managed-path';
 import { parseTaskRecord } from './task-record';
 import { backupConnection, RemoteBackupCatalog } from './backup-catalog';
@@ -38,6 +39,12 @@ export class Storage {
   readonly artifacts: ArtifactStore;
   readonly remoteBackups: RemoteBackupCatalog;
   private maintenance: Promise<void> = Promise.resolve();
+  private retentionPreview?: {
+    token: string;
+    policy: HistoryRetentionPolicy;
+    signature: string;
+    expiresAt: number;
+  };
   maintenanceWarnings: string[] = [];
   taskIssues: { id: string; message: string }[] = [];
   allTasks() {
@@ -181,8 +188,10 @@ export class Storage {
     next.history = this.state.history;
     next.taskHistory = this.state.taskHistory;
     next.settings.demoMode = false;
-    // 产物策略只能通过带预览和确认的专用入口改变。
+    // 清理策略只能通过带预览和确认的专用入口改变，延迟自动保存也不能覆盖已确认的值。
     next.settings.artifactPolicy = this.state.settings.artifactPolicy;
+    next.settings.historyLimit = this.state.settings.historyLimit;
+    next.settings.historyDays = this.state.settings.historyDays;
     next.targets = next.targets.map((t) => {
       const old = this.state.targets.find((x) => x.id === t.id);
       return old
@@ -197,9 +206,8 @@ export class Storage {
         : t;
     });
     this.dropChangedCredentials(next.servers);
-    this.state = pruneHistory(next);
+    this.state = next;
     this.applyRetention();
-    this.writeState();
     this.scheduleMaintenance();
     for (const id of this.credentialIds())
       if (!next.servers.some((s) => s.id === id && s.credentialMode === 'windows'))
@@ -227,6 +235,8 @@ export class Storage {
     }
     this.dropChangedCredentials(state.servers);
     state.settings.artifactPolicy = this.state.settings.artifactPolicy;
+    state.settings.historyLimit = this.state.settings.historyLimit;
+    state.settings.historyDays = this.state.settings.historyDays;
     this.state = pruneHistory(state);
     this.recovery = undefined;
     this.writeState();
@@ -381,7 +391,6 @@ export class Storage {
       this.writeState();
     })();
     this.applyRetention();
-    this.writeState();
     this.scheduleMaintenance(task.id);
   }
   recordMaintenance(record: MaintenanceRecord, removedIds: string[] = []) {
@@ -433,13 +442,18 @@ export class Storage {
         this.deleteCredential(id);
     }
   }
-  private applyRetention() {
-    const cutoff = this.state.settings.historyDays
-      ? Date.now() - this.state.settings.historyDays * 86400000
+  private retentionSelection(policy: HistoryRetentionPolicy) {
+    const cutoff = policy.historyDays
+      ? Date.now() - policy.historyDays * 86400000
       : -Infinity;
-    this.state.history = this.state.history.filter((h) => Date.parse(h.time) >= cutoff);
-    this.state = pruneHistory(this.state);
-    const referenced = new Set(this.state.history.map((h) => h.taskId));
+    const next = pruneHistory({
+      ...this.state,
+      settings: { ...this.state.settings, ...policy },
+      history: this.state.history.filter((h) => Date.parse(h.time) >= cutoff),
+    });
+    const retained = new Set(next.history.map((h) => h.id));
+    const records = this.state.history.filter((h) => !retained.has(h.id)).map((h) => h.id);
+    const referenced = new Set(next.history.map((h) => h.taskId));
     const release = this.releaseRun();
     if (release && release.state !== 'done') {
       // 核实期间仍需读取当初的任务结果，包括已经被历史保留规则移出列表的记录。
@@ -451,8 +465,9 @@ export class Storage {
       if (plan.taskId) referenced.add(plan.taskId);
     }
     const rows = this.sql
-      .prepare('SELECT id,json,updated,active FROM tasks ORDER BY updated DESC')
+      .prepare('SELECT id,json,updated,active FROM tasks ORDER BY updated DESC, id DESC')
       .all() as { id: string; json: string; updated: number; active: number }[];
+    const tasks: Task[] = [];
     rows.forEach((row, index) => {
       let task: Task;
       try {
@@ -464,36 +479,93 @@ export class Storage {
         row.active ||
         referenced.has(row.id) ||
         task.status === 'interrupted' ||
-        (index < this.state.settings.historyLimit && row.updated >= cutoff)
+        (index < policy.historyLimit && row.updated >= cutoff)
       )
         return;
-      this.artifacts.forget(row.id);
-      this.sql.prepare('DELETE FROM tasks WHERE id=?').run(row.id);
-      if (/^DC-[a-zA-Z0-9-]+$/.test(row.id))
-        for (const folder of ['logs']) {
-          const base = path.resolve(this.dataDir, folder),
-            target = path.resolve(base, row.id);
-          if (
-            target.startsWith(base + path.sep) &&
-            fs.existsSync(target) &&
-            fs.realpathSync(target).startsWith(fs.realpathSync(base) + path.sep)
-          )
-            try {
-              const verify = (dir: string) => {
-                plainPath(dir);
-                for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
-                  const entry = path.join(dir, item.name);
-                  plainPath(entry);
-                  if (item.isDirectory()) verify(entry);
-                }
-              };
-              verify(target);
-              fs.rmSync(target, { recursive: true, force: true });
-            } catch {
-              /* 文件被占用时保留，不能让历史清理打断已完成任务。 */
-            }
-        }
+      tasks.push(task);
     });
+    return { next, records, tasks };
+  }
+  private retentionLogs(task: Task) {
+    const files: { file: string; bytes: number }[] = [];
+    // 只清理能从任务记录推导的本机日志和索引，陌生文件留在原目录。
+    for (const targetId of new Set([undefined, ...task.targets.map((run) => run.target.id)])) {
+      try {
+        const log = this.logPath(task.id, targetId);
+        for (const file of [log, log + '.context.jsonl']) {
+          const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+          if (stat?.isFile()) files.push({ file, bytes: stat.size });
+        }
+      } catch {
+        /* 链接或无法访问的日志保留，由用户核实。 */
+      }
+    }
+    return files;
+  }
+  private retentionPlan(policy: HistoryRetentionPolicy) {
+    const selection = this.retentionSelection(policy);
+    const files = selection.tasks.flatMap((task) => this.retentionLogs(task));
+    const logBytes = files.reduce((total, log) => total + log.bytes, 0);
+    return {
+      selection,
+      files,
+      signature: JSON.stringify([selection.records, selection.tasks.map((task) => task.id), files]),
+      logBytes,
+    };
+  }
+  previewHistoryRetention(policy: HistoryRetentionPolicy): HistoryRetentionPreview {
+    if (this.recovery) throw new Error('请先处理配置恢复');
+    const { selection, signature, logBytes } = this.retentionPlan(policy);
+    const token = randomUUID();
+    this.retentionPreview = { token, policy: { ...policy }, signature, expiresAt: Date.now() + 5 * 60_000 };
+    return { token, records: selection.records.length, tasks: selection.tasks.length, logBytes };
+  }
+  applyHistoryRetention(token: string, confirmed: boolean) {
+    const plan = this.retentionPreview;
+    if (this.recovery || !confirmed || plan?.token !== token || plan.expiresAt <= Date.now())
+      throw new Error('清理预览无效，请重新预览并确认');
+    this.retentionPreview = undefined;
+    const { selection, files, signature } = this.retentionPlan(plan.policy);
+    if (signature !== plan.signature)
+      throw new Error('历史清理范围已变化，请重新预览');
+    this.applyRetention(selection, files);
+    this.scheduleMaintenance();
+  }
+  private applyRetention(
+    selection = this.retentionSelection({
+      historyLimit: this.state.settings.historyLimit,
+      historyDays: this.state.settings.historyDays ?? 0,
+    }),
+    files = selection.tasks.flatMap((task) => this.retentionLogs(task)),
+  ) {
+    const previous = this.state;
+    try {
+      this.sql.transaction(() => {
+        this.state = selection.next;
+        for (const task of selection.tasks) {
+          this.artifacts.forget(task.id);
+          this.sql.prepare('DELETE FROM tasks WHERE id=?').run(task.id);
+        }
+        this.writeState();
+      })();
+    } catch (error) {
+      this.state = previous;
+      throw error;
+    }
+    for (const { file } of files) {
+      try {
+        fs.unlinkSync(plainPath(file));
+      } catch {
+        /* 文件被占用时保留，不能让历史清理打断已完成任务。 */
+      }
+    }
+    for (const directory of new Set(files.map(({ file }) => path.dirname(file)))) {
+      try {
+        fs.rmdirSync(plainPath(directory));
+      } catch {
+        /* 保留仍包含未识别文件的目录。 */
+      }
+    }
   }
   task(id: string): Task | undefined {
     const row = this.sql.prepare('SELECT json FROM tasks WHERE id=?').get(id) as

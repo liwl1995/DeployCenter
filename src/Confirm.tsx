@@ -1,5 +1,5 @@
 import { ConfirmTargets } from './ConfirmTargets';
-import { GitBranch, Rocket } from 'lucide-react';
+import { GitBranch, Loader2, Rocket } from 'lucide-react';
 import { useState } from 'react';
 import { ArtifactInfo } from './ArtifactInfo';
 import { ConfirmWarning, confirmationWarnings } from './ConfirmWarning';
@@ -78,6 +78,7 @@ export function Confirm({
         <Button
           variant="neutral" size="compact"
           data-autofocus={(!production && !firstPassword && !degraded) || undefined}
+          disabled={starting}
           onClick={onClose}
         >
           返回检查
@@ -129,8 +130,8 @@ export function Confirm({
             }
           }}
         >
-          <Rocket size={17} />
-          {schedule
+          {starting ? <Loader2 className="spin" size={17} /> : <Rocket size={17} />}
+          {starting ? '正在提交…' : schedule
             ? '确认计划'
             : initial.dryRun
               ? '开始试运行'
@@ -142,7 +143,7 @@ export function Confirm({
     </>
   );
   return (
-    <Modal title={title} onClose={onClose} wide footer={actions} returnFocus={returnFocus}>
+    <Modal title={title} onClose={onClose} closeDisabled={starting} wide footer={actions} returnFocus={returnFocus}>
       {schedule && (
         <>
           <Field label="发布时间">

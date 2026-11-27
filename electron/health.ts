@@ -7,7 +7,7 @@ export async function httpHealthStatus(url: string, timeoutMs: number, signal: A
   const response = await fetch(url, {
     method: 'GET',
     signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
-    redirect: 'follow',
+    redirect: 'manual',
   });
   await response.body?.cancel();
   return response.status;
