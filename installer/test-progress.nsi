@@ -14,6 +14,8 @@ Var DC_TestFinishTicks
 Var DC_TestFinished
 Var DC_TestPixel
 Var DC_TestEmptyPixel
+Var DC_TestCloseMenu
+!define MUI_CUSTOMFUNCTION_GUIINIT DC_InitializeWizardStyle
 Page custom DC_TestOptions
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW DC_TestProgressShow
 !define MUI_PAGE_CUSTOMFUNCTION_LEAVE DC_CloseInstallProgress
@@ -23,9 +25,11 @@ Page custom DC_TestOptions
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW DC_TestFinishShow
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_LANGUAGE "SimpChinese"
+!insertmacro DC_WizardStyleFunctions ""
 !insertmacro DC_ProgressFunctions
 Function .onInit
   StrCpy $DC_InstallerLogs "${CASE_DIR}"
+  StrCpy $DC_ProgressHasPrevious 1
 FunctionEnd
 !macro Check VALUE
   SendMessage $DC_StageBar 0x408 0 0 $0
@@ -53,6 +57,7 @@ Function DC_TestProgressShow
 FunctionEnd
 
 Function DC_TestFinishShow
+  Call DC_StyleWizardPrimary
   StrCpy $DC_TestFinishTicks 0
   ${NSD_CreateTimer} DC_TestFinishTick 100
 FunctionEnd
@@ -65,6 +70,13 @@ Function DC_TestFinishTick
   IntCmp $0 0 DC_TestFinishInvalid
   System::Call 'user32::IsWindowVisible(p $mui.FinishPage.Run)i.r0'
   IntCmp $0 0 DC_TestFinishInvalid
+  ${If} $DC_WizardDark != -1
+    GetDlgItem $0 $HWNDPARENT 1
+    SendMessage $0 0xF6 0 0 $0
+    ${If} $0 == 0
+      Goto DC_TestFinishInvalid
+    ${EndIf}
+  ${EndIf}
   SendMessage $mui.FinishPage.Run ${BM_GETCHECK} 0 0 $0
   IntCmp $0 ${BST_CHECKED} +2
   Goto DC_TestFinishInvalid
@@ -126,17 +138,40 @@ FunctionEnd
 
 Section
   !insertmacro Check 1
+  System::Call '*(i0,i0,i0,i0)p.r0'
+  System::Call 'user32::GetWindowRect(p $HWNDPARENT,pr0)'
+  System::Call '*$0(i.r1,i.r2,i.r3,i.r4)'
+  System::Free $0
+  IntOp $3 $3 - $1
+  IntOp $4 $4 - $2
+  !insertmacro DC_WizardScale $1 540
+  !insertmacro DC_WizardScale $2 400
+  ${If} $1 != $3
+  ${OrIf} $2 != $4
+    SetErrorLevel 11
+    Quit
+  ${EndIf}
   Call DC_TestProgressPixel
   StrCpy $DC_TestEmptyPixel $DC_TestPixel
-  System::Call '*(i0,i0,i0,i0)p.r1'
-  System::Call 'user32::GetWindowRect(p $DC_DetailToggle,p r1)'
-  System::Call '*$1(i,i,i,i.r4)'
-  System::Call 'user32::GetWindowRect(p $mui.InstFilesPage.Log,p r1)'
-  System::Call '*$1(i,i.r3,i,i)'
-  System::Free $1
-  IntCmp $3 $4 +3 0 +3
+  GetDlgItem $0 $HWNDPARENT 2
+  System::Call 'user32::IsWindowEnabled(pr0)i.r0'
+  System::Call 'user32::GetSystemMenu(p $HWNDPARENT,i 0)p.s'
+  Pop $DC_TestCloseMenu
+  System::Call 'user32::GetMenuState(p $DC_TestCloseMenu,i 0xF060,i 0)i.r1'
+  IntOp $1 $1 & 3
+  System::Call 'user32::IsWindowVisible(p $mui.InstFilesPage.Log)i.r2'
+  System::Call 'user32::IsWindowVisible(p $mui.InstFilesPage.ShowLogButton)i.r3'
+  System::Call 'user32::IsWindowVisible(p $DC_StageList)i.r4'
+  System::Call 'user32::IsWindowVisible(p $DC_StageStates)i.r5'
+  ${If} $0 != 0
+  ${OrIf} $1 == 0
+  ${OrIf} $2 != 0
+  ${OrIf} $3 != 0
+  ${OrIf} $4 == 0
+  ${OrIf} $5 == 0
   SetErrorLevel 6
   Quit
+  ${EndIf}
   SendMessage $mui.InstFilesPage.ProgressBar 0x402 90 0
   !insertmacro DC_InstallStage 2 "正在安装测试文件（不安装任何真实程序）"
   DetailPrint "校验测试产物"
@@ -148,33 +183,23 @@ Section
   ; 模拟解压插件把原生进度从接近完成重置到零，独立的总体进度必须保持不变。
   SendMessage $mui.InstFilesPage.ProgressBar 0x402 0 0
   !insertmacro Check 2
-  SendMessage $DC_DetailToggle ${BM_SETCHECK} 0 0
-  Sleep 300
-  System::Call 'user32::IsWindowVisible(p $mui.InstFilesPage.Log)i.r0'
-  IntCmp $0 0 +3
-  SetErrorLevel 4
-  Quit
-  SendMessage $DC_DetailToggle ${BM_SETCHECK} 1 0
-  Sleep 300
-  System::Call 'user32::IsWindowVisible(p $mui.InstFilesPage.Log)i.r0'
-  IntCmp $0 0 0 +3 +3
-  SetErrorLevel 5
-  Quit
+  ; 即使直接发送窗口关闭消息，安装页也应完成当前操作并进入完成页。
+  System::Call 'user32::PostMessageW(p $HWNDPARENT,i ${WM_CLOSE},p0,p0)'
   Sleep 1000
-  !insertmacro DC_InstallStage 3 "注册测试入口"
-  !insertmacro Check 3
+  !insertmacro DC_InstallStage 5 "注册测试入口"
+  !insertmacro Check 5
   !insertmacro DC_InstallStage 2 "禁止阶段回退"
-  !insertmacro Check 3
+  !insertmacro Check 5
   Sleep 1000
-  !insertmacro DC_InstallStage 4 "验收完成"
-  !insertmacro Check 4
+  !insertmacro DC_InstallStage 6 "验收完成"
+  !insertmacro Check 6
   Call DC_TestProgressPixel
   ${If} $DC_TestPixel == $DC_TestEmptyPixel
     SetErrorLevel 10
     Quit
   ${EndIf}
   FileOpen $0 "${CASE_DIR}\passed.txt" w
-  FileWrite $0 "阶段单调；插件重置隔离；详情可折叠"
+  FileWriteUTF16LE $0 "阶段单调，安装中禁止取消和关闭，界面隐藏日志"
   FileClose $0
   SetErrorLevel 0
 SectionEnd

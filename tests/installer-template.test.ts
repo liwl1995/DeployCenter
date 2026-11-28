@@ -15,7 +15,7 @@ it('安装模板暂存主程序并关闭框架缓存，构建成功与失败均�
     const root=await fs.mkdtemp(path.join(base,'nsis-template-'));
     const file=path.join(root,'node_modules/app-builder-lib/templates/nsis/include/installer.nsh');
     await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,source);
-    const extras=await Promise.all(['include/extractAppPackage.nsh','installSection.nsh','include/installUtil.nsh'].map(async (name)=>{
+    const extras=await Promise.all(['include/extractAppPackage.nsh','installSection.nsh','include/installUtil.nsh','installer.nsi','assistedInstaller.nsh','uninstaller.nsh'].map(async (name)=>{
       const original=await fs.readFile(path.join('node_modules/app-builder-lib/templates/nsis',name),'utf8');
       const target=path.join(root,'node_modules/app-builder-lib/templates/nsis',name);
       await fs.writeFile(target,original);
@@ -31,12 +31,24 @@ it('安装模板暂存主程序并关闭框架缓存，构建成功与失败均�
         const extract=await fs.readFile(extras[0].target,'utf8');
         const section=await fs.readFile(extras[1].target,'utf8');
         const uninstall=await fs.readFile(extras[2].target,'utf8');
+        const uninstallConfirm=await fs.readFile(extras[3].target,'utf8');
+        const uninstallProgress=await fs.readFile(extras[4].target,'utf8');
+        const uninstallSection=await fs.readFile(extras[5].target,'utf8');
+        if(!uninstallConfirm.includes('PageCallbacks un.DC_ShowUninstallConfirm un.DC_LeaveUninstallConfirm')||
+          !uninstallProgress.includes('MUI_PAGE_CUSTOMFUNCTION_SHOW un.DC_ShowUninstallProgress'))
+          throw new Error('卸载向导未挂接自定义页面');
+        const removalCheck=uninstallSection.indexOf('Call un.DC_CheckProgramRemoval');
+        if(removalCheck<=uninstallSection.indexOf('RMDir /r $INSTDIR')||
+          removalCheck>=uninstallSection.indexOf('DeleteRegKey SHELL_CONTEXT'))
+          throw new Error('卸载结果必须在删除安装注册项前核验');
         if(!extract.includes('SetOutPath "$PLUGINSDIR')||extract.includes('CopyFiles')||(extract.match(/^ *Nsis7z::Extract/gm)||[]).length!==1)
           throw new Error('解压流程可提前写入主程序');
         if(!updated.includes('Call DC_VerifyPreparedProgram')||!updated.includes('Call DC_CopyPreparedProgram')||
           section.indexOf('!insertmacro DC_PrepareEmbeddedProgram')<0||
           section.indexOf('!insertmacro DC_PrepareEmbeddedProgram')>=section.indexOf('Call DC_WithdrawProgram')||
           section.indexOf('Call DC_WithdrawProgram')>=section.indexOf('!insertmacro uninstallOldVersion SHELL_CONTEXT')||
+          section.indexOf('Call DC_PrepareProgramDestination')<0||
+          section.indexOf('Call DC_PrepareProgramDestination')>=section.indexOf('!insertmacro installApplicationFiles')||
           section.indexOf('Call DC_PublishProgram')<=section.indexOf('!insertmacro installApplicationFiles'))
           throw new Error('主程序的关闭或恢复位置有误');
         if(section.includes('!insertmacro addStartMenuLink') || section.includes('!insertmacro addDesktopLink'))

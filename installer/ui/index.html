@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self';">
+  <title>YOTOO 部署中心 安装程序</title>
+  <link rel="stylesheet" href="wizard.css">
+  <script defer src="renderer.js"></script>
+</head>
+<body>
+    <div class="win" id="win">
+      <div class="winbar">
+        <span class="wintitle" id="wintitle">YOTOO 部署中心 安装程序</span>
+        <span class="winctl">
+          <span title="最小化" id="ctl-min"></span>
+          <span class="disabled" title="最大化（安装器不支持）" id="ctl-max"></span>
+          <button class="close" type="button" title="关闭" aria-label="关闭窗口" id="ctl-close"></button>
+        </span>
+      </div>
+      <div class="winbody" id="body"></div>
+      <div class="winfoot" id="foot"></div>
+    </div>
+<dialog id="prompt" aria-labelledby="prompt-title">
+  <h2 id="prompt-title"></h2>
+  <div id="prompt-body"></div>
+  <div class="dialog-actions" id="prompt-actions"></div>
+</dialog>
+</body>
+</html>

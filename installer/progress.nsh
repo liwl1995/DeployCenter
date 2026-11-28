@@ -1,10 +1,14 @@
 ; 安装阶段单独显示，不让解压插件对原生进度条的重置影响总体进度。
 !ifndef BUILD_UNINSTALLER
+!include "${PROJECT_DIR}\installer\wizard-style.nsh"
 !include Win\WinUser.nsh
-Var DC_TimerDialog
 Var DC_StageBar
-Var DC_DetailToggle
-Var DC_DetailVisible
+Var DC_IndeterminateBar
+Var DC_StageList
+Var DC_StageStates
+Var DC_StageFont
+Var DC_ProgressHasPrevious
+Var DC_ProgressCloseState
 Var DC_Stage
 Var DC_NextStage
 Var DC_StageText
@@ -15,6 +19,22 @@ Var DC_NextStageText
   Call DC_UpdateInstallStage
 !macroend
 
+!macro DC_StageLine NUMBER TEXT
+  ${If} $DC_Stage > ${NUMBER}
+  ${OrIf} $DC_Stage == 6
+    StrCpy $2 "已完成"
+    StrCpy $3 "✓"
+  ${ElseIf} $DC_Stage == ${NUMBER}
+    StrCpy $2 "进行中"
+    StrCpy $3 "●"
+  ${Else}
+    StrCpy $2 "等待"
+    StrCpy $3 "○"
+  ${EndIf}
+  StrCpy $0 "$0$3   ${TEXT}$\r$\n$\r$\n"
+  StrCpy $1 "$1$2$\r$\n$\r$\n"
+!macroend
+
 !macro DC_ProgressFunctions
 Function DC_UpdateInstallStage
   Push $0
@@ -23,33 +43,80 @@ Function DC_UpdateInstallStage
     StrCpy $DC_Stage $DC_NextStage
     StrCpy $DC_StageText $DC_NextStageText
     SetDetailsPrint listonly
-    DetailPrint "阶段 $DC_Stage/4：$DC_StageText"
+    DetailPrint "$DC_StageText"
     FileOpen $0 "$DC_InstallerLogs\last-install.log" a
-    FileWrite $0 "阶段 $DC_Stage/4：$DC_StageText$\r$\n"
+    FileWrite $0 "$DC_StageText$\r$\n"
     FileClose $0
+    !ifdef DC_ELECTRON_UI
+      ${Switch} $DC_Stage
+        ${Case} 1
+          StrCpy $0 "0?"
+          ${Break}
+        ${Case} 2
+          StrCpy $0 "8?"
+          ${Break}
+        ${Case} 3
+          StrCpy $0 "68?"
+          ${Break}
+        ${Case} 4
+          StrCpy $0 "76?"
+          ${Break}
+        ${Case} 5
+          StrCpy $0 "76?"
+          ${If} $DC_ProgressHasPrevious == 1
+            StrCpy $0 "82?"
+          ${EndIf}
+          ${Break}
+        ${Default}
+          StrCpy $0 "94?"
+      ${EndSwitch}
+      !insertmacro DC_WriteWizardStatus "progress" "$0" "" "" "0"
+    !endif
     ${If} $DC_StageBar != ""
       SendMessage $DC_StageBar 0x402 $DC_Stage 0
       System::Call 'user32::RedrawWindow(p $DC_StageBar,p0,p0,i0x101)'
-      !insertmacro MUI_HEADER_TEXT "正在安装" "第 3 步 / 共 4 步"
-      SendMessage $mui.InstFilesPage.Text ${WM_SETTEXT} 0 "STR:安装阶段 $DC_Stage / 4 · $DC_StageText"
+      SendMessage $mui.InstFilesPage.Text ${WM_SETTEXT} 0 "STR:$DC_StageText"
+      Call DC_PaintInstallStages
+      ; 解包与复制由原生插件执行，无法可靠量化时只显示正在处理。
+      ${If} $DC_IndeterminateBar != 0
+        ${If} $DC_Stage == 2
+        ${OrIf} $DC_Stage == 3
+        ${OrIf} $DC_Stage == 4
+        ${OrIf} $DC_Stage == 5
+          ShowWindow $DC_StageBar ${SW_HIDE}
+          ShowWindow $DC_IndeterminateBar ${SW_SHOW}
+          SendMessage $DC_IndeterminateBar 0x40A 1 45
+        ${Else}
+          SendMessage $DC_IndeterminateBar 0x40A 0 0
+          ShowWindow $DC_IndeterminateBar ${SW_HIDE}
+          ShowWindow $DC_StageBar ${SW_SHOW}
+        ${EndIf}
+      ${EndIf}
     ${EndIf}
   ${EndIf}
   Pop $0
 FunctionEnd
 
-Function DC_InstallDetailsTick
+Function DC_PaintInstallStages
   Push $0
-  SendMessage $DC_DetailToggle ${BM_GETCHECK} 0 0 $0
-  ${If} $0 != $DC_DetailVisible
-    StrCpy $DC_DetailVisible $0
-    ${If} $0 == ${BST_CHECKED}
-      ShowWindow $mui.InstFilesPage.Log ${SW_SHOW}
-    ${Else}
-      ShowWindow $mui.InstFilesPage.Log ${SW_HIDE}
-    ${EndIf}
+  Push $1
+  Push $2
+  Push $3
+  StrCpy $0 ""
+  StrCpy $1 ""
+  !insertmacro DC_StageLine 1 "检查安装条件"
+  !insertmacro DC_StageLine 2 "解压程序文件"
+  !insertmacro DC_StageLine 3 "校验新版程序"
+  ${If} $DC_ProgressHasPrevious == 1
+    !insertmacro DC_StageLine 4 "备份当前版本"
   ${EndIf}
-  ; 标准按钮只能单向展开，用独立的可勾选控件提供收起能力。
-  ShowWindow $mui.InstFilesPage.ShowLogButton ${SW_HIDE}
+  !insertmacro DC_StageLine 5 "写入程序与快捷方式"
+  !insertmacro DC_StageLine 6 "核验安装结果"
+  SendMessage $DC_StageList ${WM_SETTEXT} 0 "STR:$0"
+  SendMessage $DC_StageStates ${WM_SETTEXT} 0 "STR:$1"
+  Pop $3
+  Pop $2
+  Pop $1
   Pop $0
 FunctionEnd
 
@@ -60,62 +127,73 @@ Function DC_ShowInstallProgress
   Push $3
   Push $4
   Push $5
-  ; 使用标准控件的物理位置与字体，跟随 Windows DPI，不拉伸文字位图。
-  System::Call '*(i0,i0,i0,i0)p.r0'
-  System::Call 'user32::GetWindowRect(p $mui.InstFilesPage.ProgressBar,p r0)'
-  System::Call 'user32::MapWindowPoints(p0,p $mui.InstFilesPage,p r0,i2)'
-  System::Call '*$0(i.r1,i.r2,i.r3,i.r4)'
-  IntOp $3 $3 - $1
-  IntOp $4 $4 - $2
+  ; 同时封住标题栏和 Alt+F4 的系统关闭入口。NSIS 自身也会禁用安装页上的取消按钮。
+  GetDlgItem $5 $HWNDPARENT 2
+  EnableWindow $5 0
+  System::Call 'user32::GetSystemMenu(p $HWNDPARENT,i 0)p.r5'
+  System::Call 'user32::EnableMenuItem(p r5,i 0xF060,i 1)i.s'
+  Pop $DC_ProgressCloseState
+  System::Call 'user32::DrawMenuBar(p $HWNDPARENT)'
+  Call DC_StyleWizardFrame
+  !insertmacro DC_WizardHide 1
+  !insertmacro DC_WizardHide 3
+  !insertmacro DC_WizardPage $mui.InstFilesPage
+  !insertmacro DC_WizardColors $mui.InstFilesPage.Text "18181B" "FFFFFF" "E4E4E7" "1C1C1E"
+  ; 进度页沿用原型的留白和两列阶段清单，控件位置按 DPI 换算。
+  !insertmacro DC_WizardScale $1 24
+  !insertmacro DC_WizardScale $2 20
+  IntOp $3 $1 * 2
+  IntOp $3 $DC_WizardWidth - $3
+  !insertmacro DC_WizardScale $4 24
+  System::Call 'user32::SetWindowPos(p $mui.InstFilesPage.Text,p0,ir1,ir2,ir3,ir4,i0x14)'
+  ${If} $DC_StageFont == ""
+    CreateFont $DC_StageFont "Microsoft YaHei" 11 600
+  ${EndIf}
+  SendMessage $mui.InstFilesPage.Text ${WM_SETFONT} $DC_StageFont 1
+  !insertmacro DC_WizardScale $2 58
+  !insertmacro DC_WizardScale $4 8
   System::Call 'user32::CreateWindowExW(i0,w "msctls_progress32",w "安装阶段进度",i0x50000001,ir1,ir2,ir3,ir4,p $mui.InstFilesPage,p1990,p0,p0)p.s'
   Pop $DC_StageBar
-  ; 阶段只跳四次，禁用该控件的系统缓动，避免完成时画面仍落后于真实阶段。
+  ; PBS_MARQUEE 与普通进度分开，保留最新阶段值和完成时的满进度。
+  System::Call 'user32::CreateWindowExW(i0,w "msctls_progress32",w "正在处理",i0x40000008,ir1,ir2,ir3,ir4,p $mui.InstFilesPage,p1992,p0,p0)p.s'
+  Pop $DC_IndeterminateBar
+  ; 真实阶段由安装回调推进，完成时立即显示满进度。
   System::Call 'uxtheme::SetWindowTheme(p $DC_StageBar,w "",w "")'
-  ; COLORREF 使用 BGR 顺序，对应品牌深橙和浅灰轨道。
-  SendMessage $DC_StageBar 0x409 0 0x0C41C2
-  SendMessage $DC_StageBar 0x2001 0 0xEEEFF1
-  SendMessage $DC_StageBar 0x406 0 4
-  ShowWindow $mui.InstFilesPage.ProgressBar ${SW_HIDE}
-  System::Call 'user32::GetWindowRect(p $mui.InstFilesPage.ShowLogButton,p r0)'
-  System::Call 'user32::MapWindowPoints(p0,p $mui.InstFilesPage,p r0,i2)'
-  System::Call '*$0(i.r1,i.r2,i.r3,i.r4)'
-  IntOp $4 $4 - $2
-  System::Call 'user32::GetClientRect(p $mui.InstFilesPage,p r0)'
-  System::Call '*$0(i,i,i.r3,i)'
-  IntOp $3 $3 - $1
-  IntOp $3 $3 - $1
-  System::Call 'user32::CreateWindowExW(i0,w "BUTTON",w "显示安装日志",i0x50010003,ir1,ir2,ir3,ir4,p $mui.InstFilesPage,p1991,p0,p0)p.s'
-  Pop $DC_DetailToggle
-  ; 标准展开按钮与日志原本共用同一行；为可反复切换的开关单独留出一行。
-  IntOp $5 $2 + $4
-  IntOp $4 $4 / 4
-  IntOp $5 $5 + $4
-  System::Call 'user32::GetWindowRect(p $mui.InstFilesPage.Log,p r0)'
-  System::Call 'user32::MapWindowPoints(p0,p $mui.InstFilesPage,p r0,i2)'
-  System::Call '*$0(i.r1,i.r2,i.r3,i.r4)'
-  IntOp $3 $3 - $1
-  IntOp $4 $4 - $5
-  System::Call 'user32::SetWindowPos(p $mui.InstFilesPage.Log,p0,ir1,ir5,ir3,ir4,i0x14)'
-  SendMessage $mui.InstFilesPage.ShowLogButton ${WM_GETFONT} 0 0 $5
-  SendMessage $DC_DetailToggle ${WM_SETFONT} $5 1
-  SendMessage $DC_DetailToggle ${BM_SETCHECK} ${BST_UNCHECKED} 0
-  StrCpy $DC_DetailVisible -1
-  Call DC_InstallDetailsTick
-  ; 只借用隐藏窗口承载计时器，不把它当作向导页面。
-  ; Create 会接管主窗口回调，而这里不调用 Show 来恢复它，必须立即还原。
-  ; 否则下一张 nsDialogs 完成页会形成回调递归，安装完成后异常退出。
-  System::Call 'user32::GetWindowLong(p $HWNDPARENT,i${DWLP_DLGPROC})p.r5'
-  nsDialogs::Create 1018
-  Pop $DC_TimerDialog
-  System::Call 'user32::SetWindowLong(p $HWNDPARENT,i${DWLP_DLGPROC},pr5)'
-  ${If} $DC_TimerDialog != "error"
-    ${NSD_CreateTimer} DC_InstallDetailsTick 100
-  ${Else}
-    StrCpy $DC_TimerDialog ""
-    ShowWindow $DC_DetailToggle ${SW_HIDE}
+  System::Call 'uxtheme::SetWindowTheme(p $DC_IndeterminateBar,w "",w "")'
+  ; COLORREF 使用 BGR 顺序，对应原型的橙色和轨道颜色。
+  ${If} $DC_WizardDark == 1
+    SendMessage $DC_StageBar 0x409 0 0x0C58EA
+    SendMessage $DC_StageBar 0x2001 0 0x2A2626
+    SendMessage $DC_IndeterminateBar 0x409 0 0x0C58EA
+    SendMessage $DC_IndeterminateBar 0x2001 0 0x2A2626
+  ${ElseIf} $DC_WizardDark == 0
+    SendMessage $DC_StageBar 0x409 0 0x1673F9
+    SendMessage $DC_StageBar 0x2001 0 0xF2EFEF
+    SendMessage $DC_IndeterminateBar 0x409 0 0x1673F9
+    SendMessage $DC_IndeterminateBar 0x2001 0 0xF2EFEF
   ${EndIf}
-  !insertmacro DC_InstallStage 1 "准备安装；覆盖升级会保留用户数据"
-  System::Free $0
+  SendMessage $DC_StageBar 0x406 0 6
+  ShowWindow $mui.InstFilesPage.ProgressBar ${SW_HIDE}
+  ShowWindow $mui.InstFilesPage.Log ${SW_HIDE}
+  ShowWindow $mui.InstFilesPage.ShowLogButton ${SW_HIDE}
+  ; 日志依旧写入原有文件。界面独立显示阶段名和右对齐状态。
+  !insertmacro DC_WizardScale $2 92
+  !insertmacro DC_WizardScale $4 210
+  !insertmacro DC_WizardScale $5 96
+  IntOp $3 $3 - $5
+  System::Call 'user32::CreateWindowExW(i0,w "STATIC",w "",i0x50000000,ir1,ir2,ir3,ir4,p $mui.InstFilesPage,p1991,p0,p0)p.s'
+  Pop $DC_StageList
+  !insertmacro DC_WizardColors $DC_StageList "52525B" "FFFFFF" "ABABB3" "1C1C1E"
+  !insertmacro DC_WizardScale $5 84
+  IntOp $1 $DC_WizardWidth - $1
+  IntOp $1 $1 - $5
+  System::Call 'user32::CreateWindowExW(i0,w "STATIC",w "",i0x50000002,ir1,ir2,ir5,ir4,p $mui.InstFilesPage,p1994,p0,p0)p.s'
+  Pop $DC_StageStates
+  !insertmacro DC_WizardColors $DC_StageStates "65656E" "FFFFFF" "9A9AA2" "1C1C1E"
+  SendMessage $HWNDPARENT ${WM_GETFONT} 0 0 $5
+  SendMessage $DC_StageList ${WM_SETFONT} $5 1
+  SendMessage $DC_StageStates ${WM_SETFONT} $5 1
+  !insertmacro DC_InstallStage 1 "正在检查安装条件"
   Pop $5
   Pop $4
   Pop $3
@@ -125,11 +203,22 @@ Function DC_ShowInstallProgress
 FunctionEnd
 
 Function DC_CloseInstallProgress
-  ${If} $DC_TimerDialog != ""
-    ${NSD_KillTimer} DC_InstallDetailsTick
-    System::Call 'user32::DestroyWindow(p $DC_TimerDialog)'
-    StrCpy $DC_TimerDialog ""
+  Push $0
+  ; 安装页不展示下一步。离开后交还给完成页或失败控制流程。
+  GetDlgItem $0 $HWNDPARENT 1
+  ShowWindow $0 ${SW_SHOW}
+  ${If} $DC_ProgressCloseState != ""
+  ${AndIf} $DC_ProgressCloseState != -1
+    System::Call 'user32::GetSystemMenu(p $HWNDPARENT,i 0)p.r0'
+    System::Call 'user32::EnableMenuItem(p r0,i 0xF060,i $DC_ProgressCloseState)'
+    System::Call 'user32::DrawMenuBar(p $HWNDPARENT)'
   ${EndIf}
+  StrCpy $DC_ProgressCloseState ""
+  StrCpy $DC_StageBar ""
+  StrCpy $DC_IndeterminateBar ""
+  StrCpy $DC_StageList ""
+  StrCpy $DC_StageStates ""
+  Pop $0
 FunctionEnd
 !macroend
 !endif

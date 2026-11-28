@@ -1,6 +1,6 @@
 # YOTOO 部署中心
 
-面向 Windows 11 x64 的桌面工具，用于构建、部署和运维 Java 服务。版本变更见 [更新日志](docs/CHANGELOG.md)，其他资料见 [文档索引](docs/README.md)。
+面向 Windows 10 和 Windows 11 x64 的桌面工具，用于构建、部署和运维 Java 服务。版本变更见 [更新日志](docs/CHANGELOG.md)，其他资料见 [文档索引](docs/README.md)。
 
 ## 安装与启动
 

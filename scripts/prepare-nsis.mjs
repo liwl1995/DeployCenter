@@ -33,8 +33,10 @@ export function withoutInstallerCache(source) {
       '  !ifdef ZIP_COMPRESSION',
       '    !error "YOTOO 安装器只支持 7z 安装包"',
       '  !endif',
-      '  !insertmacro DC_InstallStage 2 "正在解压并校验新版程序"',
+      '  !insertmacro DC_InstallStage 2 "正在解压程序文件"',
+      '  Call DC_StageElectronRuntime',
       '  ' + extraction,
+      '  !insertmacro DC_InstallStage 3 "正在校验新版程序"',
       '  Call DC_VerifyPreparedProgram',
       '!macroend',
       '',
@@ -63,11 +65,12 @@ function protectProgramLaunch(source) {
     '!insertmacro DC_PrepareEmbeddedProgram', 'Call DC_WithdrawProgram', uninstall,
   ].join(newline));
   const published = replaceOnce(guarded, install, install + newline + 'Call DC_PublishProgram');
+  const destination = replaceOnce(published, 'SetOutPath $INSTDIR', 'Call DC_PrepareProgramDestination');
   const shortcuts = [
     '!insertmacro addStartMenuLink $keepShortcuts',
     '!insertmacro addDesktopLink $keepShortcuts',
   ].join(newline);
-  return replaceOnce(published, shortcuts, '; Windows 快捷方式由 customInstall 统一写入。');
+  return replaceOnce(destination, shortcuts, '; Windows 快捷方式由 customInstall 统一写入。');
 }
 function preserveUpgradeShortcuts(source) {
   const newline = source.includes('\r\n') ? '\r\n' : '\n';
@@ -97,6 +100,31 @@ function preserveUpgradeShortcuts(source) {
     '      ${EndIf}',
   ].join(newline));
 }
+function useUninstallConfirmation(source) {
+  const newline = source.includes('\r\n') ? '\r\n' : '\n';
+  return replaceOnce(source, '!insertmacro MUI_UNPAGE_COMPONENTS', [
+    'PageEx un.custom',
+    '  PageCallbacks un.DC_ShowUninstallConfirm un.DC_LeaveUninstallConfirm',
+    'PageExEnd',
+  ].join(newline));
+}
+
+function styleUninstallProgress(source) {
+  const newline = source.includes('\r\n') ? '\r\n' : '\n';
+  const page = '!insertmacro MUI_UNPAGE_INSTFILES';
+  return replaceOnce(source, page, [
+    '!define MUI_PAGE_CUSTOMFUNCTION_SHOW un.DC_ShowUninstallProgress',
+    '!define MUI_PAGE_CUSTOMFUNCTION_LEAVE un.DC_LeaveUninstallProgress',
+    page,
+  ].join(newline));
+}
+
+function verifyUninstallRemoval(source) {
+  const newline = source.includes('\r\n') ? '\r\n' : '\n';
+  const removal = '    RMDir /r $INSTDIR';
+  return replaceOnce(source, removal, removal + newline + '    Call un.DC_CheckProgramRemoval');
+}
+
 /** 打包期间修改所需模板，完成或失败均还原；独占锁阻止两次打包互相覆盖。 */
 export async function withNsisTemplate(action, project = process.cwd()) {
   const directory = path.join(project, 'node_modules/app-builder-lib/templates/nsis');
@@ -105,6 +133,9 @@ export async function withNsisTemplate(action, project = process.cwd()) {
     ['include/extractAppPackage.nsh', stageProgramExecutable],
     ['include/installUtil.nsh', preserveUpgradeShortcuts],
     ['installSection.nsh', protectProgramLaunch],
+    ['installer.nsi', useUninstallConfirmation],
+    ['assistedInstaller.nsh', styleUninstallProgress],
+    ['uninstaller.nsh', verifyUninstallRemoval],
   ];
   const lockFile = path.join(directory, 'include/installer.nsh.yotoo-lock');
   const lock = await fs.open(lockFile, 'wx');

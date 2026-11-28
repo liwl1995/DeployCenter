@@ -38,8 +38,9 @@ afterEach(async () => {
   }
 });
 async function check(root: string, target: string, remove = false) {
-  const exe = path.join(root, 'check.exe'),
-    result = path.join(root, 'result.txt');
+  const runDirectory = await fsp.mkdtemp(path.join(root, 'case-'));
+  const exe = path.join(runDirectory, 'check.exe'),
+    result = path.join(runDirectory, 'result.txt');
   const build = spawnSync(
     compiler,
     [

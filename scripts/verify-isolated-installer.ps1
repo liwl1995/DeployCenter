@@ -74,121 +74,152 @@ function Run([string]$File,[string]$Arguments){
   }
   return $p.ExitCode
 }
-function Test-InteractiveInstaller([string]$File, [string]$ExpectedDirectory, [switch]$Install) {
-  if (-not ('DeployCenterQaWizard' -as [type])) {
+function Test-QaWindowIcon([IntPtr]$Window) {
+  if (-not ('DeployCenterQaWindow' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
-using System.Text;
-
-public static class DeployCenterQaWizard
-{
-    private delegate bool EnumChild(IntPtr window, IntPtr state);
-    [DllImport("user32.dll")]
-    private static extern bool EnumChildWindows(IntPtr parent, EnumChild callback, IntPtr state);
-    [DllImport("user32.dll", EntryPoint = "GetClassNameW", CharSet = CharSet.Unicode)]
-    private static extern int GetClassName(IntPtr window, StringBuilder text, int length);
-    [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern IntPtr SendMessageTimeout(IntPtr window, uint message, IntPtr size,
-        StringBuilder text, uint flags, uint timeout, out IntPtr result);
+public static class DeployCenterQaWindow {
     [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW")]
-    private static extern IntPtr SendIconMessage(IntPtr window, uint message, IntPtr size,
-        IntPtr unused, uint flags, uint timeout, out IntPtr result);
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetDlgItem(IntPtr window, int id);
-    [DllImport("user32.dll", EntryPoint = "PostMessageW")]
-    private static extern bool PostMessage(IntPtr window, uint message, IntPtr argument, IntPtr source);
-    [DllImport("user32.dll")]
-    private static extern bool IsWindowEnabled(IntPtr window);
-
-    private static string Text(IntPtr window)
-    {
-        var text = new StringBuilder(1024);
-        IntPtr read;
-        return SendMessageTimeout(window, 0x000D, (IntPtr)text.Capacity, text, 2, 1000, out read) == IntPtr.Zero
-            ? null : text.ToString();
-    }
-
-    public static bool OpenDirectoryPage(IntPtr parent)
-    {
-        return ClickNext(parent, "开始设置");
-    }
-
-    public static bool ClickNext(IntPtr parent, string label)
-    {
-        var next = GetDlgItem(parent, 1);
-        var text = next == IntPtr.Zero ? null : Text(next);
-        return text != null && IsWindowEnabled(next) && text.Replace("&", "").StartsWith(label, StringComparison.Ordinal)
-            && PostMessage(parent, 0x0111, (IntPtr)1, next);
-    }
-
-    public static string DirectoryText(IntPtr parent)
-    {
-        string value = null;
-        EnumChildWindows(parent, (window, state) =>
-        {
-            var text = new StringBuilder(128);
-            GetClassName(window, text, text.Capacity);
-            if (!String.Equals(text.ToString(), "Edit", StringComparison.OrdinalIgnoreCase)) return true;
-            value = Text(window);
-            return value == null;
-        }, IntPtr.Zero);
-        return value;
-    }
-
-    public static bool HasWindowIcon(IntPtr window)
-    {
-        IntPtr icon;
-        return SendIconMessage(window, 0x007F, (IntPtr)1, IntPtr.Zero, 2, 1000, out icon) != IntPtr.Zero
-            && icon != IntPtr.Zero;
-    }
+    public static extern IntPtr ReadIcon(IntPtr window, uint message, IntPtr size,
+        IntPtr unused, uint flags, uint timeout, out IntPtr icon);
 }
 '@
   }
-  $wizard = Start-Process -FilePath $File -PassThru
+  $icon=[IntPtr]::Zero
+  $result=[DeployCenterQaWindow]::ReadIcon($Window,0x007F,[IntPtr]1,[IntPtr]::Zero,2,1000,[ref]$icon)
+  return $result -ne [IntPtr]::Zero -and $icon -ne [IntPtr]::Zero
+}
+function Test-InteractiveInstaller([string]$File, [string]$ExpectedDirectory, [switch]$Install, [switch]$Uninstall, [switch]$AppStartedDuringPurge, [switch]$ProgramFileLocked) {
+  Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
+  $ExpectedDirectory = $ExpectedDirectory.Replace('/', '\')
+  $wizard = if ($Uninstall) { Start-Process -FilePath $File -ArgumentList "_?=$ExpectedDirectory" -PassThru }
+    else { Start-Process -FilePath $File -PassThru }
+  $frontend = $null
+  $started = $false
+  function Find-QaControl($window, [string]$label, $controlType) {
+    $tree = [Windows.Automation.AutomationElement]::FromHandle($window)
+    $match = if ($label) {
+      [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty,$label)
+    }
+    if ($controlType) {
+      $typeMatch = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty,$controlType)
+      $match = if ($match) { [Windows.Automation.AndCondition]::new([Windows.Automation.Condition[]] @($match,$typeMatch)) }
+        else { $typeMatch }
+    }
+    return $tree.FindFirst([Windows.Automation.TreeScope]::Descendants,$match)
+  }
+  function Invoke-QaControl($control) {
+    $control.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+  }
+  function Read-QaWindowText($window) {
+    [Windows.Automation.AutomationElement]::FromHandle($window).FindAll(
+      [Windows.Automation.TreeScope]::Descendants,[Windows.Automation.Condition]::TrueCondition
+    ) | ForEach-Object { $_.Current.Name } | Where-Object { $_ }
+  }
+  function Wait-QaControl($window, [string]$label, $controlType) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+      $control = Find-QaControl $window $label $controlType
+      if ($control -and $control.Current.IsEnabled) { return $control }
+      Start-Sleep -Milliseconds 150
+    } while (!$wizard.HasExited -and [DateTime]::UtcNow -lt $deadline)
+    $target = if ($label) { $label } else { $controlType.ProgrammaticName }
+    throw "未找到可用控件：$target"
+  }
   try {
-    $deadline = [DateTime]::UtcNow.AddSeconds(20)
-    $opened = $false
+    $deadline = [DateTime]::UtcNow.AddSeconds(35)
+    $nextLabel = if ($Uninstall) { '卸载' } else { '下一步' }
     do {
-      Start-Sleep -Milliseconds 100
-      $wizard.Refresh()
-      $window = $wizard.MainWindowHandle
-      # 等欢迎页完成初始化，每轮只点击一次「开始设置」，停在目录页。
-      if ($window -ne 0) { $opened = [DeployCenterQaWizard]::OpenDirectoryPage($window) }
-    } while (-not $opened -and -not $wizard.HasExited -and [DateTime]::UtcNow -lt $deadline)
-    if (-not $opened) { throw '隔离安装向导的欢迎页未就绪' }
-    $deadline = [DateTime]::UtcNow.AddSeconds(15)
-    do {
-      Start-Sleep -Milliseconds 100
-      $wizard.Refresh()
-      $window = $wizard.MainWindowHandle
-      if ($window -ne 0) {
-        $value = [DeployCenterQaWizard]::DirectoryText($window)
-        if ($null -ne $value) { break }
+      Start-Sleep -Milliseconds 200
+      if (!$frontend) {
+        $record = Get-CimInstance Win32_Process -Filter "Name='YOTOO Installer UI.exe' AND ParentProcessId=$($wizard.Id)" | Select-Object -First 1
+        if ($record) {
+          $frontend = Get-Process -Id $record.ProcessId -ErrorAction SilentlyContinue
+        }
       }
-    } while (-not $wizard.HasExited -and [DateTime]::UtcNow -lt $deadline)
-    if ($null -eq $value) { throw '无法读取隔离向导的安装目录输入框' }
-    if ($value -ne $ExpectedDirectory) { throw "向导未预填原目录：$value" }
-    if (-not $Install) { return }
-    if (-not [DeployCenterQaWizard]::ClickNext($window, '安装')) { throw '隔离向导的安装按钮不可用' }
+      if ($frontend) { $frontend.Refresh() }
+      $window = if ($frontend) { $frontend.MainWindowHandle } else { 0 }
+      if ($window -ne 0) {
+        $next = Find-QaControl $window $nextLabel
+        if ($next -and $next.Current.IsEnabled) { break }
+      }
+    } while (!$wizard.HasExited -and [DateTime]::UtcNow -lt $deadline)
+    if (!$next) { throw '未显示真实 Electron 安装向导' }
+    $accessibleText = Read-QaWindowText $window
+    if (-not ($accessibleText -join ' ').Contains($ExpectedDirectory)) {
+      throw "欢迎页没有显示预期安装目录：$ExpectedDirectory"
+    }
+    if ($Uninstall -and -not ($accessibleText -join ' ').Contains('同时删除配置、部署历史和日志')) {
+      throw '卸载确认页未显示数据选项'
+    }
+    if (!$Install -and !$Uninstall) { return }
+    if ($AppStartedDuringPurge) {
+      $purge = Wait-QaControl $window '' ([Windows.Automation.ControlType]::CheckBox)
+      $purge.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern).Toggle()
+      Invoke-QaControl $next
+      $confirm = Wait-QaControl $window '删除并卸载'
+      $launchedExe = Join-Path $ExpectedDirectory "$product.exe"
+      try {
+        $appProcess = Start-Process -FilePath $launchedExe -PassThru
+        if (!$appProcess -or !(Wait-QaWindow $launchedExe)) { throw '隔离应用未在清理确认期间启动' }
+        Invoke-QaControl $confirm
+        $null = Wait-QaControl $window '请先退出 YOTOO 部署中心'
+        Check '卸载二次确认后拦截新启动的应用并保留数据' (-not $appProcess.HasExited -and
+          (Test-Path -LiteralPath $launchedExe) -and (Test-Path -LiteralPath (Join-Path $data 'keep-user-data.txt')))
+        Invoke-QaControl (Wait-QaControl $window '取消')
+        if (!$wizard.WaitForExit(12000) -or $wizard.ExitCode -ne 1602) { throw '取消卸载后 NSIS 未正常退出' }
+        return
+      } finally { Close-QaApp @($launchedExe) }
+    }
+    $started = $true
+    Invoke-QaControl $next
+    if ($ProgramFileLocked) {
+      $null = Wait-QaControl $window '卸载未完成'
+      Invoke-QaControl (Wait-QaControl $window '取消')
+      if (!$wizard.WaitForExit(12000) -or $wizard.ExitCode -ne 1603) { throw '卸载失败时没有返回错误码' }
+      return
+    }
+    $rechecked = $false
     $deadline = [DateTime]::UtcNow.AddSeconds(120)
     do {
-      Start-Sleep -Milliseconds 100
-      $wizard.Refresh()
-      $window = $wizard.MainWindowHandle
-      if ($window -ne 0 -and [DeployCenterQaWizard]::ClickNext($window, '完成')) {
-        if (-not $wizard.WaitForExit(10000) -or $wizard.ExitCode -ne 0) { throw '安装完成后向导未正常退出' }
+      Start-Sleep -Milliseconds 200
+      if ($frontend.HasExited) { break }
+      if (Find-QaControl $window '选择安装位置') {
+        throw '原目录覆盖安装意外进入安装位置页'
+      }
+      if ($Install -and !$rechecked) {
+        $recheck = Find-QaControl $window '重新检查'
+        if ($recheck -and $recheck.Current.IsEnabled) {
+          Close-QaApp @((Join-Path $ExpectedDirectory "$product.exe"))
+          Invoke-QaControl $recheck
+          $rechecked = $true
+        }
+      }
+      if ((Find-QaControl $window '安装未完成') -or (Find-QaControl $window '卸载未完成')) {
+        throw "Electron 向导进入失败页：$((Read-QaWindowText $window) -join ' · ')"
+      }
+      $finish = Find-QaControl $window '完成'
+      if ($finish -and $finish.Current.IsEnabled) {
+        Invoke-QaControl $finish
+        if (!$wizard.WaitForExit(12000) -or $wizard.ExitCode -ne 0) { throw '确认完成后 NSIS 未正常退出' }
         return
       }
-    } while (-not $wizard.HasExited -and [DateTime]::UtcNow -lt $deadline)
-    throw '安装完成页未显示或不响应'
+    } while (!$wizard.HasExited -and [DateTime]::UtcNow -lt $deadline)
+    $lastPage = if (!$frontend.HasExited) { (Read-QaWindowText $window) -join ' · ' } else { '向导进程已退出' }
+    throw "Electron 完成页未显示或不响应：$lastPage"
   } finally {
-    if (-not $wizard.HasExited) {
-      $null = $wizard.CloseMainWindow()
-      if (-not $wizard.WaitForExit(3000)) {
-        $wizard.Kill()
-        if (-not $wizard.WaitForExit(5000)) { throw '隔离安装向导未退出' }
-      }
+    if ($frontend -and !$frontend.HasExited) {
+      $null = $frontend.CloseMainWindow()
+      if (!$frontend.WaitForExit(3000)) { $frontend.Kill() }
+    }
+    if (!$started -and !$wizard.HasExited -and !$wizard.WaitForExit(3000)) {
+      # 尚未点击执行的 QA 实例可能停在原生回退页，仅终止本次启动的进程。
+      $wizard.Kill()
+    }
+    if (!$wizard.HasExited -and !$wizard.WaitForExit(15000)) {
+      $script:timedOutProcess=$wizard
+      throw '隔离安装向导未在时限内退出'
     }
     $wizard.Dispose()
   }
@@ -260,12 +291,17 @@ try{
     $builderArgs+=@('--prepackaged',$clone)
   }
   & node (Join-Path $repoRoot 'scripts/build-installer.mjs') @builderArgs *> (Join-Path $qaRoot 'build.log')
-  if($LASTEXITCODE -ne 0){throw "隔离安装包构建失败：$(Get-Content (Join-Path $qaRoot 'build.log') -Tail 7 | Out-String)"}
+  if($LASTEXITCODE -ne 0){throw "隔离安装包构建失败：$(Get-Content (Join-Path $qaRoot 'build.log') -Tail 30 | Out-String)"}
   $installer=Join-Path $build 'QA-Setup.exe'
   $env:DEPLOY_CENTER_DATA_DIR=$data
   $env:DEPLOY_CENTER_SETTINGS_DIR=Join-Path $qaRoot 'test-locator'
   $env:DEPLOY_CENTER_TESTING='1'
   Check '首次安装没有预建数据目录或位置记录' (-not(Test-Path -LiteralPath $data) -and -not(Test-Path -LiteralPath "HKCU:\$locationKey"))
+  Check '首装写入后失败未污染目标目录或写入安装注册项' ((Run $installer "/S /YOTOOQAFAILPUBLISH /D=$program") -eq 1603 -and
+    (Get-Content -LiteralPath (Join-Path $data 'logs/installer/last-install.log') -Raw) -match 'QAFAILPUBLISH' -and
+    @(Get-ChildItem -LiteralPath $program -Force).Count -eq 0 -and -not (Test-Path -LiteralPath $uninstallKey))
+  # QA 默认数据目录在 AppData 之外，赋予与应用首次启动相同的归属标记。
+  Set-Content -LiteralPath (Join-Path $data '.yotoo-data-owner.ini') -Value "[application]`r`nid=local.deploycenter.desktop`r`n" -Encoding utf8
   Check '首次安装自动创建数据目录并支持中文安装路径' ((Run $installer "/S /D=$program") -eq 0 -and (Test-Path -LiteralPath $data))
   $tutorialMarker = Join-Path $data 'Control/install-tutorial.id'
   $firstTutorial = Get-Content -LiteralPath $tutorialMarker -Raw
@@ -281,6 +317,12 @@ try{
   Check '安装日志在配置目录' (Test-Path -LiteralPath (Join-Path $data 'logs/installer/last-install.log'))
   $entry=@(Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty | Where-Object {$_.DisplayName -like "$product*"})
   Check '独立应用注册项' ($entry.Count -eq 1 -and $entry[0].PSChildName -eq $id -and $entry[0].DisplayVersion -eq $version)
+  Set-ItemProperty -LiteralPath $uninstallKey -Name DisplayVersion -Value '999.0.0'
+  try {
+    Check '静默降级拒绝未经确认的安装，并保留程序和数据' ((Run $installer "/S /D=$program") -eq 1603 -and
+      (Get-FileHash -LiteralPath (Join-Path $program 'resources/app.asar')).Hash -eq $packageSha256 -and
+      (Get-Content (Join-Path $data 'keep-user-data.txt') -Raw).Trim() -eq $id)
+  } finally { Set-ItemProperty -LiteralPath $uninstallKey -Name DisplayVersion -Value $version }
   Check '开始菜单和桌面快捷方式使用正确的程序和图标' ((Test-QaShortcut $shortcuts[0] $exe) -and (Test-QaShortcut $shortcuts[1] $exe))
   Check '已安装程序实际启动与 SQLite 加密渲染' ((Run $exe '--smoke') -eq 0 -and (Get-Content (Join-Path $data 'smoke-result.json') -Raw | ConvertFrom-Json).ok)
   Start-Sleep -Milliseconds 800
@@ -301,11 +343,13 @@ try{
   $installerLog=Join-Path $data 'logs/installer/last-install.log'
   Check '校验失败记录实际超时' ((Get-Content -LiteralPath $installerLog -Raw) -match 'timeout')
   Check '写入新版后失败仍恢复旧版全套文件和入口' ((Run $installer "/S /YOTOOUPDATE /YOTOOQAFAILPUBLISH /D=$program") -eq 1603 -and
+    (Get-Content -LiteralPath $installerLog -Raw) -match 'QAFAILPUBLISH' -and
     (Get-FileHash -LiteralPath $exe).Hash -eq $originalExeHash -and (Get-FileHash -LiteralPath $archive).Hash -eq $packageSha256 -and
     (Get-Content -LiteralPath $rollbackFixture -Raw).Trim() -eq $id -and (Test-QaShortcut $shortcuts[0] $exe) -and (Test-QaShortcut $shortcuts[1] $exe))
   Check '回退后旧程序实际可启动，教学标记和数据保留' ((Run $exe '--smoke') -eq 0 -and
     (Get-Content -LiteralPath $tutorialMarker -Raw) -eq $firstTutorial -and
     (Get-Content (Join-Path $data 'keep-user-data.txt') -Raw).Trim() -eq $id)
+  Close-QaApp @($exe)
   $shell = New-Object -ComObject WScript.Shell
   $broken = $shell.CreateShortcut($shortcuts[0])
   $broken.TargetPath = Join-Path $qaRoot '1'
@@ -314,12 +358,21 @@ try{
   Test-InteractiveInstaller $installer $program -Install
   Check '交互覆盖安装完成页可点击且能打开应用' ($null -ne (Wait-QaWindow $exe))
   $interactiveTutorial = Get-Content -LiteralPath $tutorialMarker -Raw
-  Check '同版本覆盖后首次打开应用展示教学' ($interactiveTutorial -ne $firstTutorial -and (Test-QaTutorialSeen $interactiveTutorial))
+  Check '同版本覆盖写入新的教学标记' ($interactiveTutorial -ne $firstTutorial)
+  $tutorialSeen = Test-QaTutorialSeen $interactiveTutorial
+  if (-not $tutorialSeen) {
+    $preferenceFile = Join-Path $data 'desktop-preferences.json'
+    $savedTutorial = $(if (Test-Path -LiteralPath $preferenceFile) {
+      (Get-Content -LiteralPath $preferenceFile -Raw | ConvertFrom-Json).preferences.tutorialInstallId
+    })
+    Write-Output "本轮教学标记 $interactiveTutorial · 已读取标记 $savedTutorial"
+  }
+  Check '同版本覆盖后首次打开应用展示教学' $tutorialSeen
   Close-QaApp @($exe)
   Start-Process -FilePath $shortcuts[1]
   $desktopApp = Wait-QaWindow $exe
   Check '从桌面快捷方式启动的主窗口有 Windows 图标' ($null -ne $desktopApp -and
-    [DeployCenterQaWizard]::HasWindowIcon($desktopApp.MainWindowHandle))
+    (Test-QaWindowIcon $desktopApp.MainWindowHandle))
   Close-QaApp @($exe)
   Check '覆盖升级保留用户数据' ((Get-Content (Join-Path $data 'keep-user-data.txt') -Raw).Trim() -eq $id)
   Check '覆盖升级修复损坏的开始菜单快捷方式' (Test-QaShortcut $shortcuts[0] $exe)
@@ -327,7 +380,7 @@ try{
   # 模拟旧版内部位置为空、Windows 已安装应用记录依然完整。
   Set-ItemProperty -LiteralPath $installKey -Name InstallLocation -Value ''
   Test-InteractiveInstaller $installer $program
-  Check '交互向导从欢迎页进入后预填原目录' $true
+  Check '交互向导在欢迎页显示已核实的原目录' $true
   Check '内部位置为空时从卸载注册恢复原安装目录' ((Run $installer '/S') -eq 0 -and
     (Get-ItemPropertyValue -LiteralPath $installKey -Name InstallLocation) -eq $program.Replace('/','\') -and
     (Get-ItemPropertyValue -LiteralPath $uninstallKey -Name InstallLocation) -eq $program.Replace('/','\') -and
@@ -419,10 +472,26 @@ try{
   $program=$newProgram
   $exe=$newExe
   $uninstaller=Join-Path $program "Uninstall $product.exe"
-  Check '默认卸载成功' ((Run $uninstaller '/S') -eq 0)
+  # 正常卸载会从临时副本运行。使用 _?= 时也从程序目录外启动，便于等待实际进程退出。
+  $interactiveUninstaller=Join-Path $qaRoot 'interactive-uninstaller.exe'
+  Copy-Item -LiteralPath $uninstaller -Destination $interactiveUninstaller
+  Test-InteractiveInstaller $interactiveUninstaller $program -Uninstall -AppStartedDuringPurge
+  Test-InteractiveInstaller $interactiveUninstaller $program -Uninstall
+  Check '交互卸载确认与完成页成功' $true
   $deadline=[DateTime]::UtcNow.AddSeconds(30);while((Test-Path -LiteralPath $exe)-and[DateTime]::UtcNow -lt $deadline){Start-Sleep -Milliseconds 200}
   Check '默认卸载保留数据并移除程序' ((Test-Path -LiteralPath (Join-Path $data 'keep-user-data.txt')) -and -not(Test-Path -LiteralPath $exe))
   Check '可重新安装' ((Run $installer "/S /D=$program") -eq 0)
+  $lockedDependency = Join-Path $program 'resources/app.asar'
+  $lock = [IO.File]::Open($lockedDependency, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+  try {
+    Test-InteractiveInstaller $interactiveUninstaller $program -Uninstall -ProgramFileLocked
+    Check '依赖被占用时保留卸载入口、注册项及用户数据' ((Test-Path -LiteralPath $lockedDependency) -and
+      (Test-Path -LiteralPath $uninstaller) -and (Test-Path -LiteralPath $uninstallKey) -and
+      (Test-Path -LiteralPath (Join-Path $data 'keep-user-data.txt')))
+  } finally { $lock.Dispose() }
+  Check '解除占用后可再次卸载剩余文件' ((Run $interactiveUninstaller "/S _?=$program") -eq 0 -and
+    -not (Test-Path -LiteralPath $program) -and -not (Test-Path -LiteralPath $uninstallKey))
+  Check '部分卸载恢复后可重新安装' ((Run $installer "/S /D=$program") -eq 0)
   Check '彻底清理只删除隔离数据' ((Run $uninstaller '/S /PURGEDATA') -eq 0)
   $deadline=[DateTime]::UtcNow.AddSeconds(30);while((Test-Path -LiteralPath $data)-and[DateTime]::UtcNow -lt $deadline){Start-Sleep -Milliseconds 200}
   Check '配置目录与 QA 快捷方式已清除' (-not(Test-Path -LiteralPath $data) -and -not(Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('Desktop')) "$product.lnk")))
